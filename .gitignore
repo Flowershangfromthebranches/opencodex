@@ -66,3 +66,4 @@ tests/.tmp-*
 # tests/repo-hygiene.test.ts, which fails if any path here becomes tracked again.
 go/
 dist/macos/
+dist/release/
