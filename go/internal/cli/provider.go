@@ -25,6 +25,7 @@ const providerUsage = `Usage: ocx provider <subcommand>
 Subcommands:
   list [--json]             List configured and available providers
   add <name> [options]      Add a registry or custom provider
+  edit <name> [options]     Edit live provider fields
   remove <name> [--json]    Remove a non-default provider
   show <name> [--json]      Show provider config with secrets masked
   set-default <name>        Change the default provider
@@ -95,6 +96,8 @@ func runProvider(args []string, streams IO) error {
 		return providerList(args[1:], streams)
 	case "add":
 		return providerAdd(args[1:], streams)
+	case "edit":
+		return providerEdit(args[1:], streams)
 	case "remove":
 		return providerRemove(args[1:], streams)
 	case "show":
