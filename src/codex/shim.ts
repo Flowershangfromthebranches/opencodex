@@ -23,6 +23,7 @@ import { durableBunPath } from "../lib/bun-runtime";
 import { preferredDurableRuntime } from "../lib/runtime-entry";
 import { isProcessAlive } from "../lib/process-control";
 import { serviceApiTokenFilePath } from "../lib/service-secrets";
+import { recordOwnedConfigPath } from "../lib/config-ownership";
 import { windowsEnvIndirectBatchValue } from "../lib/win-paths";
 import { isWslRuntime, wslAutomountRoot } from "./home";
 
@@ -597,8 +598,10 @@ function statePath(): string {
 }
 
 function writeState(state: ShimState): void {
+  const path = statePath();
+  recordOwnedConfigPath(getConfigDir(), path);
   if (!existsSync(getConfigDir())) mkdirSync(getConfigDir(), { recursive: true });
-  writeFileSync(statePath(), JSON.stringify(state, null, 2) + "\n", "utf8");
+  writeFileSync(path, JSON.stringify(state, null, 2) + "\n", "utf8");
 }
 
 /** Git-Bash accepts `C:/...` but not backslashed paths inside sh scripts. */
