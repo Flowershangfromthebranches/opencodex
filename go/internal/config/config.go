@@ -235,6 +235,10 @@ type ProviderConfig struct {
 	SelectedModels                  []string                                       `json:"selectedModels,omitempty"`
 	LiveModels                      *bool                                          `json:"liveModels,omitempty"`
 	ModelSupportsReasoningSummaries map[string]bool                                `json:"modelSupportsReasoningSummaries,omitempty"`
+	// ModelReasoningSummaryDelivery overrides the wire delivery mode per model.
+	// Separate from the boolean above: that one decides WHETHER summaries are
+	// requested, this decides HOW they stream.
+	ModelReasoningSummaryDelivery map[string]string `json:"modelReasoningSummaryDelivery,omitempty"`
 	PromptCacheKey                  bool                                           `json:"promptCacheKey,omitempty"`
 	ResponsesItemIDRepair           *ResponsesItemIDRepairConfig                   `json:"responsesItemIdRepair,omitempty"`
 	OpenRouterRouting               *providers.OpenRouterProviderRouting           `json:"openRouterRouting,omitempty"`
@@ -825,6 +829,14 @@ func (c Config) Validate() error {
 		for model := range provider.ModelSupportsReasoningSummaries {
 			if strings.TrimSpace(model) == "" {
 				return &ConfigError{Field: "providers." + name + ".modelSupportsReasoningSummaries", Message: "keys must be nonblank model ids"}
+			}
+		}
+		for model, delivery := range provider.ModelReasoningSummaryDelivery {
+			if strings.TrimSpace(model) == "" {
+				return &ConfigError{Field: "providers." + name + ".modelReasoningSummaryDelivery", Message: "keys must be nonblank model ids"}
+			}
+			if !ValidReasoningSummaryDelivery(delivery) {
+				return &ConfigError{Field: "providers." + name + ".modelReasoningSummaryDelivery." + model, Message: "must be sequential, sequential_cutoff, concurrent, or concurrent_cutoff"}
 			}
 		}
 		if repair := provider.ResponsesItemIDRepair; repair != nil {

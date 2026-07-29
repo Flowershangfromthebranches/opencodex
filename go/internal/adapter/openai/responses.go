@@ -246,6 +246,7 @@ func sanitizeResponsesBodyForRequest(body map[string]any, forward bool, request 
 	stripUnsupportedResponsesHostedTools(body)
 	stripSparkResponsesCompatibility(body)
 	stripDisabledResponsesReasoningSummaries(body, provider, request.ModelID)
+	applyReasoningSummaryDeliveryOverride(body, provider, request.ModelID)
 	if request.CompactionRequest && isRoutedResponsesCompaction(provider) {
 		buildRoutedResponsesCompactionBody(body)
 	}
