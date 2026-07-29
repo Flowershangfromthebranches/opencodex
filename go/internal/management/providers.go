@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
@@ -59,7 +60,19 @@ func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) bool {
 		a.mu.Lock()
 		candidate := *a.config
 		candidate.Providers = cloneProviders(a.config.Providers)
-		candidate.Providers[body.Name] = body.Provider
+		// The dashboard's edit form has no field for the fallback key pool, so
+		// a plain overwrite deletes every pooled key: the next rate limit has
+		// nothing to rotate to, and the keys are gone from disk with no undo.
+		// The oracle carries the existing pool over and lets the submitted key
+		// join it (src/server/management/provider-routes.ts:120-129). An
+		// explicitly submitted pool still wins, so a real replacement works.
+		saved := body.Provider
+		if len(saved.APIKeyPool) == 0 {
+			if existing, ok := a.config.Providers[body.Name]; ok && len(existing.APIKeyPool) > 0 {
+				saved.APIKeyPool = append([]config.APIKeyEntry(nil), existing.APIKeyPool...)
+			}
+		}
+		candidate.Providers[body.Name] = saved
 		if body.SetDefault {
 			candidate.DefaultProvider = body.Name
 		}
@@ -76,6 +89,11 @@ func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) bool {
 		}
 		a.config.Providers = candidate.Providers
 		a.config.DefaultProvider = candidate.DefaultProvider
+		// A key submitted alongside a surviving pool joins it as the active
+		// entry rather than shadowing it, matching provider-routes.ts:127-129.
+		if saved.APIKey != "" && len(a.config.Providers[body.Name].APIKeyPool) > 0 {
+			_, _ = config.AddAPIKey(a.config, body.Name, saved.APIKey, "", time.Now())
+		}
 		err := a.saveLocked()
 		a.mu.Unlock()
 		if err != nil {
