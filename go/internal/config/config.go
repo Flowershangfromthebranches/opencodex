@@ -508,6 +508,19 @@ func Load(path string) (*Config, error) {
 	if cfg.StreamMode != "" && cfg.StreamMode != "auto" && cfg.StreamMode != "legacy-tee" && cfg.StreamMode != "eager-relay" {
 		cfg.StreamMode = ""
 	}
+	// A blank hostname degrades to the loopback default on READ rather than
+	// failing the load. The repair path below re-decodes the SAME document, so
+	// a blank value fails twice and the whole config is discarded — losing the
+	// user's providers and keys over a field the runtime already defaults.
+	// That is strictly worse than the bind bug the validation exists for, which
+	// is the reasoning the oracle records at src/config.ts:669-675.
+	//
+	// Write-time rejection is unchanged: Validate still refuses a blank
+	// hostname, so a live caller is told rather than silently bound to
+	// loopback.
+	if strings.TrimSpace(cfg.Host) == "" {
+		cfg.Host = DefaultHost
+	}
 	validationErr := cfg.Validate()
 	if validationErr == nil {
 		validationErr = validateDefaultProvider(cfg)
