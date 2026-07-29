@@ -127,6 +127,10 @@ func corsMiddleware(next http.Handler, config MiddlewareConfig) http.Handler {
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
+		// X-Frame-Options is the legacy header and several browsers now honour
+		// only the CSP directive, so a dashboard served to a modern browser was
+		// still framable. The oracle sends both (src/server/auth-cors.ts:114).
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		if r.Method == http.MethodOptions {
