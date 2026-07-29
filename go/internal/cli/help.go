@@ -17,7 +17,7 @@ var commandHelp = map[string]string{
 	"logout":      "Usage: ocx logout <provider>\n\nRemove saved OAuth accounts for a provider.",
 	"account":     accountUsage,
 	"provider":    providerUsage,
-	"models":      "Usage: ocx models <list|efforts|add|remove|list-custom> [arguments]",
+	"models":      "Usage: ocx models <list|live|efforts|add|edit|remove|list-custom|enable|disable|provider|selected|context|shadow> [arguments]",
 	"init":        "Usage: ocx init\n\nInteractively configure a provider.",
 	"status":      "Usage: ocx status [--json]\n\nShow proxy and service status.",
 	"doctor":      "Usage: ocx doctor [--json]\n\nRun local configuration, process, and network diagnostics.",

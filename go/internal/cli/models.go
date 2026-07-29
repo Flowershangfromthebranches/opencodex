@@ -46,6 +46,16 @@ func runModels(args []string, streams IO) error {
 		return modelsSetVisibility(true, args, streams)
 	case "disable":
 		return modelsSetVisibility(false, args, streams)
+	case "live":
+		return modelsLive(args, streams)
+	case "edit":
+		return modelsEdit(args, streams)
+	case "selected":
+		return modelsSelected(args, streams)
+	case "context":
+		return modelsContext(args, streams)
+	case "shadow":
+		return modelsShadow(args, streams)
 	case "provider":
 		return modelsSetProviderVisibility(args, streams)
 	default:
