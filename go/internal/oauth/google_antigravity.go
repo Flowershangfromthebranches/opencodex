@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -90,7 +89,7 @@ func (f *AntigravityFlow) Refresh(ctx context.Context, refreshToken string) (OAu
 	if refreshToken == "" {
 		return OAuthCredentials{}, errors.New("Antigravity refresh token is required")
 	}
-	credential, err := f.postToken(ctx, url.Values{"grant_type": {"refresh_token"}, "client_id": {f.ClientID}, "client_secret": {f.ClientSecret}, "refresh_token": {refreshToken}}, refreshToken)
+	credential, err := f.postTokenForRefresh(ctx, url.Values{"grant_type": {"refresh_token"}, "client_id": {f.ClientID}, "client_secret": {f.ClientSecret}, "refresh_token": {refreshToken}}, refreshToken)
 	if err != nil {
 		return OAuthCredentials{}, err
 	}
@@ -101,6 +100,21 @@ func (f *AntigravityFlow) Refresh(ctx context.Context, refreshToken string) (OAu
 }
 
 func (f *AntigravityFlow) postToken(ctx context.Context, values url.Values, refreshFallback string) (OAuthCredentials, error) {
+	return f.postTokenClassified(ctx, values, refreshFallback, false)
+}
+
+// postTokenForRefresh classifies a revoked grant as terminal so the account is
+// marked needsReauth instead of retrying a refresh that can never succeed.
+//
+// Only the REFRESH path does this. An authorization-code exchange failing with
+// invalid_grant means the one-time code was stale, which says nothing about the
+// stored credential — marking the account there would lock a user out over a
+// mistyped login.
+func (f *AntigravityFlow) postTokenForRefresh(ctx context.Context, values url.Values, refreshFallback string) (OAuthCredentials, error) {
+	return f.postTokenClassified(ctx, values, refreshFallback, true)
+}
+
+func (f *AntigravityFlow) postTokenClassified(ctx context.Context, values url.Values, refreshFallback string, classifyTerminal bool) (OAuthCredentials, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, f.TokenURL, strings.NewReader(values.Encode()))
 	if err != nil {
 		return OAuthCredentials{}, err
@@ -116,7 +130,11 @@ func (f *AntigravityFlow) postToken(ctx context.Context, values url.Values, refr
 		return OAuthCredentials{}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return OAuthCredentials{}, fmt.Errorf("Antigravity token request failed: HTTP %d", response.StatusCode)
+		failure, code := parseOAuthHTTPError("Antigravity token request", response.StatusCode, body)
+		if classifyTerminal {
+			return OAuthCredentials{}, NewRefreshHTTPError("google-antigravity", response.StatusCode, code, failure)
+		}
+		return OAuthCredentials{}, failure
 	}
 	var payload struct {
 		Access, Refresh string
