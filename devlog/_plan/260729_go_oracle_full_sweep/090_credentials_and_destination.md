@@ -124,3 +124,116 @@ preset.StaticHeaders = headers
 ## 범위 밖
 
 오라클 수정, 라이브 provider 호출, 다른 세션이 작업 중인 파일.
+
+---
+
+## P 재측정 (2026-07-29, wp6 사이클 진입)
+
+이 문서는 `bfbdbcfd1`에서 쓰였고, 그 뒤 트리를 다시 쟀다. 결과: **세 항목 모두 여전히 유효하다.**
+
+| 항목 | 현재 트리 근거 | 판정 |
+| --- | --- | --- |
+| 감사 2 (미설정 provider가 라우팅 후보) | `serve.go:335` `base := registry.New().Entries()` — 59개 built-in 전체로 시작. `registry.go:344-352`의 family 폴백이 `entries` 전체를 훑음 | 유효 |
+| 감사 3 (config가 canonical adapter/endpoint 덮어씀) | `serve.go:345` `preset.Adapter, preset.BaseURL, preset.StaticHeaders = entry.Adapter, entry.BaseURL, entry.StaticHeaders` — 무조건 대입 | 유효 |
+| 감사 5 절반 (preset static header 소실) | 같은 줄. `provider.Headers`가 nil이면 preset 헤더가 사라짐 | 유효 |
+
+### 오늘의 provider-scope 스윕과 겹치지 않는다
+
+같은 날 `codex/260729-go-model-list-provider-filter`(`2a8395c9c`..`7ee5c32cc`)가 미설정 provider
+누출을 고쳤다. 그러나 **그 브랜치는 `dev2-go`에 머지되지 않았고**(`git merge-base --is-ancestor
+7b85e62d5 HEAD` → NO), 고친 층도 다르다: 그것은 `management`/`codex`의 **카탈로그 표시** 필터이고,
+여기는 `configuredRegistry`의 **라우팅 집합**이다. 표시를 막아도 bare `claude-*` 요청은 여전히
+built-in Anthropic으로 해석된다.
+
+### 문서가 쓴 것과 다른 사실 두 가지
+
+1. **`AllowBaseURLOverride`는 이미 있다** — `registry.go:39`. 필드 추가가 필요하다고 쓴 것은
+   틀렸다. `ollama`/`vllm`/`lm-studio`/`litellm`이 `:178,180`에서 참으로 설정된다.
+2. **`registry.IsLegacyProvider`는 없다.** go의 legacy id는
+   `providers.LegacyChatGPTProviderID`("chatgpt")와 `LegacyOpenAIMultiProviderID`("openai-multi")로
+   `providers/openai_tier_migration.go:10`에 있다. registry가 providers를 import하면 순환이 되는지
+   B에서 확인하고, 되면 registry 쪽에 상수를 두거나 `serve.go`에서 거른다.
+
+### 템플릿 판정
+
+오라클은 `router.ts:233`에서 `/\{[^}]*\}/`로 registry baseUrl이 템플릿인지 본다. go registry에
+같은 판정이 없으므로 `serve.go`(또는 registry 헬퍼)에 동등한 정규식을 둔다.
+
+### 이 사이클의 확정 범위
+
+`configuredRegistry` 한 함수. 세 가지를 바꾼다.
+
+1. 설정된·비활성화되지 않은 provider만 라우팅 집합에 넣는다 (legacy id 제외).
+2. built-in의 `Adapter`는 registry가 무조건 이긴다. `BaseURL`은 registry 값이 템플릿이거나
+   `AllowBaseURLOverride`일 때만 설정값을 쓰고, 버려질 때 경고한다.
+3. `StaticHeaders`는 병합한다 — preset 위에 설정값을 키 단위로 덮는다.
+
+`ListModels` 필터링은 **이 사이클에서 건드리지 않는다**: 위 1번이 registry 집합 자체를 줄이므로
+`ListModels`가 자동으로 좁아진다. 그것이 과도한 필터가 되는지는 C의 회귀가 답한다.
+
+### 되돌릴 수 없는 위험 하나
+
+라우팅 집합을 줄이면 **지금 우연히 동작하던 경로가 끊길 수 있다.** 예: config에 provider를
+등록하지 않고 built-in default model로 요청하던 사용자. 오라클이 그렇게 동작하므로 파리티상
+옳지만, C에서 기존 스위트 전체를 보고 끊긴 것이 있으면 그 테스트가 오라클과 맞는지 먼저 따진다.
+
+---
+
+## 결과 (커밋 `e81e57446`)
+
+감사 2·3·5-절반을 닫았다. `go build`/`go vet`/`go test ./...` 전부 통과.
+
+### 무엇을 바꿨나
+
+| 항목 | 변경 | 위치 |
+| --- | --- | --- |
+| 감사 2 | 설정된·비활성화되지 않은·legacy 아닌 provider만 라우팅 집합 | `serve.go` `configuredRegistry` |
+| 감사 3 | adapter는 registry가 항상 이김. baseURL은 preset이 템플릿이거나 `AllowBaseURLOverride`일 때만 설정값 | `serve.go` `canonicalProviderEntry` |
+| 감사 5 절반 | static header 병합(설정값이 키 단위로 우선) | `serve.go` `mergeStaticHeaders` |
+| 감사 5 나머지 | 런타임 registry에 `x-opencode-client: desktop` 추가 | `registry.go:181` |
+
+preset 순서를 유지하고 커스텀 provider는 정렬해 붙인다 — Go 맵 순회 순서가 대시보드 목록에
+새지 않게 하려는 것이다.
+
+### 어블레이션 (각 가드가 살아있다는 증거)
+
+수정을 하나씩 되돌렸을 때 **해당 테스트만** 깨진다.
+
+| 되돌린 것 | 깨진 테스트 |
+| --- | --- |
+| baseURL 핀 → 무조건 대입 | `TestConfiguredRegistryKeepsCanonicalAdapterAndEndpoint` |
+| disabled/legacy 필터 제거 | `TestConfiguredRegistryDropsDisabledProviders`, `...DropsLegacyProviderIDs` |
+| header 병합 → 대입 | `TestConfiguredRegistryMergesPresetStaticHeaders` |
+
+수정 전 트리에서 8개 중 5개가 실패했다는 것도 기록해둔다. 나머지 3개(템플릿 override,
+커스텀 provider, 설정 헤더 우선)는 처음부터 통과한 음성 사례다.
+
+### 기존 테스트 2개를 고쳤다 — 그 판단의 근거
+
+`cmd/ocx`의 두 테스트가 canonical `openai` provider의 baseUrl을 로컬 httptest 서버로
+돌려놓고 Authorization 헤더를 읽고 있었다. 이번 수정이 그 override를 버리므로 둘 다 깨졌다.
+
+**테스트가 옳은지 오라클에 직접 물었다.** `routeModel`에 `openai` + `127.0.0.1` baseUrl을
+주고 실행한 결과:
+
+```
+⚠️  config.json provider "openai": configured baseUrl http://127.0.0.1:59841/… is ignored
+   because this provider's endpoint is fixed at https://chatgpt.com/backend-api/codex.
+provider= openai baseUrl= https://chatgpt.com/backend-api/codex
+```
+
+오라클도 버린다. 즉 그 config는 애초에 성립하지 않았고, 두 테스트는 go의 버그에 기대고
+있었다. 그래서 가드를 약화시키지 않고 테스트를 옮겼다.
+
+- combo 테스트: `openai` 대신 설정 가능한 provider 둘로. 원래 검증 대상은 provider id가
+  아니라 **combo hop이 다음 타겟의 자격증명을 쓰는가**였고 그것은 그대로 남았다.
+- pool 테스트: in-process로 내렸다. 풀이 `"openai"` id에 묶여 있어(`serve.go:460`,
+  `authcontext.go:143`) 다른 provider로 옮길 수 없다. 대신 resolve된 auth context에
+  대해 검증한다 — 레거시 다중 계정이 canonical 풀로 해석되고 thread affinity가 유지되는가.
+
+### 남은 것
+
+- `wp6b`: destination policy 3갈래(4a/4b/4c). 4b가 보안 우회이므로 다음 사이클 1순위.
+- `wp6c`: go 레지스트리 이중화(`internal/registry` vs `internal/providers`). 이번에 헤더
+  하나를 양쪽에 맞췄을 뿐 이중화 자체는 그대로다. 관리 API 프리셋(`management/providers.go:15`)이
+  여전히 `providers` 쪽을 서빙한다.
