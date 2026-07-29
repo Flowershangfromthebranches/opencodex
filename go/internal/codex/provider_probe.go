@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/destination"
 )
 
 // ProviderProbeResult is what the dashboard's "test connection" button reports.
@@ -59,6 +60,9 @@ func ProbeProviderModels(ctx context.Context, client *http.Client, name string, 
 	if client == nil {
 		client = &http.Client{Timeout: 8 * time.Second}
 	}
+	// Same pinning as discovery: the probe fetches a URL the user typed, and a
+	// pre-check the dialer does not honour is not a check.
+	client = destination.PinnedClient(client, provider.AllowPrivateNetwork)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL.String(), nil)
 	if err != nil {
 		return ProviderProbeResult{Error: "provider models request could not be built"}

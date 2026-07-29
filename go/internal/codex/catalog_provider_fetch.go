@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/destination"
 )
 
 const maxProviderModelsResponseBytes = 8 << 20
@@ -77,6 +78,11 @@ func FetchProviderModels(ctx context.Context, options ProviderModelFetchOptions)
 			return providerFetchFallback(options, configured, DiscoveryFailureBlocked, 0, err)
 		}
 	}
+	// The pre-check above resolves the name; the client resolves it AGAIN when
+	// it dials, so on its own the check guarantees nothing — a name can answer
+	// public for the check and loopback for the connection. Pinning re-runs the
+	// policy against the concrete address at connect time.
+	client := destination.PinnedClient(options.Client, options.Provider.AllowPrivateNetwork)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL.String(), nil)
 	if err != nil {
 		return providerFetchFallback(options, configured, DiscoveryFailureNetwork, 0, err)
@@ -88,7 +94,7 @@ func FetchProviderModels(ctx context.Context, options ProviderModelFetchOptions)
 	if token := strings.TrimSpace(options.AccessToken); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	response, err := options.Client.Do(req)
+	response, err := client.Do(req)
 	if err != nil {
 		return providerFetchFallback(options, configured, DiscoveryFailureNetwork, 0, errors.New("provider models request failed"))
 	}
