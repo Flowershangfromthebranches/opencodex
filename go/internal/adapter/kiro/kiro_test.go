@@ -241,7 +241,7 @@ func TestMergeKiroUsageCarriesAbsoluteContextWithoutChangingTurnTotal(t *testing
 	}
 }
 
-func TestParseStreamFailsClosedOnEmptyTruncatedAndOversizedFrames(t *testing.T) {
+func TestParseStreamFailsClosedOnTruncatedAndOversizedFrames(t *testing.T) {
 	oversized := make([]byte, 12)
 	binary.BigEndian.PutUint32(oversized[:4], 16*1024*1024+1)
 	truncated := make([]byte, 12)
@@ -252,7 +252,6 @@ func TestParseStreamFailsClosedOnEmptyTruncatedAndOversizedFrames(t *testing.T) 
 		body []byte
 		want string
 	}{
-		{name: "empty", want: "empty response stream"},
 		{name: "truncated prelude", body: []byte{0, 0, 0}, want: "read prelude"},
 		{name: "truncated frame", body: truncated, want: "truncated frame"},
 		{name: "oversized frame", body: oversized, want: "exceeds maximum"},
@@ -263,6 +262,20 @@ func TestParseStreamFailsClosedOnEmptyTruncatedAndOversizedFrames(t *testing.T) 
 				t.Fatalf("events=%#v, want error containing %q", events, test.want)
 			}
 		})
+	}
+}
+
+// A zero-byte body reaches the same place a well-formed stream that said nothing
+// does, and the oracle answers both with a retryable incomplete rather than an
+// error (tests/kiro-stream.test.ts:782). Malformed frames above stay errors:
+// those are corruption, not silence.
+func TestParseStreamTreatsAnEmptyBodyAsAnEmptyStream(t *testing.T) {
+	events := collect((&Adapter{}).ParseStream(context.Background(), io.NopCloser(bytes.NewReader(nil))))
+	if len(events) != 1 || events[0].Type != types.EventIncomplete || events[0].Reason != "empty_kiro_stream" {
+		t.Fatalf("events=%#v, want a single empty_kiro_stream incomplete", events)
+	}
+	if !events[0].Retryable {
+		t.Fatal("an empty body is replay-safe: nothing reached the client")
 	}
 }
 

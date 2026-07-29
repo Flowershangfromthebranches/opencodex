@@ -790,7 +790,18 @@ func parseAttempt(ctx context.Context, body io.ReadCloser, mode CompletionMode, 
 		return result
 	}
 	if !result.sawText && !result.sawReasoning && !sawRealTool {
-		fail("Kiro returned a successful but empty response stream", true)
+		// An empty but successful stream is not an error: nothing went wrong on the
+		// wire, the model simply said nothing. Answering 502 makes a resumable turn
+		// look like an upstream failure, which the client then reports instead of
+		// continuing (oracle: src/adapters/kiro.ts:1235).
+		result.events = append(result.events, types.AdapterEvent{
+			Type:      types.EventIncomplete,
+			Reason:    "empty_kiro_stream",
+			Message:   "Kiro returned a successful but empty response stream",
+			Retryable: true,
+			EndTurn:   false,
+			Usage:     result.usage,
+		})
 		return result
 	}
 	stop := "stop"
