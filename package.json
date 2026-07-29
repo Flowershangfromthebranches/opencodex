@@ -41,6 +41,7 @@
     "typecheck": "bun x tsc --noEmit",
     "privacy:scan": "bun scripts/privacy-scan.ts",
     "generate:jawcode-metadata": "bun scripts/generate-jawcode-metadata.ts",
+    "generate:jawcode-go": "bun scripts/generate-jawcode-go.ts",
     "build:gui": "cd gui && bun install --frozen-lockfile && bun run build && cd .. && bun run prepare:package",
     "prepare:package": "bun scripts/prepare-package.ts",
     "prepare:native-package": "bun scripts/prepare-package.ts --native",
