@@ -750,6 +750,10 @@ func toolCallFromResponseItem(value any) *types.ToolCall {
 	}
 	id := firstString(item, "call_id", "id")
 	arguments := []byte(stringValue(item["arguments"]))
+	// Unlike the streaming paths, defaulting here is CORRECT and deliberate:
+	// this parses a history item, where a single poisoned entry would otherwise
+	// 400 every subsequent turn. The oracle does the same and warns
+	// (src/responses/parser.ts:442-452).
 	if !json.Valid(arguments) {
 		arguments = []byte("{}")
 	}

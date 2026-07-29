@@ -565,10 +565,14 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 				index := intValue(event["index"])
 				if blockTypes[index] == "tool_use" {
 					if pending := blocks[index]; pending != nil {
+						// Streamed arguments are forwarded as they arrived. The
+						// oracle emits each input_json_delta straight through
+						// (src/adapters/anthropic.ts:803) and never substitutes
+						// `{}`: doing so turns a truncated stream into a
+						// well-formed call the model never made, and the tool
+						// then runs with no arguments instead of the failure
+						// being visible.
 						arguments := []byte(pending.arguments.String())
-						if !json.Valid(arguments) {
-							arguments = []byte("{}")
-						}
 						emit(ctx, out, types.AdapterEvent{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: pending.id, Name: pending.name, Arguments: arguments}})
 					}
 				}

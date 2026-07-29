@@ -337,14 +337,31 @@ func accumulateChatCalls(value any, calls map[string]*pendingChatCall, order *[]
 		wire, _ := rawCall.(map[string]any)
 		index := intValue(wire["index"])
 		id := stringValue(wire["id"])
-		key := "i:" + strconv.Itoa(index)
-		if wire["index"] == nil && id != "" {
+		// Keying order matches the oracle (src/adapters/openai-chat.ts:752-756):
+		// `index` is the wire standard, `id` is the fallback, and a chunk
+		// carrying NEITHER continues the call last written. Defaulting that
+		// last case to index 0 corrupted two calls at once — the first grew a
+		// fragment it never had, and the call actually being streamed lost its
+		// tail.
+		var key string
+		switch {
+		case wire["index"] != nil:
+			key = "i:" + strconv.Itoa(index)
+		case id != "":
 			key = "id:" + id
+		case len(*order) > 0:
+			key = (*order)[len(*order)-1]
+		default:
+			key = "seq:" + strconv.Itoa(len(*order))
 		}
 		call := calls[key]
+		// Mixed-keying rescue: a call opened under an index key must still
+		// absorb an id-only continuation for the same provider id rather than
+		// splitting into two calls sharing one call_id. Scanned in `order` so
+		// the result does not depend on Go's map iteration.
 		if call == nil && id != "" {
-			for _, candidate := range calls {
-				if candidate.id == id {
+			for _, candidateKey := range *order {
+				if candidate := calls[candidateKey]; candidate != nil && candidate.id == id {
 					call = candidate
 					break
 				}
@@ -375,10 +392,12 @@ func flushChatCalls(emit func(types.AdapterEvent) bool, calls map[string]*pendin
 		if call.id == "" {
 			call.id = fmt.Sprintf("call_%d", sequence+1)
 		}
+		// Arguments travel exactly as the model sent them. Substituting `{}`
+		// for a truncated stream hands the caller a well-formed call the model
+		// never made: the tool then runs with no arguments instead of the
+		// failure surfacing. The oracle forwards the raw string
+		// (openai-chat.ts:666).
 		arguments := []byte(call.arguments.String())
-		if !json.Valid(arguments) {
-			arguments = []byte("{}")
-		}
 		if !emit(types.AdapterEvent{Type: types.EventToolCall, ToolCall: &types.ToolCall{ID: call.id, Name: call.name, Arguments: arguments}}) {
 			return false
 		}
