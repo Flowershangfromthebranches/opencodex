@@ -32,7 +32,7 @@ func TestProductionKeyRotationPersistsAndPreservesClaudeHandEdit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	cfg := appconfig.Default()
 	cfg.ClaudeCode = &appconfig.ClaudeCodeConfig{AuthMode: "subscription", AuthModeMigratedAt: "2026-07-26T00:00:00Z"}
-	cfg.Providers = map[string]appconfig.ProviderConfig{"acme": {Adapter: "openai", BaseURL: upstream.URL, AuthMode: "key", APIKey: "key-one", APIKeyPool: []appconfig.APIKeyEntry{{ID: "one", Key: "key-one"}, {ID: "two", Key: "key-two"}}}}
+	cfg.Providers = map[string]appconfig.ProviderConfig{"acme": {Adapter: "openai", BaseURL: upstream.URL, AuthMode: "key", APIKey: "key-one", AllowPrivateNetwork: true, APIKeyPool: []appconfig.APIKeyEntry{{ID: "one", Key: "key-one"}, {ID: "two", Key: "key-two"}}}}
 	cfg.DefaultProvider = "acme"
 	if err := appconfig.Save(path, &cfg); err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestProductionKeyRotationSaveFailureDoesNotMutateLiveConfig(t *testing.T) {
 	}
 	path := filepath.Join(blocker, "config.json")
 	cfg := appconfig.Default()
-	cfg.Providers = map[string]appconfig.ProviderConfig{"acme": {Adapter: "openai", BaseURL: upstream.URL, AuthMode: "key", APIKey: "key-one", APIKeyPool: []appconfig.APIKeyEntry{{ID: "one", Key: "key-one"}, {ID: "two", Key: "key-two"}}}}
+	cfg.Providers = map[string]appconfig.ProviderConfig{"acme": {Adapter: "openai", BaseURL: upstream.URL, AuthMode: "key", APIKey: "key-one", AllowPrivateNetwork: true, APIKeyPool: []appconfig.APIKeyEntry{{ID: "one", Key: "key-one"}, {ID: "two", Key: "key-two"}}}}
 	cfg.DefaultProvider = "acme"
 	persistence := appconfig.NewLivePersistence(path, &cfg)
 	reg := registry.New(registry.Provider{ID: "acme", BaseURL: upstream.URL, DefaultModel: "wire", Models: []registry.ModelDefinition{{ID: "wire"}}})
@@ -116,7 +116,7 @@ func TestProductionRoutingReadsSharePersistenceLockWithRuntimeWrites(t *testing.
 	defer upstream.Close()
 	path := filepath.Join(t.TempDir(), "config.json")
 	cfg := appconfig.Default()
-	cfg.Providers = map[string]appconfig.ProviderConfig{"acme": {Adapter: "openai", BaseURL: upstream.URL, AuthMode: "key", APIKey: "key-one", ResponsesItemIDRepair: &appconfig.ResponsesItemIDRepairConfig{Message: []string{"msg"}}}}
+	cfg.Providers = map[string]appconfig.ProviderConfig{"acme": {Adapter: "openai", BaseURL: upstream.URL, AuthMode: "key", APIKey: "key-one", AllowPrivateNetwork: true, ResponsesItemIDRepair: &appconfig.ResponsesItemIDRepairConfig{Message: []string{"msg"}}}}
 	cfg.DefaultProvider = "acme"
 	if err := appconfig.Save(path, &cfg); err != nil {
 		t.Fatal(err)

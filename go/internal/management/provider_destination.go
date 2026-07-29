@@ -8,20 +8,29 @@ import (
 	"strings"
 
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 )
 
 type ProviderDNSLookup func(context.Context, string) ([]net.IP, error)
 
 func (a *API) providerDestinationResolvedError(ctx context.Context, name string, provider config.ProviderConfig, allowBenchmark bool) error {
-	if provider.AllowPrivateNetwork || registryAllowsPrivateNetwork(name) {
-		return nil
-	}
 	parsed, err := url.Parse(strings.TrimSpace(provider.BaseURL))
 	if err != nil || parsed.Hostname() == "" {
 		return nil
 	}
 	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	// Metadata is judged BEFORE the allow switch, matching the oracle's order
+	// (src/lib/destination-policy.ts:134-141). `allowPrivateNetwork` exists so
+	// a provider can point at a LAN runtime; it must not also unblock the
+	// instance-credential endpoint. Checking it afterwards, as this did, meant
+	// one common opt-in turned the proxy into an exfiltration path.
+	if kind, _ := ocxlib.ClassifyDestinationHost(host); kind == "metadata" {
+		return fmt.Errorf("baseUrl targets a blocked metadata endpoint")
+	}
+	if provider.AllowPrivateNetwork || registryAllowsPrivateNetwork(name) {
+		return nil
+	}
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		return fmt.Errorf("baseUrl points to a localhost destination; set allowPrivateNetwork:true only for intentionally local/self-hosted providers")
 	}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/combos"
+	"github.com/lidge-jun/opencodex-go/internal/destination"
 	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
@@ -768,6 +769,15 @@ func (c Config) Validate() error {
 		}
 		if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 			return &ConfigError{Field: "providers." + name + ".baseUrl", Message: "must not contain credentials, query, or fragment"}
+		}
+		// Syntax is not a destination. A config.json aimed at the instance
+		// metadata endpoint parses perfectly, and the oracle rejects it right
+		// here (src/config.ts:781) rather than letting it reach a request.
+		if message := destination.ConfigError(provider.BaseURL, destination.Options{
+			AllowPrivateNetwork:          provider.AllowPrivateNetwork,
+			RegistryAllowsPrivateNetwork: registryAllowsPrivateNetwork(name),
+		}); message != "" {
+			return &ConfigError{Field: "providers." + name + ".baseUrl", Message: message}
 		}
 		if path := provider.ResponsesPath; path != "" {
 			if responsePathSchemePattern.MatchString(path) || strings.Contains(path, "://") {
