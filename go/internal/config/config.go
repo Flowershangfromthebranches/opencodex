@@ -49,6 +49,10 @@ type Config struct {
 	InjectionModel              string                     `json:"injectionModel,omitempty"`
 	InjectionEffort             string                     `json:"injectionEffort,omitempty"`
 	InjectionPrompt             string                     `json:"injectionPrompt,omitempty"`
+	// SyncCodexSubagentDefaults mirrors the injection model into Codex's own
+	// subagent defaults. Only meaningful alongside an injection model, which is
+	// why the effective value is computed rather than read directly.
+	SyncCodexSubagentDefaults *bool `json:"syncCodexSubagentDefaults,omitempty"`
 	FastMode                    *bool                      `json:"fastMode,omitempty"`
 	StreamMode                  string                     `json:"streamMode,omitempty"`
 	EffortCap                   string                     `json:"effortCap,omitempty"`

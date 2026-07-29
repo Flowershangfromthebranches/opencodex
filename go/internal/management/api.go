@@ -138,7 +138,7 @@ func New(options Options) (*API, error) {
 	if mode == "" {
 		mode = "default"
 	}
-	agents := AgentSettings{Models: append([]string(nil), cfg.SubagentModels...), InjectionModel: cfg.InjectionModel, InjectionEffort: cfg.InjectionEffort, InjectionPrompt: cfg.InjectionPrompt, GuidanceEnabled: cfg.MultiAgentGuidanceEnabled, EffortCap: cfg.EffortCap, SubagentEffortCap: cfg.SubagentEffortCap, MaxConcurrency: 1, MultiAgentMode: mode}
+	agents := AgentSettings{Models: append([]string(nil), cfg.SubagentModels...), InjectionModel: cfg.InjectionModel, InjectionEffort: cfg.InjectionEffort, InjectionPrompt: cfg.InjectionPrompt, GuidanceEnabled: cfg.MultiAgentGuidanceEnabled, SyncSubagentDefaults: cfg.SyncCodexSubagentDefaults, EffortCap: cfg.EffortCap, SubagentEffortCap: cfg.SubagentEffortCap, MaxConcurrency: 1, MultiAgentMode: mode}
 	customModels := make(map[string]CustomModel, len(cfg.CustomModels))
 	for _, model := range cfg.CustomModels {
 		customModels[model.ID] = model

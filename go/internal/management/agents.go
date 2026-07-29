@@ -65,12 +65,13 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 			a.mu.RLock()
 			settings := a.agents
 			a.mu.RUnlock()
-			writeJSON(w, http.StatusOK, map[string]any{"multiAgentGuidanceEnabled": settings.GuidanceEnabled == nil || *settings.GuidanceEnabled, "model": nullable(settings.InjectionModel), "effort": nullable(settings.InjectionEffort), "prompt": nullable(settings.InjectionPrompt), "efforts": effortList, "available": a.availableModelsExcludingDisabled()})
+			writeJSON(w, http.StatusOK, map[string]any{"multiAgentGuidanceEnabled": settings.GuidanceEnabled == nil || *settings.GuidanceEnabled, "model": nullable(settings.InjectionModel), "effort": nullable(settings.InjectionEffort), "prompt": nullable(settings.InjectionPrompt), "efforts": effortList, "available": a.availableModelsExcludingDisabled(), "syncCodexSubagentDefaults": subagentDefaultSyncEffective(settings)})
 			return true
 		}
 		if r.Method == http.MethodPut {
 			var body struct {
 				MultiAgentGuidanceEnabled *bool   `json:"multiAgentGuidanceEnabled,omitempty"`
+				SyncCodexSubagentDefaults *bool   `json:"syncCodexSubagentDefaults,omitempty"`
 				Model                     *string `json:"model,omitempty"`
 				Effort                    *string `json:"effort,omitempty"`
 				Prompt                    *string `json:"prompt,omitempty"`
@@ -111,27 +112,34 @@ func (a *API) handleAgents(w http.ResponseWriter, r *http.Request) bool {
 				value := *body.MultiAgentGuidanceEnabled
 				candidate.GuidanceEnabled = &value
 			}
+			if body.SyncCodexSubagentDefaults != nil {
+				value := *body.SyncCodexSubagentDefaults
+				candidate.SyncSubagentDefaults = &value
+			}
 			a.mu.Lock()
 			previous := cloneAgentSettings(a.agents)
 			previousModel, previousEffort := a.config.InjectionModel, a.config.InjectionEffort
 			previousPrompt, previousGuidance := a.config.InjectionPrompt, a.config.MultiAgentGuidanceEnabled
+			previousSync := a.config.SyncCodexSubagentDefaults
 			a.agents = candidate
 			a.config.InjectionModel = candidate.InjectionModel
 			a.config.InjectionEffort = candidate.InjectionEffort
 			a.config.InjectionPrompt = candidate.InjectionPrompt
 			a.config.MultiAgentGuidanceEnabled = candidate.GuidanceEnabled
+			a.config.SyncCodexSubagentDefaults = candidate.SyncSubagentDefaults
 			err := a.saveLocked()
 			if err != nil {
 				a.agents = previous
 				a.config.InjectionModel, a.config.InjectionEffort = previousModel, previousEffort
 				a.config.InjectionPrompt, a.config.MultiAgentGuidanceEnabled = previousPrompt, previousGuidance
+				a.config.SyncCodexSubagentDefaults = previousSync
 			}
 			a.mu.Unlock()
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "save injection settings failed")
 				return true
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "multiAgentGuidanceEnabled": candidate.GuidanceEnabled == nil || *candidate.GuidanceEnabled, "model": nullable(candidate.InjectionModel), "effort": nullable(candidate.InjectionEffort), "prompt": nullable(candidate.InjectionPrompt)})
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "multiAgentGuidanceEnabled": candidate.GuidanceEnabled == nil || *candidate.GuidanceEnabled, "model": nullable(candidate.InjectionModel), "effort": nullable(candidate.InjectionEffort), "prompt": nullable(candidate.InjectionPrompt), "syncCodexSubagentDefaults": subagentDefaultSyncEffective(candidate)})
 			return true
 		}
 	case "/api/effort-caps":

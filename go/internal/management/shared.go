@@ -33,15 +33,16 @@ type Combo struct {
 	Targets  []ComboTarget `json:"targets"`
 }
 type AgentSettings struct {
-	Models            []string `json:"models"`
-	InjectionModel    string   `json:"injectionModel,omitempty"`
-	InjectionEffort   string   `json:"injectionEffort,omitempty"`
-	EffortCap         string   `json:"effortCap,omitempty"`
-	SubagentEffortCap string   `json:"subagentEffortCap,omitempty"`
-	MaxConcurrency    int      `json:"maxConcurrency"`
-	MultiAgentMode    string   `json:"multiAgentMode"`
-	InjectionPrompt   string   `json:"injectionPrompt,omitempty"`
-	GuidanceEnabled   *bool    `json:"multiAgentGuidanceEnabled,omitempty"`
+	Models               []string `json:"models"`
+	InjectionModel       string   `json:"injectionModel,omitempty"`
+	InjectionEffort      string   `json:"injectionEffort,omitempty"`
+	EffortCap            string   `json:"effortCap,omitempty"`
+	SubagentEffortCap    string   `json:"subagentEffortCap,omitempty"`
+	MaxConcurrency       int      `json:"maxConcurrency"`
+	MultiAgentMode       string   `json:"multiAgentMode"`
+	InjectionPrompt      string   `json:"injectionPrompt,omitempty"`
+	GuidanceEnabled      *bool    `json:"multiAgentGuidanceEnabled,omitempty"`
+	SyncSubagentDefaults *bool    `json:"syncCodexSubagentDefaults,omitempty"`
 }
 
 type orderedJSONField struct {
