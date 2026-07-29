@@ -236,7 +236,7 @@ func sanitizeResponsesBodyForRequest(body map[string]any, forward bool, request 
 		repairOrphanedResponsesInput(body, unexpandedMiss)
 		stripUnsupportedForwardAdapterParams(body)
 	} else {
-		stripConflictingHostedTools(body)
+		normalizeImageGenClientTools(body)
 	}
 	if forward || request.PreviousExpanded {
 		repairOversizedReplayCallIDs(body)
@@ -427,33 +427,6 @@ func repairOversizedReplayCallIDs(body map[string]any) {
 		occupied[alias] = struct{}{}
 		item["call_id"] = alias
 	}
-}
-
-func stripConflictingHostedTools(body map[string]any) {
-	tools := sliceValue(body["tools"])
-	conflict := false
-	for _, raw := range tools {
-		tool, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		name := stringValue(tool["name"])
-		if name == "image_gen" || strings.HasPrefix(name, "image_gen.") {
-			conflict = true
-			break
-		}
-	}
-	if !conflict {
-		return
-	}
-	kept := make([]any, 0, len(tools))
-	for _, raw := range tools {
-		tool, _ := raw.(map[string]any)
-		if stringValue(tool["type"]) != "image_generation" {
-			kept = append(kept, raw)
-		}
-	}
-	body["tools"] = kept
 }
 
 func stripUnsupportedResponsesHostedTools(body map[string]any) {
