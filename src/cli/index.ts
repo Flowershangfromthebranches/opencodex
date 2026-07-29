@@ -300,9 +300,17 @@ async function handleStart(options: { block?: boolean } = {}) {
 
   // System-wide env injection AFTER signal handlers are registered (crash safety:
   // syncCleanup reverts even if injection itself or subsequent startup steps fail).
-  await injectSystemEnv(port, config).catch(() => {});
-  // Auto-install .zshrc hook (idempotent — skips if already present).
-  installShellHook();
+  const systemEnv = await injectSystemEnv(port, config).catch(() => ({ injected: false }));
+  // The hook follows the SAME opt-in as the injection it exists to serve. Writing
+  // it unconditionally left a permanent line in the user's shell profile for a
+  // feature they never enabled, and it would silently go live the moment the
+  // sourced file appeared. Opting out removes it again, so the profile never
+  // outlives the setting that authorized it.
+  if (systemEnv.injected) {
+    installShellHook();
+  } else {
+    uninstallShellHook();
+  }
 
   await maybeShowStarPrompt(); // once-only Yes/No GitHub-star prompt on first interactive start
   await syncModelsToCodex(port).catch(() => {});
