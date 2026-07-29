@@ -58,6 +58,17 @@ func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return true
 		}
+		// A provider and an account selector share one routing space, so a name
+		// that shadows a configured namespace is refused rather than resolved
+		// by lookup order. 409 rather than 400: the request is well formed, it
+		// conflicts with existing state (oracle: provider-routes.ts:105-108).
+		a.mu.RLock()
+		collision := codex.CodexAccountNamespaceProviderCollisionError(a.config.CodexAccountNamespaces, body.Name)
+		a.mu.RUnlock()
+		if collision != "" {
+			writeError(w, http.StatusConflict, collision)
+			return true
+		}
 		a.mu.Lock()
 		candidate := *a.config
 		candidate.Providers = cloneProviders(a.config.Providers)

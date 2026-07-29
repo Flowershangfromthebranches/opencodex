@@ -92,6 +92,10 @@ type Config struct {
 	// Opt-in Anthropic OAuth account pool. Default OFF.
 	AnthropicAccountPool *AnthropicAccountPoolConfig `json:"anthropicAccountPool,omitempty"`
 	CodexAccounts        []CodexAccount              `json:"codexAccounts,omitempty"`
+	// CodexAccountNamespaces maps a PUBLIC account selector to the pool account
+	// it routes to. Selectors live in the same space as provider ids and combo
+	// aliases, so the validator refuses collisions in every direction.
+	CodexAccountNamespaces map[string]string `json:"codexAccountNamespaces,omitempty"`
 	ActiveCodexAccountID string                      `json:"activeCodexAccountId,omitempty"`
 	// PausedCodexAccountIDs are administratively excluded from pool selection. Pausing is not
 	// a credential or health state: the account stays listed and logged in, it just stops
@@ -963,6 +967,9 @@ func validateExtendedConfig(c Config) error {
 		}
 	}
 	seenAccounts := make(map[string]bool, len(c.CodexAccounts))
+	if err := validateCodexAccountNamespaces(c); err != nil {
+		return err
+	}
 	for index, account := range c.CodexAccounts {
 		field := fmt.Sprintf("codexAccounts.%d", index)
 		if strings.TrimSpace(account.ID) == "" || seenAccounts[account.ID] {
