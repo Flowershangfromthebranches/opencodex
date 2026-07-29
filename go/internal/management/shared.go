@@ -122,6 +122,15 @@ func publicProvider(name string, provider config.ProviderConfig) map[string]any 
 	if provider.CodexAccountMode != "" {
 		row["codexAccountMode"] = provider.CodexAccountMode
 	}
+	// The dashboard's editor renders from this DTO, so a configured field that
+	// is missing here shows as its default — and gets written back that way on
+	// save. The oracle exposes both (src/server/management/provider-routes.ts:84).
+	if provider.APIKeyTransport != "" {
+		row["apiKeyTransport"] = provider.APIKeyTransport
+	}
+	if provider.Note != "" {
+		row["note"] = provider.Note
+	}
 	return row
 }
 

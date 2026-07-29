@@ -36,7 +36,7 @@ func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) bool {
 		rows := make([]any, 0, len(names))
 		for _, name := range names {
 			row := publicProvider(name, a.config.Providers[name])
-			rows = append(rows, orderedFromMap(row, []string{"name", "adapter", "baseUrl", "defaultModel", "hasApiKey", "allowPrivateNetwork", "liveModels", "models", "authMode", "disabled", "codexAccountMode", "discovery"}))
+			rows = append(rows, orderedFromMap(row, []string{"name", "adapter", "baseUrl", "defaultModel", "hasApiKey", "allowPrivateNetwork", "liveModels", "models", "authMode", "disabled", "codexAccountMode", "apiKeyTransport", "note", "discovery"}))
 		}
 		a.mu.RUnlock()
 		writeJSON(w, http.StatusOK, rows)
@@ -345,6 +345,28 @@ func applyProviderPatch(provider *config.ProviderConfig, patch map[string]any) e
 				return fieldError(key, "must be a boolean")
 			}
 			provider.LiveModels = &v
+		case "apiKeyTransport":
+			// The dashboard's editor sends this; rejecting it made the edit
+			// fail silently. Empty clears, matching the oracle's delete-on-empty
+			// (src/server/management/provider-routes.ts:223-234).
+			v, ok := value.(string)
+			if !ok {
+				return fieldError(key, "must be a string")
+			}
+			switch strings.TrimSpace(v) {
+			case "x-api-key", "bearer":
+				provider.APIKeyTransport = strings.TrimSpace(v)
+			case "":
+				provider.APIKeyTransport = ""
+			default:
+				return fieldError(key, "must be x-api-key, bearer, or empty to clear")
+			}
+		case "note":
+			v, ok := value.(string)
+			if !ok {
+				return fieldError(key, "must be a string")
+			}
+			provider.Note = strings.TrimSpace(v)
 		default:
 			return fieldError(key, "is not patchable")
 		}
