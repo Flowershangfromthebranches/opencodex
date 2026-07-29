@@ -217,6 +217,53 @@ func appendCodexRuntimeCheck(parent context.Context, report *doctorReport, deps 
 		return
 	}
 	report.add(doctorCheck{Name: "Codex runtime", Status: doctorPass, Detail: path + " (" + version + ")"})
+	appendCodexRuntimeUpgradeChecks(report)
+}
+
+// appendCodexRuntimeUpgradeChecks reports the two things a healthy version
+// string still hides: a newer runtime sitting unused, and reasoning efforts the
+// last catalog sync had to drop because the selected runtime could not serve
+// them.
+//
+// The clamp one matters most. Efforts disappear silently during sync, so a user
+// who asks for xhigh and quietly gets high has no way to discover why without
+// this line. The oracle prints both (src/cli/doctor.ts:706-718).
+func appendCodexRuntimeUpgradeChecks(report *doctorReport) {
+	home, err := configDir()
+	if err != nil {
+		return
+	}
+	options := codex.ResolveCodexRuntimeOptions{ConfigDir: home}
+	resolved := codex.ResolveCodexRuntime(options)
+	if resolved.NewerAvailable != nil {
+		version := resolved.NewerAvailable.Version
+		if version == "" {
+			version = "unknown"
+		}
+		report.add(doctorCheck{
+			Name:   "Codex runtime upgrade",
+			Status: doctorInfo,
+			Detail: "newer usable runtime found: " + codex.DisplayCodexRuntimePath(resolved.NewerAvailable.Command, home) + " (" + version + ")",
+			Hint:   "Run 'ocx doctor --fix-codex-runtime', then 'ocx sync'.",
+		})
+	}
+	clamp := codex.LoadLastEffortClamp(options)
+	if clamp == nil || len(clamp.RemovedEfforts) == 0 {
+		return
+	}
+	status := doctorInfo
+	if codex.EffortClampAppliesToRuntime(clamp, resolved.Runtime) {
+		// Only a warning when the clamp applies to the runtime in use; a stale
+		// record from a runtime the user already moved off is history, not a
+		// live problem.
+		status = doctorWarn
+	}
+	report.add(doctorCheck{
+		Name:   "Codex effort clamp",
+		Status: status,
+		Detail: strings.Join(clamp.RemovedEfforts, " and ") + " were removed during catalog sync",
+		Hint:   "Select a newer Codex runtime ('ocx doctor --fix-codex-runtime') and run 'ocx sync'.",
+	})
 }
 
 func appendProxyHealthCheck(parent context.Context, report *doctorReport, host string, port, configuredPort int) {
