@@ -97,7 +97,7 @@ func (f *XAIFlow) Exchange(ctx context.Context, code, _ string, redirectURI stri
 	return f.postToken(ctx, discovery.TokenEndpoint, url.Values{
 		"grant_type": {"authorization_code"}, "client_id": {XAIOAuthClientID}, "code": {code},
 		"redirect_uri": {redirectURI}, "code_verifier": {verifier},
-	}, "")
+	}, "", "")
 }
 
 func (f *XAIFlow) Refresh(ctx context.Context, refreshToken string) (OAuthCredentials, error) {
@@ -110,7 +110,7 @@ func (f *XAIFlow) Refresh(ctx context.Context, refreshToken string) (OAuthCreden
 	}
 	return f.postToken(ctx, discovery.TokenEndpoint, url.Values{
 		"grant_type": {"refresh_token"}, "client_id": {XAIOAuthClientID}, "refresh_token": {refreshToken},
-	}, refreshToken)
+	}, refreshToken, "xai")
 }
 
 func (f *XAIFlow) Discover(ctx context.Context) (XAIDiscovery, error) {
@@ -149,7 +149,10 @@ func (f *XAIFlow) Discover(ctx context.Context) (XAIDiscovery, error) {
 	return XAIDiscovery{AuthorizationEndpoint: authorizationEndpoint, TokenEndpoint: tokenEndpoint}, nil
 }
 
-func (f *XAIFlow) postToken(ctx context.Context, endpoint string, values url.Values, refreshFallback string) (OAuthCredentials, error) {
+// terminalRefreshProvider names the provider when this call is a refresh, and is
+// empty for an authorization-code exchange. Only the refresh case may produce a
+// TerminalRefreshError.
+func (f *XAIFlow) postToken(ctx context.Context, endpoint string, values url.Values, refreshFallback string, terminalRefreshProvider string) (OAuthCredentials, error) {
 	var last error
 	for attempt := 1; attempt <= 3; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(values.Encode()))
@@ -177,7 +180,11 @@ func (f *XAIFlow) postToken(ctx context.Context, endpoint string, values url.Val
 		if response.StatusCode >= 200 && response.StatusCode < 300 {
 			return f.credentialsFromToken(body, refreshFallback)
 		}
-		last = safeXAITokenError(response.StatusCode, body)
+		failure, code := parseXAITokenError(response.StatusCode, body)
+		last = failure
+		if terminalRefreshProvider != "" {
+			last = NewRefreshHTTPError(terminalRefreshProvider, response.StatusCode, code, failure)
+		}
 		if attempt == 3 || (response.StatusCode != http.StatusTooManyRequests && response.StatusCode < 500) {
 			return OAuthCredentials{}, last
 		}
@@ -236,14 +243,21 @@ func validateXAIEndpoint(raw string) (string, error) {
 }
 
 func safeXAITokenError(status int, body []byte) error {
+	err, _ := parseXAITokenError(status, body)
+	return err
+}
+
+// parseXAITokenError also hands back the raw OAuth error code so a refresh
+// caller can decide whether the failure is terminal.
+func parseXAITokenError(status int, body []byte) (error, string) {
 	var payload struct {
 		Error string `json:"error"`
 	}
 	_ = json.Unmarshal(body, &payload)
 	if payload.Error != "" {
-		return fmt.Errorf("xAI token request failed: HTTP %d %s", status, payload.Error)
+		return fmt.Errorf("xAI token request failed: HTTP %d %s", status, payload.Error), payload.Error
 	}
-	return fmt.Errorf("xAI token request failed: HTTP %d", status)
+	return fmt.Errorf("xAI token request failed: HTTP %d", status), ""
 }
 
 func randomXAINonce() (string, error) {

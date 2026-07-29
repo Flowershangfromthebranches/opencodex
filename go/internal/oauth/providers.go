@@ -90,7 +90,7 @@ func (f *ChatGPTFlow) Exchange(ctx context.Context, code, _ string, redirectURI 
 		"redirect_uri":  {redirectURI},
 		"code_verifier": {verifier},
 	}
-	return f.postToken(ctx, values, "ChatGPT token exchange")
+	return f.postToken(ctx, values, "ChatGPT token exchange", "")
 }
 
 func (f *ChatGPTFlow) Refresh(ctx context.Context, refreshToken string) (OAuthCredentials, error) {
@@ -98,10 +98,13 @@ func (f *ChatGPTFlow) Refresh(ctx context.Context, refreshToken string) (OAuthCr
 		"grant_type":    {"refresh_token"},
 		"client_id":     {chatGPTClientID},
 		"refresh_token": {refreshToken},
-	}, "ChatGPT refresh")
+	}, "ChatGPT refresh", "openai")
 }
 
-func (f *ChatGPTFlow) postToken(ctx context.Context, values url.Values, operation string) (OAuthCredentials, error) {
+// terminalRefreshProvider names the provider when this call is a refresh, and is
+// empty for an authorization-code exchange. Only the refresh case may produce a
+// TerminalRefreshError.
+func (f *ChatGPTFlow) postToken(ctx context.Context, values url.Values, operation string, terminalRefreshProvider string) (OAuthCredentials, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatGPTTokenURL, strings.NewReader(values.Encode()))
 	if err != nil {
 		return OAuthCredentials{}, err
@@ -117,7 +120,11 @@ func (f *ChatGPTFlow) postToken(ctx context.Context, values url.Values, operatio
 		return OAuthCredentials{}, fmt.Errorf("%s response: %w", operation, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return OAuthCredentials{}, safeOAuthHTTPError(operation, response.StatusCode, body)
+		failure, code := parseOAuthHTTPError(operation, response.StatusCode, body)
+		if terminalRefreshProvider != "" {
+			return OAuthCredentials{}, NewRefreshHTTPError(terminalRefreshProvider, response.StatusCode, code, failure)
+		}
+		return OAuthCredentials{}, failure
 	}
 	var token tokenResponse
 	if err := json.Unmarshal(body, &token); err != nil {
@@ -187,7 +194,7 @@ func (f *AnthropicFlow) Exchange(ctx context.Context, code, state, redirectURI s
 		"state":         state,
 		"redirect_uri":  redirectURI,
 		"code_verifier": verifier,
-	}, "Anthropic token exchange", "")
+	}, "Anthropic token exchange", "", "")
 }
 
 func (f *AnthropicFlow) Refresh(ctx context.Context, refreshToken string) (OAuthCredentials, error) {
@@ -195,10 +202,13 @@ func (f *AnthropicFlow) Refresh(ctx context.Context, refreshToken string) (OAuth
 		"grant_type":    "refresh_token",
 		"client_id":     anthropicClientID,
 		"refresh_token": refreshToken,
-	}, "Anthropic refresh", refreshToken)
+	}, "Anthropic refresh", refreshToken, "anthropic")
 }
 
-func (f *AnthropicFlow) postToken(ctx context.Context, payload map[string]any, operation, refreshFallback string) (OAuthCredentials, error) {
+// terminalRefreshProvider names the provider when this call is a refresh, and is
+// empty for an authorization-code exchange. Only the refresh case may produce a
+// TerminalRefreshError.
+func (f *AnthropicFlow) postToken(ctx context.Context, payload map[string]any, operation, refreshFallback string, terminalRefreshProvider string) (OAuthCredentials, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return OAuthCredentials{}, err
@@ -219,7 +229,11 @@ func (f *AnthropicFlow) postToken(ctx context.Context, payload map[string]any, o
 		return OAuthCredentials{}, fmt.Errorf("%s response: %w", operation, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return OAuthCredentials{}, safeOAuthHTTPError(operation, response.StatusCode, responseBody)
+		failure, code := parseOAuthHTTPError(operation, response.StatusCode, responseBody)
+		if terminalRefreshProvider != "" {
+			return OAuthCredentials{}, NewRefreshHTTPError(terminalRefreshProvider, response.StatusCode, code, failure)
+		}
+		return OAuthCredentials{}, failure
 	}
 	var token tokenResponse
 	if err := json.Unmarshal(responseBody, &token); err != nil {
@@ -328,6 +342,14 @@ func decodeJWTClaims(token string) map[string]any {
 }
 
 func safeOAuthHTTPError(operation string, status int, body []byte) error {
+	err, _ := parseOAuthHTTPError(operation, status, body)
+	return err
+}
+
+// parseOAuthHTTPError builds the display-safe error and also hands back the raw
+// OAuth error code, which refresh callers need to decide whether the failure is
+// terminal. Non-refresh callers keep using safeOAuthHTTPError and ignore it.
+func parseOAuthHTTPError(operation string, status int, body []byte) (error, string) {
 	var parsed struct {
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description"`
@@ -344,7 +366,7 @@ func safeOAuthHTTPError(operation string, status int, body []byte) error {
 	if detail == "" {
 		detail = http.StatusText(status)
 	}
-	return fmt.Errorf("%s failed: HTTP %d %s", operation, status, detail)
+	return fmt.Errorf("%s failed: HTTP %d %s", operation, status, detail), parsed.Error
 }
 
 // APIKeyCredential converts manual key input into a request-time auth config.

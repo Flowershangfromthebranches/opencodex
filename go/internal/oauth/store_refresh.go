@@ -57,6 +57,9 @@ func (s *CredentialStore) RefreshAccount(ctx context.Context, provider, accountI
 
 	updated, err := refresh(ctx, current.Refresh)
 	if err != nil {
+		if terminal := s.markTerminalRefresh(ctx, provider, accountID, currentGen, err); terminal != nil {
+			return RefreshResult{}, terminal
+		}
 		return RefreshResult{}, err
 	}
 	updated = mergeRefreshedCredential(updated, current)
@@ -111,6 +114,9 @@ func (s *CredentialStore) RefreshAccountIfGeneration(
 	}
 	updated, err := refresh(ctx, current.Refresh)
 	if err != nil {
+		if terminal := s.markTerminalRefresh(ctx, provider, accountID, expected, err); terminal != nil {
+			return RefreshResult{}, terminal
+		}
 		return RefreshResult{}, err
 	}
 	updated = mergeRefreshedCredential(updated, current)
@@ -220,4 +226,20 @@ func safeLockRune(r rune) rune {
 		return r
 	}
 	return '_'
+}
+
+// markTerminalRefresh records that a grant is gone so the account stops being
+// retried and the dashboard can tell the user to log in again. It returns a
+// non-nil error only when it acted.
+//
+// Lock order matters: this runs while the caller holds the per-account refresh
+// lock, and MarkNeedsReauth takes the separate store mutation lock. Never call
+// it from inside a store mutate callback.
+func (s *CredentialStore) markTerminalRefresh(ctx context.Context, provider, accountID, generation string, err error) error {
+	if !IsTerminalRefreshError(err) {
+		return nil
+	}
+	_, _ = s.MarkNeedsReauth(ctx, provider, accountID, generation)
+	LogOAuthEvent("OAuth refresh failed terminally", map[string]any{"provider": provider, "accountId": accountID})
+	return fmt.Errorf("%w: %s", ErrLoginRequired, provider)
 }

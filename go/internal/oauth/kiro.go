@@ -194,7 +194,12 @@ func (f *KiroFlow) Refresh(ctx context.Context, imported KiroImportedCredential)
 		return OAuthCredentials{}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return OAuthCredentials{}, fmt.Errorf("Kiro token refresh failed: HTTP %d", response.StatusCode)
+		code := kiroOAuthErrorCode(responseBody)
+		failure := fmt.Errorf("Kiro token refresh failed: HTTP %d", response.StatusCode)
+		if code != "" {
+			failure = fmt.Errorf("Kiro token refresh failed: HTTP %d: %s", response.StatusCode, code)
+		}
+		return OAuthCredentials{}, NewRefreshHTTPError("kiro", response.StatusCode, code, failure)
 	}
 	var wire struct {
 		Access  string `json:"accessToken"`
@@ -218,4 +223,17 @@ func (f *KiroFlow) now() time.Time {
 		return f.Now()
 	}
 	return time.Now()
+}
+
+// kiroOAuthErrorCode pulls the OAuth error out of a Kiro refresh failure body.
+// The allowlist lives in refresh_error.go; anything else is dropped so an
+// upstream body can never smuggle text into our error surface.
+func kiroOAuthErrorCode(body []byte) string {
+	var parsed struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &parsed) != nil {
+		return ""
+	}
+	return allowlistedOAuthErrorCode(parsed.Error)
 }

@@ -102,11 +102,13 @@ func (f *GithubCopilotFlow) Refresh(ctx context.Context, durableGrant string) (O
 		}
 		_ = json.Unmarshal(body, &payload)
 		if response.StatusCode < 200 || response.StatusCode >= 300 || payload.AccessToken == "" {
-			code := ""
-			if payload.Error == "invalid_grant" || payload.Error == "access_denied" || payload.Error == "expired_token" {
-				code = ": " + payload.Error
+			code := allowlistedOAuthErrorCode(payload.Error)
+			suffix := ""
+			if code != "" {
+				suffix = ": " + code
 			}
-			return OAuthCredentials{}, fmt.Errorf("GitHub Copilot token refresh failed%s (HTTP %d)", code, response.StatusCode)
+			failure := fmt.Errorf("GitHub Copilot token refresh failed%s (HTTP %d)", suffix, response.StatusCode)
+			return OAuthCredentials{}, NewRefreshHTTPError("github-copilot", response.StatusCode, code, failure)
 		}
 		githubAccess = payload.AccessToken
 		if payload.RefreshToken != "" {

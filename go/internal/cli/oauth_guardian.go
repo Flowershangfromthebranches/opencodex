@@ -38,6 +38,12 @@ func configuredOAuthRefreshers(cfg config.Config, client oauth.HTTPDoer, proacti
 			refresh = oauth.NewCursorFlow(client).Refresh
 		case "kimi":
 			refresh = oauth.NewKimiFlow(client).Refresh
+		case "github-copilot":
+			// Kiro is deliberately absent: its refresh needs the aws_sso_oidc
+			// metadata (client id/secret, SSO region) that OAuthCredentials does not
+			// persist, so an adapter built from the stored token alone would POST to
+			// a guessed us-east-1 endpoint. That waits until the store carries it.
+			refresh = oauth.NewGithubCopilotFlow(client).Refresh
 		}
 		if refresh != nil {
 			refreshers[provider] = refresh
