@@ -723,7 +723,14 @@ func writeRuntimeFiles(port int) error {
 	}
 	if data, readErr := os.ReadFile(pidPath); readErr == nil {
 		if pid, parseErr := strconv.Atoi(string(data)); parseErr == nil && platform.ProcessAlive(pid) {
-			return fmt.Errorf("proxy already running with PID %d", pid)
+			// Liveness alone is not identity. After an unclean exit the OS can
+			// hand that pid to an unrelated program, and trusting the number
+			// would refuse every future start until the user deletes the file by
+			// hand. Confirm the pid actually belongs to a proxy before refusing;
+			// FindLiveProxy identity-probes /healthz for exactly this reason.
+			if identityConfirmsRunningProxy(pid, port) {
+				return fmt.Errorf("proxy already running with PID %d", pid)
+			}
 		}
 	}
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
@@ -736,4 +743,35 @@ func removeRuntimeFiles() {
 	pidPath, portPath, _ := runtimePaths()
 	_ = os.Remove(pidPath)
 	_ = os.Remove(portPath)
+}
+
+// identityConfirmsRunningProxy asks the recorded port whether the process
+// holding it is actually our proxy.
+//
+// A live pid proves only that SOMETHING owns that number. Refusing to start on
+// that alone means one unclean exit plus an unlucky pid reuse locks the user
+// out until they delete the file themselves.
+func identityConfirmsRunningProxy(pid, port int) bool {
+	_, portPath, err := runtimePaths()
+	if err != nil {
+		return true
+	}
+	recordedPort := port
+	if data, readErr := os.ReadFile(portPath); readErr == nil {
+		if parsed, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil && parsed > 0 {
+			recordedPort = parsed
+		}
+	}
+	if recordedPort <= 0 || recordedPort > 65535 {
+		// Nothing to probe. Keep the conservative answer rather than letting a
+		// second proxy bind on top of a possibly-live one.
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	identity, ok := server.ProxyIdentityAt(ctx, nil, recordedPort, "127.0.0.1", pid, time.Second)
+	if !ok || identity == nil {
+		return false
+	}
+	return identity.PID == nil || *identity.PID == pid
 }
