@@ -2,8 +2,8 @@ package usage
 
 import (
 	"math"
-	"strings"
 
+	"github.com/lidge-jun/opencodex-go/internal/providers"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -111,10 +111,10 @@ func EstimateCostWithTier(provider, model string, value types.Usage, status Stat
 	if !ok {
 		return CostEstimate{}, false
 	}
-	if overlays == nil {
-		overlays = ExpectedPriceOverlays
-	}
-	price, ok := FindPrice(provider, model, overlays)
+	// Full resolution chain (jawcode -> overlay -> cross-provider vendor
+	// fallback), not the overlay roster alone; nil overlays selects the default
+	// roster and enables memoization.
+	price, ok := ResolveMatchedPrice(provider, model, overlays)
 	if !ok {
 		return CostEstimate{}, false
 	}
@@ -173,12 +173,20 @@ func TokensPerSecond(outputTokens int, durationMS int64) (float64, bool) {
 	return value, !math.IsInf(value, 0) && !math.IsNaN(value)
 }
 
+// BaseProvider collapses pool and account-log suffixes before pricing or
+// grouping. It delegates to the single canonical implementation, an exact port of
+// src/providers/label.ts:7-19; the previous hardcoded four-prefix list silently
+// failed for pooled providers such as kimi-code-pabcdef, which then lost their
+// price entirely and split into their own summary row.
+//
+// The symbol stays so its ten call sites keep one shared definition across the
+// resolver, the tier multiplier, and summary grouping.
 func BaseProvider(provider string) string {
-	// Account pool suffixes are diagnostic identity, not a pricing namespace.
-	for _, prefix := range []string{"google-antigravity", "openai", "cursor", "kimi"} {
-		if provider == prefix || strings.HasPrefix(provider, prefix+"-p") {
-			return prefix
-		}
-	}
-	return provider
+	return providers.BaseProviderLabel(provider)
+}
+
+// finiteNonNegative mirrors the oracle's rate validation (src/usage/cost.ts:74):
+// a negative or non-finite rate is corrupt data, not a discount.
+func finiteNonNegative(value float64) bool {
+	return !math.IsInf(value, 0) && !math.IsNaN(value) && value >= 0
 }
