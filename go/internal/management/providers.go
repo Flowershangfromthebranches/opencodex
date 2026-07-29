@@ -119,6 +119,9 @@ func (a *API) handleProviders(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusBadRequest, "apiKey cannot be patched here")
 			return true
 		}
+		if _, hasMode := patch["codexAccountMode"]; hasMode {
+			return a.patchCodexAccountMode(w, name, patch)
+		}
 		a.mu.Lock()
 		provider, found := a.config.Providers[name]
 		if !found {
