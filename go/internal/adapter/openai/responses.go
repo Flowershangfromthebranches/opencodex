@@ -730,6 +730,12 @@ func rememberResponsesToolCall(value any, calls map[string]*types.ToolCall) {
 		return
 	}
 	if call := toolCallFromResponseItem(item); call != nil {
+		// An opening item has no payload yet; its arguments arrive as deltas.
+		// Keeping the `{}` placeholder here would make every delta append to
+		// it and produce `{}{"q":"x"}`.
+		if string(call.Arguments) == "{}" {
+			call.Arguments = json.RawMessage{}
+		}
 		calls[stringValue(item["id"])] = call
 	}
 }
@@ -745,16 +751,37 @@ func ensureResponseCall(calls map[string]*types.ToolCall, id string) *types.Tool
 
 func toolCallFromResponseItem(value any) *types.ToolCall {
 	item, ok := value.(map[string]any)
-	if !ok || item["type"] != "function_call" {
+	if !ok {
+		return nil
+	}
+	// An upstream reports an invoked tool as one of three item types, not just
+	// function_call. Recognising only the first meant a custom_tool_call or
+	// tool_search_call was dropped silently: the turn read as a clean
+	// completion while the tool action never reached the client. The request
+	// parser (responses.go:349) and the bridge already know all three.
+	//
+	// web_search_call is deliberately absent. It carries no payload a client
+	// can act on, and the oracle drops it rather than surfacing a tool the
+	// caller cannot run (src/responses/parser.ts:492-497).
+	var arguments []byte
+	switch item["type"] {
+	case "function_call":
+		arguments = []byte(stringValue(item["arguments"]))
+	case "tool_search_call":
+		arguments = []byte(stringValue(item["arguments"]))
+	case "custom_tool_call":
+		// A freeform call carries its payload as `input`, which is the field
+		// the bridge writes back out for the same item type.
+		arguments = []byte(stringValue(item["input"]))
+	default:
 		return nil
 	}
 	id := firstString(item, "call_id", "id")
-	arguments := []byte(stringValue(item["arguments"]))
-	// Unlike the streaming paths, defaulting here is CORRECT and deliberate:
-	// this parses a history item, where a single poisoned entry would otherwise
-	// 400 every subsequent turn. The oracle does the same and warns
-	// (src/responses/parser.ts:442-452).
-	if !json.Valid(arguments) {
+	// An EMPTY argument string is the no-arg case and becomes `{}`; a non-empty
+	// but invalid one is left exactly as it arrived. Rewriting a truncated
+	// payload to `{}` would hand the caller a well-formed call the model never
+	// made, which is the same defect fixed on the chat streaming path.
+	if len(arguments) == 0 {
 		arguments = []byte("{}")
 	}
 	return &types.ToolCall{ID: id, Name: stringValue(item["name"]), Arguments: arguments}
@@ -762,11 +789,14 @@ func toolCallFromResponseItem(value any) *types.ToolCall {
 
 func completedResponsesToolCall(value any, calls map[string]*types.ToolCall) *types.ToolCall {
 	item, ok := value.(map[string]any)
-	if !ok || item["type"] != "function_call" {
+	if !ok {
 		return nil
 	}
 	itemID := stringValue(item["id"])
 	completed := toolCallFromResponseItem(item)
+	if completed == nil {
+		return nil
+	}
 	if pending := calls[itemID]; pending != nil {
 		if completed.ID == "" {
 			completed.ID = pending.ID
@@ -775,7 +805,11 @@ func completedResponsesToolCall(value any, calls map[string]*types.ToolCall) *ty
 			completed.Name = pending.Name
 		}
 		if len(completed.Arguments) == 0 || string(completed.Arguments) == "{}" {
-			if json.Valid(pending.Arguments) {
+			// The accumulated delta stream is the authoritative payload when
+			// the completed item carries none. It is taken as-is: discarding a
+			// truncated accumulation in favour of `{}` reports a well-formed
+			// call the model never made, rather than the truncation.
+			if len(pending.Arguments) > 0 {
 				completed.Arguments = pending.Arguments
 			}
 		}
