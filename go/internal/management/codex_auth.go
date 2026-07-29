@@ -58,6 +58,10 @@ func (a *API) handleCodexAuth(w http.ResponseWriter, r *http.Request) bool {
 	case "PUT /api/codex-auth/failover":
 		a.putCodexThreshold(w, r, false)
 		return true
+	case "POST /api/codex-auth/accounts/clear-cooldown":
+		return a.postCodexAuthClearCooldown(w, r)
+	case "PUT /api/codex-auth/pool-strategy", "PATCH /api/codex-auth/pool-strategy":
+		return a.putCodexAuthPoolStrategy(w, r)
 	}
 	if a.codexAuth == nil {
 		writeError(w, http.StatusNotImplemented, "Codex auth management is not configured")

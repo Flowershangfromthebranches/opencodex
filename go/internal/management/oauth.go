@@ -49,6 +49,8 @@ func (a *API) handleOAuth(w http.ResponseWriter, request *http.Request) bool {
 		a.removeOAuthAccount(w, request)
 	case "GET /api/oauth/accounts/pool", "PUT /api/oauth/accounts/pool", "PATCH /api/oauth/accounts/pool":
 		a.handleOAuthAccountPool(w, request)
+	case "POST /api/oauth/accounts/clear-cooldown":
+		a.postOAuthClearCooldown(w, request)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}

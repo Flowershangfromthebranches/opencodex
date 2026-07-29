@@ -12,6 +12,7 @@ import (
 
 	"github.com/lidge-jun/opencodex-go/internal/claude"
 	"github.com/lidge-jun/opencodex-go/internal/codex"
+	"github.com/lidge-jun/opencodex-go/internal/oauth"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/types"
@@ -29,6 +30,9 @@ type Options struct {
 	OAuth             OAuthBackend
 	CodexAuth         CodexAuthBackend
 	CodexRouter       *codex.Router
+	// AnthropicPool backs the account cooldown clear. Optional: a runtime
+	// without the opt-in pool simply reports nothing was cleared.
+	AnthropicPool     *oauth.AnthropicPool
 	DebugLogs         *ocxlib.DebugLogBuffer
 	InjectionLogs     *ocxlib.DebugLogBuffer
 	ClaudeDebug       *claude.DebugRing
@@ -79,6 +83,7 @@ type API struct {
 	oauth               OAuthBackend
 	codexAuth           CodexAuthBackend
 	codexRouter         *codex.Router
+	anthropicPool       *oauth.AnthropicPool
 	providerDebug       *ocxlib.DebugLogBuffer
 	injectionDebug      *ocxlib.DebugLogBuffer
 	claudeDebug         *claude.DebugRing
@@ -144,7 +149,7 @@ func New(options Options) (*API, error) {
 	if options.InjectionLogs == nil {
 		options.InjectionLogs = ocxlib.NewDebugLogBuffer()
 	}
-	api := &API{config: cfg, configPath: options.ConfigPath, configPersistence: options.ConfigPersistence, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, codexRouter: options.CodexRouter, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, restart: options.Restart, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents, now: time.Now, usageSummaryCache: make(map[string]usageSummaryCacheEntry, 12)}
+	api := &API{config: cfg, configPath: options.ConfigPath, configPersistence: options.ConfigPersistence, registry: options.Registry, usageLog: options.UsageLog, debugLog: options.DebugLog, requestLogs: options.RequestLogs, advancedRequestLogs: options.AdvancedRequestLogs, memoryWatchdog: options.MemoryWatchdog, responseState: options.ResponseState, providerDNSLookup: options.ProviderDNSLookup, oauth: options.OAuth, codexAuth: options.CodexAuth, codexRouter: options.CodexRouter, anthropicPool: options.AnthropicPool, providerDebug: options.DebugLogs, injectionDebug: options.InjectionLogs, claudeDebug: options.ClaudeDebug, providerQuotas: options.ProviderQuotas, claudeRuntime: options.ClaudeRuntime, runtimeControl: options.RuntimeControl, grokPort: options.GrokPort, grokHostname: options.GrokHostname, fetchModels: options.FetchModels, storageHome: options.StorageHome, version: options.Version, stop: options.Stop, restart: options.Restart, refreshCatalog: options.RefreshCatalog, onAPIKeysChanged: options.OnAPIKeysChanged, modelCache: options.ModelCache, authorize: options.Authorize, customModels: customModels, aliases: map[string]string{}, contextCaps: cloneIntMap(cfg.ProviderContextCaps), combos: map[string]Combo{}, agents: agents, now: time.Now, usageSummaryCache: make(map[string]usageSummaryCacheEntry, 12)}
 	if api.configPersistence != nil {
 		api.configPersistence.BindConfigMutex(&api.mu)
 	}
@@ -159,8 +164,8 @@ var routes = []string{
 	"GET /api/config", "PUT /api/config", "GET /api/settings", "PUT /api/settings", "GET /api/diagnostics/project-config", "GET /api/sidecar-settings", "PUT /api/sidecar-settings",
 	"GET /api/providers", "POST /api/providers", "PATCH /api/providers", "DELETE /api/providers", "POST /api/providers/test", "GET /api/provider-presets",
 	"GET /api/models", "PUT /api/disabled-models", "PUT /api/model-visibility", "GET /api/selected-models", "PUT /api/selected-models", "GET /api/custom-models", "POST /api/custom-models", "PUT /api/custom-models/{id}", "DELETE /api/custom-models/{id}", "GET /api/model-aliases", "PUT /api/model-aliases", "GET /api/provider-context-caps", "PUT /api/provider-context-caps",
-	"GET /api/oauth/providers", "POST /api/oauth/login", "POST /api/oauth/login/cancel", "POST /api/oauth/login/code", "GET /api/oauth/status", "POST /api/oauth/logout", "GET /api/oauth/accounts", "PUT /api/oauth/accounts/active", "PUT /api/oauth/accounts/alias", "DELETE /api/oauth/accounts", "GET /api/oauth/accounts/pool", "PUT /api/oauth/accounts/pool", "PATCH /api/oauth/accounts/pool",
-	"GET /api/codex-auth/accounts", "POST /api/codex-auth/accounts", "DELETE /api/codex-auth/accounts", "PUT /api/codex-auth/accounts/alias", "PUT /api/codex-auth/accounts/pause", "PUT /api/codex-auth/accounts/pause-exhausted", "GET /api/codex-auth/active", "PUT /api/codex-auth/active", "PUT /api/codex-auth/auto-switch", "PUT /api/codex-auth/failover", "GET /api/codex-auth/reset-credits", "POST /api/codex-auth/reset-credits/consume", "POST /api/codex-auth/login", "POST /api/codex-auth/login/code", "POST /api/codex-auth/login/cancel", "GET /api/codex-auth/login-status",
+	"GET /api/oauth/providers", "POST /api/oauth/login", "POST /api/oauth/login/cancel", "POST /api/oauth/login/code", "GET /api/oauth/status", "POST /api/oauth/logout", "GET /api/oauth/accounts", "PUT /api/oauth/accounts/active", "PUT /api/oauth/accounts/alias", "DELETE /api/oauth/accounts", "GET /api/oauth/accounts/pool", "PUT /api/oauth/accounts/pool", "PATCH /api/oauth/accounts/pool", "POST /api/oauth/accounts/clear-cooldown",
+	"GET /api/codex-auth/accounts", "POST /api/codex-auth/accounts", "DELETE /api/codex-auth/accounts", "PUT /api/codex-auth/accounts/alias", "PUT /api/codex-auth/accounts/pause", "PUT /api/codex-auth/accounts/pause-exhausted", "GET /api/codex-auth/active", "PUT /api/codex-auth/active", "POST /api/codex-auth/accounts/clear-cooldown", "PUT /api/codex-auth/pool-strategy", "PATCH /api/codex-auth/pool-strategy", "PUT /api/codex-auth/auto-switch", "PUT /api/codex-auth/failover", "GET /api/codex-auth/reset-credits", "POST /api/codex-auth/reset-credits/consume", "POST /api/codex-auth/login", "POST /api/codex-auth/login/code", "POST /api/codex-auth/login/cancel", "GET /api/codex-auth/login-status",
 	"GET /api/key-providers", "GET /api/providers/keys", "POST /api/providers/keys", "DELETE /api/providers/keys", "PUT /api/providers/keys/active", "PUT /api/providers/keys/alias", "GET /api/keys", "POST /api/keys", "DELETE /api/keys",
 	"GET /api/combos", "PUT /api/combos", "DELETE /api/combos", "POST /api/combos/reset",
 	"GET /api/logs", "GET /api/debug", "PUT /api/debug", "GET /api/debug/usage-logs", "GET /api/usage", "GET /api/storage", "POST /api/storage/cleanup/preview", "GET /api/storage/trash", "POST /api/storage/trash/restore", "GET /api/storage/cleanup-policy", "PUT /api/storage/cleanup-policy", "GET /api/storage/cleanup-policy/test-stream", "GET /api/storage/trash/restore/test-stream",
@@ -210,6 +215,9 @@ func (a *API) serializesConfigMutation(r *http.Request) bool {
 		"PUT /api/providers/keys/active", "PUT /api/providers/keys/alias",
 		"POST /api/keys", "DELETE /api/keys",
 		"PUT /api/codex-auth/active", "PUT /api/codex-auth/auto-switch", "PUT /api/codex-auth/failover",
+		// Writes accountPoolStrategy/StickyLimit, so it serializes like every
+		// other config mutation rather than racing a concurrent settings save.
+		"PUT /api/codex-auth/pool-strategy", "PATCH /api/codex-auth/pool-strategy",
 		"PUT /api/combos", "DELETE /api/combos", "POST /api/combos/reset",
 		"PUT /api/debug", "PUT /api/subagent-model-fallback",
 		"PUT /api/shadow-call-settings", "PUT /api/subagent-models", "PUT /api/injection-model",
