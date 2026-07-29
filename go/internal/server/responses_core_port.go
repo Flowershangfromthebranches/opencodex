@@ -762,7 +762,24 @@ func (core *ResponsesCore) stream(ctx context.Context, cancel context.CancelCaus
 		preflight = adapterpkg.PreflightEvents(ctx, events)
 	}
 	preflightDisconnect := preflight.Error != nil && isUpstreamDisconnectMessage(preflight.Error.Error)
-	if (preflight.Error != nil && !preflightDisconnect) || preflight.Empty {
+	// A pre-stream 502 is for failures the client should see INSTEAD of a
+	// stream. Two cases qualify:
+	//
+	//   - a combo attempt, where the caller can still hop to another target and
+	//     no SSE headers have been committed (oracle: core.ts:1980, gated on
+	//     comboAttempt);
+	//   - a transport-level failure that Bun surfaces at fetch() time but Go
+	//     only discovers on first read. A malformed chunked body is the
+	//     example normalizePreflightError below exists for: the oracle's fetch
+	//     rejects and returns 502 before any stream, so matching that behaviour
+	//     here requires catching it at the first event.
+	//
+	// Everything else now travels down the stream as a response.failed event,
+	// which is what the client asked for. Answering an ordinary provider error
+	// with a JSON 502 in place of the stream made a normal upstream failure
+	// look like the proxy itself had broken.
+	preflightTransportFailure := preflight.Error != nil && isTransportLevelPreflightError(preflight.Error.Error)
+	if (pick != nil || preflightTransportFailure) && ((preflight.Error != nil && !preflightDisconnect) || preflight.Empty) {
 		message := "Adapter ended before producing a response"
 		if preflight.Error != nil && preflight.Error.Error != "" {
 			message = normalizePreflightError(preflight.Error.Error, response)
