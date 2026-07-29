@@ -33,7 +33,7 @@ func (a *API) handleStorageRoutes(w http.ResponseWriter, r *http.Request) bool {
 		a.mu.RLock()
 		policy := storage.NormalizeStorageCleanupPolicy(a.storageCleanupPolicyLocked())
 		a.mu.RUnlock()
-		writeJSON(w, http.StatusOK, policy)
+		writeJSON(w, http.StatusOK, storagePolicyWithJob(policy))
 	case "PUT /api/storage/cleanup-policy":
 		a.putStorageCleanupPolicy(w, r)
 	case "POST /api/storage/trash/restore":
@@ -122,7 +122,29 @@ func (a *API) putStorageCleanupPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "save cleanup policy failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, policy)
+	// The dashboard reads `policy` off this envelope and treats its absence as a
+	// failed save (gui/src/pages/Storage.tsx:813), so returning the bare policy
+	// made every successful save look broken.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":     true,
+		"policy": policy,
+		"job":    storage.StorageCleanupPolicyJobState(),
+	})
+}
+
+// storagePolicyWithJob flattens the policy and hangs the run state beside it,
+// which is the shape the oracle serves (src/server/management/logs-usage-routes.ts:446).
+func storagePolicyWithJob(policy storage.StorageCleanupPolicy) map[string]any {
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		return map[string]any{"job": storage.StorageCleanupPolicyJobState()}
+	}
+	var flattened map[string]any
+	if err := json.Unmarshal(encoded, &flattened); err != nil || flattened == nil {
+		return map[string]any{"job": storage.StorageCleanupPolicyJobState()}
+	}
+	flattened["job"] = storage.StorageCleanupPolicyJobState()
+	return flattened
 }
 
 // projectCleanupPreview strips the host paths the domain type carries for its own bookkeeping.
