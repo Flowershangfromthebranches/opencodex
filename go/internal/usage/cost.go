@@ -7,8 +7,24 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
-type CostTokens struct{ Input, Output, CacheRead, CacheWrite int }
-type CostBreakdown struct{ Input, Output, CacheRead, CacheWrite, Total float64 }
+// JSON keys mirror the TypeScript oracle exactly (src/usage/cost.ts:29-42).
+// The GUI reads the lowercase form (gui/src/pages/Logs.tsx:53,208); untagged
+// fields serialize as `Total`/`Input`, which made every correctly priced row
+// render as an em dash because `cost.total` was undefined (devlog 260729 010).
+type CostTokens struct {
+	Input      int `json:"input"`
+	Output     int `json:"output"`
+	CacheRead  int `json:"cacheRead"`
+	CacheWrite int `json:"cacheWrite"`
+}
+
+type CostBreakdown struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cacheRead"`
+	CacheWrite float64 `json:"cacheWrite"`
+	Total      float64 `json:"total"`
+}
 type AttemptCostEstimate struct {
 	Ordinal            int           `json:"ordinal"`
 	Provider           string        `json:"provider"`
