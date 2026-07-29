@@ -721,11 +721,14 @@ func (a *Adapter) collectGeminiCandidates(root map[string]any, events *[]types.A
 	for _, rawPart := range parts {
 		part, _ := rawPart.(map[string]any)
 		if text := stringValue(part["text"]); text != "" {
-			if part["thought"] == true {
-				*events = append(*events, types.AdapterEvent{Type: types.EventReasoning, Reasoning: text})
-			} else {
-				*events = append(*events, types.AdapterEvent{Type: types.EventTextDelta, Text: text})
-			}
+			// Every text part is visible text. Gemini marks some parts with
+			// `thought: true`, but the oracle does not branch on it
+			// (src/adapters/google.ts:496, :667) — reclassifying those as
+			// reasoning hid them from every client that collapses reasoning,
+			// so the user saw nothing where the oracle showed the answer.
+			// Reasoning continuity travels through thoughtSignature, which is
+			// a separate mechanism and is untouched here.
+			*events = append(*events, types.AdapterEvent{Type: types.EventTextDelta, Text: text})
 		}
 		if url, event, ok := a.materializeInlinePart(part, budget); ok {
 			if event != nil {

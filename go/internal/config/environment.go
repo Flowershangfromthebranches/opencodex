@@ -27,17 +27,21 @@ func ResolveEnvValue(value string) string {
 // ResolveEnvironment returns a runtime-only copy with environment references
 // expanded. Callers should retain and persist the original Config so resolved
 // credentials are never written back to disk.
+//
+// Only credential-bearing values are expanded: each provider's apiKey, its
+// pooled keys, and the proxy URL. The oracle resolves exactly these, at the
+// point of use (src/router.ts:189, src/config.ts:1562,
+// src/providers/quota.ts:553).
+//
+// Substituting every string in the document instead — which is what the JSON
+// round-trip below used to do — silently destroys any literal value that
+// happens to begin with `$`: an undefined variable resolves to "", so a header
+// like `X-Billing-Tag: $team-alpha` or a model id starting with `$` simply
+// vanishes from the request.
 func ResolveEnvironment(cfg Config) (Config, error) {
+	// Deep-copied through JSON so the caller's Config — the one that gets
+	// persisted — never sees a resolved credential.
 	data, err := json.Marshal(cfg)
-	if err != nil {
-		return Config{}, err
-	}
-	var document any
-	if err := json.Unmarshal(data, &document); err != nil {
-		return Config{}, err
-	}
-	document = resolveEnvironmentDocument(document)
-	data, err = json.Marshal(document)
 	if err != nil {
 		return Config{}, err
 	}
@@ -45,23 +49,22 @@ func ResolveEnvironment(cfg Config) (Config, error) {
 	if err := json.Unmarshal(data, &resolved); err != nil {
 		return Config{}, err
 	}
-	return resolved, nil
-}
-
-func resolveEnvironmentDocument(value any) any {
-	switch typed := value.(type) {
-	case string:
-		return ResolveEnvValue(typed)
-	case []any:
-		for index := range typed {
-			typed[index] = resolveEnvironmentDocument(typed[index])
-		}
-	case map[string]any:
-		for key := range typed {
-			typed[key] = resolveEnvironmentDocument(typed[key])
-		}
+	resolved.Proxy = ResolveEnvValue(resolved.Proxy)
+	// authToken has no oracle counterpart (the TS proxy reads its admission
+	// token from the environment directly), but it is a credential by the same
+	// definition, and Load deliberately keeps the reference unexpanded on disk.
+	resolved.AuthToken = ResolveEnvValue(resolved.AuthToken)
+	for index := range resolved.APIKeys {
+		resolved.APIKeys[index].Key = ResolveEnvValue(resolved.APIKeys[index].Key)
 	}
-	return value
+	for name, provider := range resolved.Providers {
+		provider.APIKey = ResolveEnvValue(provider.APIKey)
+		for index := range provider.APIKeyPool {
+			provider.APIKeyPool[index].Key = ResolveEnvValue(provider.APIKeyPool[index].Key)
+		}
+		resolved.Providers[name] = provider
+	}
+	return resolved, nil
 }
 
 // ApplyProxyEnv mirrors config.proxy into the conventional proxy variables.
