@@ -42,6 +42,12 @@ func runModels(args []string, streams IO) error {
 		return modelsListCustom(args, streams)
 	case "add", "remove":
 		return modelsMutate(command, args, streams)
+	case "enable":
+		return modelsSetVisibility(true, args, streams)
+	case "disable":
+		return modelsSetVisibility(false, args, streams)
+	case "provider":
+		return modelsSetProviderVisibility(args, streams)
 	default:
 		return fmt.Errorf("unknown models subcommand %q", command)
 	}
