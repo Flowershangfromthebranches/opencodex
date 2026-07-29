@@ -249,6 +249,13 @@ func BuildPayload(req *types.NormalizedRequest, profileARN string, forced Comple
 			if _, exists := calls[id]; !exists {
 				return nil, nil, "", "", fmt.Errorf("Kiro history contains an orphaned tool result for call %q", message.ToolCallID)
 			}
+			// Encrypted tool output cannot be translated to Kiro's wire, and
+			// forwarding the carrier text instead sends the model something
+			// that is not the result it asked for. Refusing names the call so
+			// the caller can see which one (oracle: src/adapters/kiro.ts:469).
+			if message.ContainsEncryptedContent {
+				return nil, nil, "", "", fmt.Errorf("Kiro cannot translate encrypted output for tool call %q", message.ToolCallID)
+			}
 			status := "success"
 			if message.IsError {
 				status = "error"
