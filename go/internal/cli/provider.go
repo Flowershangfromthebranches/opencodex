@@ -104,6 +104,16 @@ func runProvider(args []string, streams IO) error {
 		return providerShow(args[1:], streams)
 	case "default", "set-default":
 		return providerSetDefault(args[1:], streams)
+	case "quota":
+		return providerQuota(args[1:], streams)
+	case "presets":
+		return providerPresets(args[1:], streams)
+	case "account-mode":
+		return providerAccountMode(args[1:], streams)
+	case "selected":
+		// Same allowlist and the same route as `ocx models selected`; sharing it
+		// keeps the two spellings from drifting apart.
+		return modelsSelected(args[1:], streams)
 	case "test":
 		return providerTest(args[1:], streams)
 	default:

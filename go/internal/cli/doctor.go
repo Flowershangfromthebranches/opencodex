@@ -64,8 +64,10 @@ func runDoctor(ctx context.Context, args []string, streams IO) error {
 		switch arg {
 		case "--json":
 			jsonOutput = true
+		case "--fix-codex-runtime":
+			return runDoctorFixCodexRuntime(streams)
 		default:
-			return fmt.Errorf("usage: ocx doctor [--json]")
+			return fmt.Errorf("usage: ocx doctor [--json] [--fix-codex-runtime]")
 		}
 	}
 	report, err := collectDoctorReport(ctx, doctorDeps{})
