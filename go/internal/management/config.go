@@ -70,7 +70,21 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) bool {
 			writeError(w, http.StatusInternalServerError, "save settings failed")
 			return true
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "codexAutoStart": codexAutoStart(a.config.CodexAutoStart), "streamMode": defaultStreamMode(a.config.StreamMode)})
+		// The toggle that just changed is exactly what startup health reports on,
+		// so the save has to answer with the RECOMPUTED health. Without it the
+		// dashboard keeps rendering the pre-toggle badge until something else
+		// happens to refresh it (oracle: config-routes.ts:216).
+		saved := orderedJSONObject{
+			{name: "ok", value: true},
+			{name: "codexAutoStart", value: codexAutoStart(a.config.CodexAutoStart)},
+			{name: "streamMode", value: defaultStreamMode(a.config.StreamMode)},
+		}
+		if a.runtimeControl != nil {
+			if health, err := a.runtimeControl.StartupHealth(r.Context()); err == nil && health != nil {
+				saved = append(saved, orderedJSONField{name: "startupHealth", value: health})
+			}
+		}
+		writeJSON(w, http.StatusOK, saved)
 		return true
 	case "GET /api/diagnostics/project-config":
 		// This route reports PROJECT Codex configs that route around the proxy -- not ocx
