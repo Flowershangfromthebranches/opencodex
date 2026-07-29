@@ -892,14 +892,18 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 			retryConversationID = state.conversationID
 		}
 		retryReq.Metadata["kiro.conversationId"] = retryConversationID
+		// The first attempt already flushed its events to the client, so a
+		// failure here is NOT replay-safe: retrying would send that content
+		// twice. Marking it retryable is what let the caller do exactly that.
+		emittedOutput := first.assistantText != "" || first.sawText || first.sawReasoning
 		httpReq, retryState, err := a.buildRequest(ctx, &retryReq, CompletionTextFallback)
 		if err != nil {
-			sendEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: err.Error(), StatusCode: 502, Retryable: true})
+			sendEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: err.Error(), StatusCode: 502, Retryable: IsRetryableStreamCatchError(err.Error(), emittedOutput)})
 			return
 		}
 		response, err := DoWithRetry(ctx, a.Client, httpReq)
 		if err != nil {
-			sendEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: config.RedactString(err.Error()), StatusCode: 502, Retryable: true})
+			sendEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: config.RedactString(err.Error()), StatusCode: 502, Retryable: IsRetryableStreamCatchError(err.Error(), emittedOutput)})
 			return
 		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
