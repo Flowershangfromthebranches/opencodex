@@ -442,6 +442,12 @@ func (m *machine) accept(event types.AdapterEvent) []Event {
 			endTurn := event.EndTurn
 			m.response.EndTurn = &endTurn
 		}
+		// Retryable rides along with the reason: the client uses it to decide
+		// whether a truncated turn is worth another attempt. Kiro already sets
+		// it (adapter/kiro/kiro.go:761) and the oracle forwards it
+		// (bridge.ts:763); dropping it silently turns a retryable stall into a
+		// permanent failure.
+		m.response.Retryable = event.Retryable
 		out = append(out, m.finishIncomplete(event.Reason, event.Message)...)
 	}
 	return out

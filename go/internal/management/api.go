@@ -165,7 +165,7 @@ var routes = []string{
 	"GET /api/combos", "PUT /api/combos", "DELETE /api/combos", "POST /api/combos/reset",
 	"GET /api/logs", "GET /api/debug", "PUT /api/debug", "GET /api/debug/usage-logs", "GET /api/usage", "GET /api/storage", "POST /api/storage/cleanup/preview", "GET /api/storage/trash", "POST /api/storage/trash/restore", "GET /api/storage/cleanup-policy", "PUT /api/storage/cleanup-policy", "GET /api/storage/cleanup-policy/test-stream", "GET /api/storage/trash/restore/test-stream",
 	"GET /api/debug/logs", "GET /api/claude/inbound-debug", "GET /api/debug/injection-logs",
-	"GET /api/system/memory", "GET /api/subagent-models", "PUT /api/subagent-models", "GET /api/injection-model", "PUT /api/injection-model", "GET /api/effort-caps", "PUT /api/effort-caps", "GET /api/v2", "PUT /api/v2", "POST /api/stop",
+	"GET /api/system/memory", "POST /api/system/restart", "GET /api/subagent-models", "PUT /api/subagent-models", "GET /api/injection-model", "PUT /api/injection-model", "GET /api/effort-caps", "PUT /api/effort-caps", "GET /api/v2", "PUT /api/v2", "POST /api/stop",
 	"GET /api/subagent-model-fallback", "PUT /api/subagent-model-fallback", "GET /api/claude-code", "PUT /api/claude-code", "GET /api/shadow-call-settings", "PUT /api/shadow-call-settings", "GET /api/provider-quotas",
 	"GET /api/claude-desktop", "PUT /api/claude-desktop", "POST /api/claude-desktop/apply", "GET /api/claude-desktop/status",
 	"GET /api/grok", "PUT /api/grok/selection", "POST /api/grok/apply",
