@@ -156,12 +156,24 @@ func WriteIncompleteTail(w io.Writer, message string) error {
 }
 
 // WriteFailureTail writes a valid Responses terminal followed by [DONE].
+//
+// The status argument is retained for callers but no longer travels in the
+// error object: a mid-stream failure has already sent HTTP 200 with the SSE
+// headers, so a numeric HTTP status in the `code` slot describes a response the
+// client never received. The oracle sends a string code and mirrors the whole
+// failure into `last_error` (src/server/relay.ts:67-78), which is the field
+// some clients read instead of `error`.
 func WriteFailureTail(w io.Writer, status int, message string) error {
-	payload := map[string]any{"type": "response.failed", "response": map[string]any{"status": "failed", "error": map[string]any{"type": "server_error", "code": status, "message": message}}}
+	_ = status
+	failure := map[string]any{"type": "upstream_error", "code": "upstream_reset", "message": message}
+	payload := map[string]any{"type": "response.failed", "response": map[string]any{"status": "failed", "error": failure, "last_error": failure}}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(w, "event: response.failed\ndata: %s\n\ndata: [DONE]\n\n", encoded)
+	// The leading blank line terminates whatever SSE block the failure
+	// interrupted. Without it the failure frame is appended to a half-written
+	// event and a strict parser discards both.
+	_, err = fmt.Fprintf(w, "\n\nevent: response.failed\ndata: %s\n\ndata: [DONE]\n\n", encoded)
 	return err
 }

@@ -200,9 +200,11 @@ func applyProviderRequestOptions(body map[string]any, req *types.NormalizedReque
 	if provider.PromptCacheKey && req.Options.PromptCacheKey != "" {
 		body["prompt_cache_key"] = req.Options.PromptCacheKey
 	}
-	if req.Options.ServiceTier != "" {
-		body["service_tier"] = req.Options.ServiceTier
-	}
+	// service_tier is deliberately absent: it is an OpenAI Responses concept,
+	// and the oracle's chat body builder never sends it. The same strict
+	// backends that reject an unexpected prompt_cache_key above reject this
+	// one, so forwarding it turned a tier-aware client into a hard failure on
+	// providers that never advertised the field.
 	if req.Stream {
 		body["stream_options"] = map[string]any{"include_usage": true}
 	}
