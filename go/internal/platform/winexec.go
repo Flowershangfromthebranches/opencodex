@@ -28,19 +28,8 @@ func WindowsCommand(command string, args ...string) *exec.Cmd {
 }
 
 func resolveWindowsCommand(command string) string {
-	if filepath.Ext(command) != "" || strings.ContainsAny(command, `\\/`) {
-		return command
-	}
-	extensions := filepath.SplitList(strings.ReplaceAll(defaultString(os.Getenv("PATHEXT"), ".COM;.EXE;.BAT;.CMD"), ";", string(os.PathListSeparator)))
-	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-		for _, extension := range extensions {
-			candidate := filepath.Join(dir, command+strings.ToLower(extension))
-			if _, err := os.Stat(candidate); err == nil {
-				return candidate
-			}
-		}
-	}
-	return command
+	workingDirectory, _ := os.Getwd()
+	return ResolveWindowsCommandIn(command, os.Getenv("PATH"), os.Getenv("PATHEXT"), workingDirectory, nil)
 }
 
 func escapeCMDArgument(value string) string {

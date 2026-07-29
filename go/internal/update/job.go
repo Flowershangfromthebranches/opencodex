@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+
+	"github.com/lidge-jun/opencodex-go/internal/platform"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -104,7 +106,13 @@ func (ExecRunner) Run(ctx context.Context, command Command) ([]byte, error) {
 	if command.Bin == "" {
 		return nil, errors.New("update command is empty")
 	}
-	return exec.CommandContext(ctx, command.Bin, command.Args...).CombinedOutput()
+	// Routed through the platform helper so the Windows PATH guards apply: a
+	// bare `npm` resolved by exec.CommandContext searches the working directory
+	// first on Windows, which is the hijack this update path must not have.
+	built := platform.WindowsCommand(command.Bin, command.Args...)
+	invocation := exec.CommandContext(ctx, built.Path, built.Args[1:]...)
+	invocation.SysProcAttr = built.SysProcAttr
+	return invocation.CombinedOutput()
 }
 
 type Downloader struct {
