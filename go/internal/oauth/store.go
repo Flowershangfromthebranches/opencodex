@@ -148,14 +148,37 @@ func (s *CredentialStore) mutate(ctx context.Context, fn func(AuthStore) error) 
 	}
 	defer lock.release()
 
-	store, _, err := s.loadUnlocked()
+	store, hadLegacy, err := s.loadUnlocked()
 	if err != nil {
 		return err
+	}
+	// One-time downgrade safety net, matching the oracle (src/oauth/store.ts:175).
+	// The first time the new multi-account shape is written over a file that
+	// still holds legacy single-credential entries, keep a pristine copy: an
+	// older build reading the new shape drops what it cannot parse and then
+	// persists the remainder, destroying refresh tokens. Without the backup that
+	// is unrecoverable and the user has to re-authenticate every provider.
+	if hadLegacy {
+		s.backupLegacyOnce()
 	}
 	if err := fn(store); err != nil {
 		return err
 	}
 	return s.persist(store)
+}
+
+// backupLegacyOnce copies the pre-migration store aside. Best-effort by design:
+// a failed backup must not block the credential write the user asked for.
+func (s *CredentialStore) backupLegacyOnce() {
+	backup := s.path + ".pre-multiauth"
+	if _, err := os.Stat(backup); err == nil {
+		return
+	}
+	data, err := os.ReadFile(s.path)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(backup, data, 0o600)
 }
 
 func (s *CredentialStore) persist(store AuthStore) error {
