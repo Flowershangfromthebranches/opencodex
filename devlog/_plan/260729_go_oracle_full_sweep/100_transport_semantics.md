@@ -135,3 +135,53 @@ type을 그 뒤에 복원해야 한다(오라클 `bridge.ts:73`이 같은 순서
 나머지 범위를 다시 자른다"고 적어뒀다. 앞의 4개는 서로 독립적이라 한 사이클에 묶는 것이
 검증을 흐리지 않았지만, 1·7은 relay 경로의 상태 기록·검사 side effect를 어디서 하는지부터
 확인해야 하므로 자기 P가 필요하다. `wp7b-passthrough-preflight`로 등록했다.
+
+---
+
+## 결과 2차 — 감사 1·7 (커밋 `07eb21136`, `14d4f54b0`)
+
+### 감사 1: 문서가 제안한 두 방향 중 어느 것도 아니었다
+
+문서는 (a) 성공 패스스루 복원 또는 (b) 파서가 미지 item을 보존, 둘 중 (a)를 권했다.
+재측정하니 **범위가 문서보다 훨씬 좁았다.**
+
+go의 bridge는 이미 `custom_tool_call`·`tool_search_call`을 **내보낸다**
+(`bridge.go:542,548`). 클라이언트가 선언한 tool 종류로부터 item type을 재구성하기 때문이다
+(`FreeformTools`/`ToolSearchTools`). 즉 우리 쪽에서 시작된 호출은 이미 정상 왕복한다.
+
+실제 유실은 **업스트림이 그 item type으로 응답할 때**뿐이었다. `toolCallFromResponseItem`이
+`function_call`만 통과시켰다(`responses.go:748`). 요청 파서는 셋 다 알고 있는데
+(`responses.go:349`) 응답 경로만 눈이 멀어 있었다.
+
+그래서 (a)의 아키텍처 변경 없이 파서 게이트만 열어 닫았다. `web_search_call`은 오라클이
+의도적으로 버리므로(`parser.ts:492-497`) 제외를 유지하고 그 사실을 테스트로 고정했다.
+
+### 그 과정에서 인자 처리 버그 둘이 더 나왔다
+
+- 완료 item 병합이 누적된 delta를 **유효한 JSON일 때만** 채택했다. 잘린 스트림이 `{}`가
+  된다 — chat 경로에서 이미 고친 것과 같은 결함이다.
+- item이 열릴 때 `{}` 자리표시자를 저장하면서 delta가 거기에 이어붙어 `{}{"q":"x"}`가 됐다.
+
+**494ed13fe에서 내가 쓴 주석도 틀렸다.** `toolCallFromResponseItem`은 history 전용이 아니라
+라이브 스트림도 처리한다. 빈 인자는 여전히 `{}`(no-arg 케이스)이고, **비어 있지 않은데
+유효하지 않은** 것만 그대로 보존한다.
+
+### 감사 7: "regardless"가 과장이라던 080의 지적이 맞았다
+
+오라클은 preflight를 **combo attempt에서만** 한다(`core.ts:1980`, `options.comboAttempt` 게이트).
+go는 모든 non-eager 스트림에서 했다. 그래서 평범한 429가 클라이언트가 요청한 SSE 스트림 대신
+JSON 502로 나갔다 — 프록시 자체가 깨진 것처럼 보이고, 원인을 설명할 `response.failed` 이벤트도
+사라진다.
+
+**그런데 한 경우는 pre-stream이어야 한다.** 기존 테스트
+`TestResponsesCorePreflightsBeforeCommittingSSEHeaders`가 그것을 지키고 있었다.
+
+잘못된 chunked body는 **유효한 HTTP 응답이 아예 없었던** 것이다. Bun은 `fetch()` 안에서
+거부하므로 오라클은 스트림 없이 502를 준다. go의 http 클라이언트는 응답을 받아들이고 첫
+read에서야 실패한다 — 그래서 여기서 adapter 오류로 나타난다. 같은 업스트림 조건에 대해 같은
+클라이언트 가시 결과를 내려면 첫 이벤트에서 잡아야 한다. 이 파일의 `normalizePreflightError`가
+정확히 그 번역을 위해 존재했다는 것이 근거다.
+
+게이트는 `combo attempt || transport-level failure`가 됐고, `isTransportLevelPreflightError`는
+chunked 인코딩 마커 둘로 좁게 유지했다. 그 테스트는 **수정 없이 통과한다** — 버그에 기댄
+테스트가 아니라 런타임 차이를 지키는 테스트였다.
