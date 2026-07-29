@@ -31,6 +31,10 @@ type Response struct {
 	Model             string           `json:"model"`
 	Output            []map[string]any `json:"output"`
 	Usage             map[string]any   `json:"usage"`
+	// EndTurn is a pointer so an absent field stays absent on the wire. Codex
+	// treats explicit false as "keep going" and absent as "stop", so emitting
+	// false where upstream said nothing would change turn behavior.
+	EndTurn           *bool            `json:"end_turn,omitempty"`
 	Error             map[string]any   `json:"error,omitempty"`
 	LastError         map[string]any   `json:"last_error,omitempty"`
 	Retryable         bool             `json:"retryable,omitempty"`
@@ -398,6 +402,10 @@ func (m *machine) accept(event types.AdapterEvent) []Event {
 	case types.EventDone:
 		m.usage = cloneUsage(event.Usage)
 		m.response.Usage = usage(event.Usage)
+		if event.EndTurnSet {
+			endTurn := event.EndTurn
+			m.response.EndTurn = &endTurn
+		}
 		if reason := doneIncompleteReason(event.StopReason); reason != "" {
 			out = append(out, m.finishIncomplete(reason, "")...)
 		} else {
@@ -423,6 +431,10 @@ func (m *machine) accept(event types.AdapterEvent) []Event {
 	case types.EventIncomplete:
 		m.usage = cloneUsage(event.Usage)
 		m.response.Usage = usage(event.Usage)
+		if event.EndTurnSet {
+			endTurn := event.EndTurn
+			m.response.EndTurn = &endTurn
+		}
 		out = append(out, m.finishIncomplete(event.Reason, event.Message)...)
 	}
 	return out
@@ -615,6 +627,12 @@ func (m *machine) finishIncomplete(reason, message string) []Event {
 
 func (m *machine) snapshot(status string) map[string]any {
 	result := map[string]any{"id": m.response.ID, "object": "response", "created_at": m.response.CreatedAt, "status": status, "model": m.response.Model, "output": m.response.Output, "usage": m.response.Usage}
+	// Only when upstream actually said so: Codex reads an explicit false as
+	// "keep going" and an absent field as "stop", so inventing either value
+	// changes how many turns the client runs.
+	if m.response.EndTurn != nil {
+		result["end_turn"] = *m.response.EndTurn
+	}
 	if m.response.Error != nil {
 		result["error"] = m.response.Error
 	}

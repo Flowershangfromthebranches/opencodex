@@ -562,6 +562,10 @@ func (a *ResponsesAdapter) ParseStream(ctx context.Context, body io.ReadCloser) 
 			}
 		}()
 		calls := make(map[string]*types.ToolCall)
+		// Message phase arrives on the item, not on its text deltas, so it has to
+		// be remembered when the item opens and applied to every delta that
+		// follows.
+		phases := make(map[string]string)
 		for decoded := range decodedEvents {
 			if decoded.Err != nil {
 				emit(types.AdapterEvent{Type: types.EventError, Error: "read upstream SSE stream: " + decoded.Err.Error(), StatusCode: http.StatusBadGateway})
@@ -583,7 +587,7 @@ func (a *ResponsesAdapter) ParseStream(ctx context.Context, body io.ReadCloser) 
 				emit(types.AdapterEvent{Type: types.EventError, Error: "malformed upstream SSE data frame"})
 				return
 			}
-			terminal := parseResponsesStreamEvent(event, calls, func(adapterEvent types.AdapterEvent) bool {
+			terminal := parseResponsesStreamEvent(event, calls, phases, func(adapterEvent types.AdapterEvent) bool {
 				return emit(adapterEvent)
 			})
 			if terminal {
@@ -597,31 +601,51 @@ func (a *ResponsesAdapter) ParseStream(ctx context.Context, body io.ReadCloser) 
 	return out
 }
 
-func parseResponsesStreamEvent(event map[string]any, calls map[string]*types.ToolCall, emit func(types.AdapterEvent) bool) bool {
+func parseResponsesStreamEvent(event map[string]any, calls map[string]*types.ToolCall, phases map[string]string, emit func(types.AdapterEvent) bool) bool {
 	eventType, _ := event["type"].(string)
 	switch eventType {
 	case "response.output_text.delta":
-		emit(types.AdapterEvent{Type: types.EventTextDelta, Text: stringValue(event["delta"])})
+		emit(types.AdapterEvent{Type: types.EventTextDelta, Text: stringValue(event["delta"]), Phase: phases[firstString(event, "item_id")]})
 	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
 		emit(types.AdapterEvent{Type: types.EventReasoning, Reasoning: stringValue(event["delta"])})
 	case "response.output_item.added":
+		rememberResponsesMessagePhase(event, phases)
 		rememberResponsesToolCall(event["item"], calls)
 	case "response.function_call_arguments.delta":
 		id := firstString(event, "item_id", "call_id")
 		call := ensureResponseCall(calls, id)
 		call.Arguments = append(call.Arguments, []byte(stringValue(event["delta"]))...)
 	case "response.output_item.done":
+		// Some upstreams only stamp the phase on the completed item, after the
+		// deltas have already streamed. Recording it here lets the bridge label
+		// the message correctly even in that ordering.
+		rememberResponsesMessagePhase(event, phases)
 		if call := completedResponsesToolCall(event["item"], calls); call != nil {
 			emit(types.AdapterEvent{Type: types.EventToolCall, ToolCall: call})
 		}
 	case "response.completed":
 		response, _ := event["response"].(map[string]any)
-		emit(types.AdapterEvent{Type: types.EventDone, Usage: responsesUsage(response["usage"]), StopReason: stringValue(response["status"])})
+		done := types.AdapterEvent{Type: types.EventDone, Usage: responsesUsage(response["usage"]), StopReason: stringValue(response["status"])}
+		// end_turn is how the model says "I am not finished". Codex reads it to
+		// decide whether to run another turn (codex-rs core/src/session/turn.rs:
+		// `if let Some(false) = end_turn { needs_follow_up = true }`), so dropping
+		// it silently ends a turn that was still going -- the model's commentary
+		// becomes the final answer and its pending tool call is never executed.
+		if endTurn, ok := response["end_turn"].(bool); ok {
+			done.EndTurn = endTurn
+			done.EndTurnSet = true
+		}
+		emit(done)
 		return true
 	case "response.incomplete":
 		response, _ := event["response"].(map[string]any)
 		reason := responsesIncompleteReason(response)
-		emit(types.AdapterEvent{Type: types.EventIncomplete, Reason: reason, Message: reason, Usage: responsesUsage(response["usage"])})
+		incomplete := types.AdapterEvent{Type: types.EventIncomplete, Reason: reason, Message: reason, Usage: responsesUsage(response["usage"])}
+		if endTurn, ok := response["end_turn"].(bool); ok {
+			incomplete.EndTurn = endTurn
+			incomplete.EndTurnSet = true
+		}
+		emit(incomplete)
 		return true
 	case "response.failed", "error":
 		emit(types.AdapterEvent{Type: types.EventError, Error: responsesErrorMessage(event)})
@@ -650,10 +674,11 @@ func (a *ResponsesAdapter) ParseUnary(_ context.Context, body []byte) ([]types.A
 		}
 		switch item["type"] {
 		case "message":
+			phase := stringValue(item["phase"])
 			for _, rawContent := range sliceValue(item["content"]) {
 				content, _ := rawContent.(map[string]any)
 				if content["type"] == "output_text" {
-					events = append(events, types.AdapterEvent{Type: types.EventTextDelta, Text: stringValue(content["text"])})
+					events = append(events, types.AdapterEvent{Type: types.EventTextDelta, Text: stringValue(content["text"]), Phase: phase})
 				}
 			}
 		case "reasoning":
@@ -669,8 +694,34 @@ func (a *ResponsesAdapter) ParseUnary(_ context.Context, body []byte) ([]types.A
 			}
 		}
 	}
-	events = append(events, types.AdapterEvent{Type: types.EventDone, Usage: responsesUsage(response["usage"]), StopReason: stringValue(response["status"])})
+	unaryDone := types.AdapterEvent{Type: types.EventDone, Usage: responsesUsage(response["usage"]), StopReason: stringValue(response["status"])}
+	if endTurn, ok := response["end_turn"].(bool); ok {
+		unaryDone.EndTurn = endTurn
+		unaryDone.EndTurnSet = true
+	}
+	events = append(events, unaryDone)
 	return events, nil
+}
+
+// rememberResponsesMessagePhase records whether an assistant message is interim
+// commentary or the final answer.
+//
+// Codex uses this to tell "I am about to run a tool" from "here is my answer"
+// (codex-rs protocol/src/models.rs MessagePhase). Dropping it makes a preamble
+// look terminal, so the turn ends before the tool call that was following it
+// ever runs.
+func rememberResponsesMessagePhase(event map[string]any, phases map[string]string) {
+	item, ok := event["item"].(map[string]any)
+	if !ok || stringValue(item["type"]) != "message" {
+		return
+	}
+	phase := stringValue(item["phase"])
+	if phase == "" {
+		return
+	}
+	if id := stringValue(item["id"]); id != "" {
+		phases[id] = phase
+	}
 }
 
 func rememberResponsesToolCall(value any, calls map[string]*types.ToolCall) {

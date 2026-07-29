@@ -18,6 +18,9 @@ func LoadServiceToken(environmentToken, tokenFile string) (string, error) {
 	}
 	info, err := os.Stat(tokenFile)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
 		return "", fmt.Errorf("stat service token: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Size() > MaxServiceTokenBytes {

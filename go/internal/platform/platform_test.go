@@ -36,6 +36,17 @@ func TestLoadServiceTokenRejectsOversizedFile(t *testing.T) {
 	}
 }
 
+func TestLoadServiceTokenReturnEmptyOnMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nonexistent-token")
+	token, err := LoadServiceToken("", path)
+	if err != nil {
+		t.Fatalf("missing token file should not error: %v", err)
+	}
+	if token != "" {
+		t.Fatalf("missing token file should return empty, got %q", token)
+	}
+}
+
 func TestReplaceFromReaderVerifiesDigestBeforeReplacement(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "ocx")
 	if err := os.WriteFile(destination, []byte("old"), 0o755); err != nil {

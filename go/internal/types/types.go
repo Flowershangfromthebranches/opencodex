@@ -150,6 +150,11 @@ type AdapterEvent struct {
 	ErrorType       string                    `json:"errorType,omitempty"`
 	Code            string                    `json:"code,omitempty"`
 	EndTurn         bool                      `json:"endTurn,omitempty"`
+	// EndTurnSet distinguishes an explicit end_turn:false from an absent field.
+	// The distinction is load-bearing: false means the model has more to do, and
+	// treating it the same as absent ends the turn early (oracle: bridge.ts only
+	// spreads end_turn when it is defined).
+	EndTurnSet      bool                      `json:"-"`
 	ProviderState   ProviderContinuationState `json:"providerState,omitempty"`
 }
 
