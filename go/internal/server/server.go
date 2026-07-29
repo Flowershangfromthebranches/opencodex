@@ -17,6 +17,7 @@ import (
 	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/combos"
 	appconfig "github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/images"
 	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/management"
 	"github.com/lidge-jun/opencodex-go/internal/oauth"
@@ -60,7 +61,12 @@ type Config struct {
 	// restart.
 	AnthropicPoolConfig func() appconfig.NormalizedAnthropicPool
 	StorageHome         string
-	Stop                func()
+	// ArtifactsHome is the OpenCodex home, which is deliberately NOT StorageHome:
+	// artifacts live under OPENCODEX_HOME while StorageHome tracks CODEX_HOME.
+	// Deriving one from the other would serve from a directory nothing writes to.
+	// Empty disables artifact serving rather than guessing.
+	ArtifactsHome string
+	Stop          func()
 	// Restart is the injected drain-and-restart backend for the dashboard
 	// memory card. Nil leaves POST /api/system/restart unavailable.
 	Restart                *management.RestartBackend
@@ -477,6 +483,7 @@ func New(config Config) *Server {
 	mux.HandleFunc("POST /v1/images/generations", s.handleSidecar(SidecarImageGenerations))
 	mux.HandleFunc("POST /v1/images/edits", s.handleSidecar(SidecarImageEdits))
 	mux.HandleFunc("POST /v1/alpha/search", s.handleSidecar(SidecarSearch))
+	mux.HandleFunc("GET "+images.ArtifactHTTPPrefix+"/{id}", s.handleArtifact)
 	liveness := NewLiveness(config.Version)
 	health := NewHealthChecks(config.Version, config.ReadinessChecks)
 	// TypeScript has no /health route. Reserve it before the SPA fallback so a

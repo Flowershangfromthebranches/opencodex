@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lidge-jun/opencodex-go/internal/images"
 	"github.com/lidge-jun/opencodex-go/internal/types"
 )
 
@@ -51,6 +52,9 @@ type Adapter struct {
 	Client      *http.Client
 	UserAgent   string
 	Replay      *ReplayStore
+	// ArtifactsHome is the OpenCodex home an inline response image is written
+	// under. Empty means the adapter cannot materialize one.
+	ArtifactsHome string
 
 	stateMu            sync.RWMutex
 	restoreToolName    func(string) string
@@ -541,6 +545,9 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 	out := make(chan types.AdapterEvent)
 	go func() {
 		defer close(out)
+		// One budget for the whole turn: the cap is what a single response may
+		// write to disk in total, not per image (oracle: src/adapters/google.ts:493).
+		imageBudget := &images.ImageBudget{}
 		if body == nil {
 			emitGoogleEvent(ctx, out, types.AdapterEvent{Type: types.EventError, Error: "No response body"})
 			return
@@ -585,7 +592,7 @@ func (a *Adapter) ParseStream(ctx context.Context, body io.ReadCloser) <-chan ty
 				pendingUsage = usage
 				sawTerminalSignal = true
 			}
-			calls, reason, emittedContent := a.emitGeminiCandidates(ctx, out, root)
+			calls, reason, emittedContent := a.emitGeminiCandidates(ctx, out, root, imageBudget)
 			toolCalls += calls
 			if reason != "" {
 				finishReason = reason
@@ -670,7 +677,7 @@ func (a *Adapter) ParseUnary(ctx context.Context, body []byte) ([]types.AdapterE
 		return []types.AdapterEvent{{Type: types.EventError, Error: "google response contained no candidates"}}, nil
 	}
 	events := make([]types.AdapterEvent, 0)
-	toolCalls, finishReason := a.collectGeminiCandidates(root, &events)
+	toolCalls, finishReason := a.collectGeminiCandidates(root, &events, &images.ImageBudget{})
 	if (a.Mode == ModeVertex || a.Mode == ModeCloudCodeAssist) && toolCalls > 0 && IsVertexTruncationReason(finishReason) {
 		return []types.AdapterEvent{{Type: types.EventError, Error: VertexTruncationErrorMessage(finishReason)}}, nil
 	}
@@ -686,9 +693,9 @@ func (a *Adapter) unwrapRoot(raw map[string]any) (map[string]any, bool) {
 	return root, ok
 }
 
-func (a *Adapter) emitGeminiCandidates(ctx context.Context, out chan<- types.AdapterEvent, root map[string]any) (int, string, bool) {
+func (a *Adapter) emitGeminiCandidates(ctx context.Context, out chan<- types.AdapterEvent, root map[string]any, budget *images.ImageBudget) (int, string, bool) {
 	events := make([]types.AdapterEvent, 0)
-	calls, reason := a.collectGeminiCandidates(root, &events)
+	calls, reason := a.collectGeminiCandidates(root, &events, budget)
 	for _, event := range events {
 		if !emitGoogleEvent(ctx, out, event) {
 			break
@@ -697,7 +704,7 @@ func (a *Adapter) emitGeminiCandidates(ctx context.Context, out chan<- types.Ada
 	return calls, reason, len(events) > 0
 }
 
-func (a *Adapter) collectGeminiCandidates(root map[string]any, events *[]types.AdapterEvent) (int, string) {
+func (a *Adapter) collectGeminiCandidates(root map[string]any, events *[]types.AdapterEvent, budget *images.ImageBudget) (int, string) {
 	candidates := anySlice(root["candidates"])
 	if len(candidates) == 0 {
 		return 0, ""
@@ -718,6 +725,13 @@ func (a *Adapter) collectGeminiCandidates(root map[string]any, events *[]types.A
 				*events = append(*events, types.AdapterEvent{Type: types.EventReasoning, Reasoning: text})
 			} else {
 				*events = append(*events, types.AdapterEvent{Type: types.EventTextDelta, Text: text})
+			}
+		}
+		if url, event, ok := a.materializeInlinePart(part, budget); ok {
+			if event != nil {
+				*events = append(*events, *event)
+			} else {
+				*events = append(*events, types.AdapterEvent{Type: types.EventTextDelta, Text: "\n![image](" + url + ")\n"})
 			}
 		}
 		call, ok := part["functionCall"].(map[string]any)
