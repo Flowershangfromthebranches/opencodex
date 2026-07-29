@@ -61,6 +61,10 @@ func applyProviderParityMetadata(rows []ProviderRegistryEntry) {
 			applyOpenCodeGoMetadata(e)
 		case "neuralwatt":
 			applyNeuralwattMetadata(e)
+		case "kiro":
+			e.DefaultModel = "kiro-auto"
+		case "google-antigravity":
+			e.DefaultModel = "gemini-3.6-flash"
 		case "orcarouter":
 			e.DefaultModel = "openai/gpt-5.5"
 			e.Models = []string{"openai/gpt-5.5", "anthropic/claude-opus-4.8", "google/gemini-3.5-flash", "deepseek/deepseek-v4-pro", "orcarouter/auto"}
@@ -167,6 +171,7 @@ func applyKimiAPIMetadata(e *ProviderRegistryEntry) {
 }
 
 func applyOpenCodeGoMetadata(e *ProviderRegistryEntry) {
+	e.DefaultModel = "kimi-k2.7-code"
 	e.JawcodeBundle = "opencode-go"
 	e.ModelContextWindows = map[string]int{"kimi-k3": 262_144}
 	e.ModelInputModalities = map[string][]string{"kimi-k3": {"text", "image"}}
@@ -234,6 +239,7 @@ func applyZhipuBigmodelMetadata(e *ProviderRegistryEntry) {
 }
 
 func applyNeuralwattMetadata(e *ProviderRegistryEntry) {
+	e.DefaultModel = "glm-5.2"
 	e.Models = []string{"glm-5.2", "glm-5.2-fast", "glm-5.2-short", "glm-5.2-short-fast", "kimi-k2.6", "kimi-k2.6-fast", "kimi-k2.7-code", "qwen3.5-397b", "qwen3.5-397b-fast", "qwen3.6-35b", "qwen3.6-35b-fast"}
 	e.ThinkingBudgetModels = cloneStrings(thinkingBudgetModels)
 	e.NoReasoningModels = []string{"glm-5.2-fast", "glm-5.2-short-fast", "kimi-k2.6-fast", "qwen3.5-397b-fast", "qwen3.6-35b-fast"}
@@ -244,6 +250,7 @@ func applyNeuralwattMetadata(e *ProviderRegistryEntry) {
 }
 
 func applyUmansMetadata(e *ProviderRegistryEntry) {
+	e.DefaultModel = "umans-coder"
 	e.Models = []string{"umans-coder", "umans-kimi-k2.7", "umans-flash", "umans-glm-5.2", "umans-glm-5.1", "umans-qwen3.6-35b-a3b"}
 	e.EscapeBuiltinToolNames = true
 	e.NoVisionModels = []string{"umans-glm-5.2", "umans-glm-5.1"}

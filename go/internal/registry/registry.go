@@ -189,10 +189,24 @@ var Providers = func() []Provider {
 			// added through `ocx provider add` sent it while the same provider
 			// reaching the runtime through this table did not.
 			rows[i].StaticHeaders = map[string]string{"x-opencode-client": "desktop"}
+		// Default models the runtime table was missing. Each of these exists in
+		// the oracle registry, and internal/providers already carried them, so
+		// a bare provider reference resolved to a model there and to nothing
+		// here — the two Go tables disagreed about the same provider.
+		case "orcarouter":
+			rows[i].DefaultModel = "openai/gpt-5.5"
+		case "ollama-cloud":
+			rows[i].DefaultModel = "glm-5.2"
+		case "alibaba-token-plan":
+			rows[i].DefaultModel = "qwen3.8-max-preview"
+		case "alibaba-token-plan-intl":
+			rows[i].DefaultModel = "qwen3.7-max"
 		case "mimo-free":
 			rows[i].KeyOptional, rows[i].LiveModels, rows[i].DefaultModel = true, true, "mimo-auto"
-		case "nvidia", "cloudflare-workers-ai":
+		case "nvidia":
 			rows[i].FreeTier = true
+		case "cloudflare-workers-ai":
+			rows[i].FreeTier, rows[i].DefaultModel = true, "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 		case "siliconflow", "tencent-coding-plan":
 			rows[i].LiveModels = true
 		case "zenmux":
