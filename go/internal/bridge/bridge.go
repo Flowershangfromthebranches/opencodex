@@ -314,11 +314,18 @@ func (m *machine) accept(event types.AdapterEvent) []Event {
 	var out []Event
 	switch event.Type {
 	case types.EventTextDelta:
-		if m.current != nil && m.current.kind == "message" && m.current.phase != event.Phase {
+		// Only an EXPLICIT phase change splits the message. Upstream stamps the
+		// phase on the item and then streams deltas without repeating it, so
+		// treating an omitted phase as a change would close the item mid-stream
+		// and emit a second, unphased message -- turning one commentary block
+		// into two and losing the label the client reads (oracle: bridge.ts:528).
+		if m.current != nil && m.current.kind == "message" && event.Phase != "" && m.current.phase != event.Phase {
 			out = append(out, m.closeCurrent()...)
 		}
 		out = append(out, m.ensureItem("message", "msg_")...)
-		m.current.phase = event.Phase
+		if event.Phase != "" {
+			m.current.phase = event.Phase
+		}
 		m.current.text.WriteString(event.Text)
 		out = append(out, m.emit("response.output_text.delta", map[string]any{"item_id": m.current.id, "output_index": m.current.index, "content_index": 0, "delta": event.Text}))
 	case types.EventReasoning:
