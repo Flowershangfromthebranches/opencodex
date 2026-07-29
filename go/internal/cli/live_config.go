@@ -9,6 +9,7 @@ import (
 
 	cursoradapter "github.com/lidge-jun/opencodex-go/internal/adapter/cursor"
 	"github.com/lidge-jun/opencodex-go/internal/config"
+	"github.com/lidge-jun/opencodex-go/internal/destination"
 	"github.com/lidge-jun/opencodex-go/internal/oauth"
 	"github.com/lidge-jun/opencodex-go/internal/registry"
 	"github.com/lidge-jun/opencodex-go/internal/server"
@@ -47,7 +48,38 @@ func (r *configBackedRegistry) ResolveModel(selector string) (*types.ResolvedMod
 }
 
 func (r *configBackedRegistry) ResolveTransport(provider string, credential *types.AuthContext) (*types.Transport, error) {
-	return r.current().ResolveTransport(provider, credential)
+	transport, err := r.current().ResolveTransport(provider, credential)
+	if err != nil {
+		return nil, err
+	}
+	// The last gate before a credential leaves the process, on the RESOLVED
+	// URL. Config load and the management API both check the destination, but
+	// neither sees a baseURL that this layer rewrites (xai's Grok CLI swap, the
+	// Copilot fallback) or a config an older build already wrote to disk. The
+	// oracle asserts at the same point, after resolution (src/router.ts:242).
+	//
+	// This lives on the config-backed registry rather than in
+	// ResolveProviderTransport because only here is the user's config the
+	// authority: a synthetic registry assembled by a test or a sidecar names
+	// its own endpoint and has no config entry to opt in with.
+	if err := r.assertDestinationAllowed(provider, transport.BaseURL); err != nil {
+		return nil, err
+	}
+	return transport, nil
+}
+
+func (r *configBackedRegistry) assertDestinationAllowed(provider, baseURL string) error {
+	var allowPrivate bool
+	readLiveConfig(r.config, r.persistence, func(cfg *config.Config) {
+		allowPrivate = cfg.Providers[provider].AllowPrivateNetwork
+	})
+	if message := destination.ConfigError(baseURL, destination.Options{
+		AllowPrivateNetwork:          allowPrivate,
+		RegistryAllowsPrivateNetwork: registryAllowsPrivateNetwork(provider),
+	}); message != "" {
+		return fmt.Errorf("resolve transport %s: %s", provider, message)
+	}
+	return nil
 }
 
 func (r *configBackedRegistry) ListModels() []types.ModelEntry { return r.current().ListModels() }

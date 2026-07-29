@@ -395,7 +395,7 @@ var registryBaseURLTemplate = regexp.MustCompile(`\{[^}]*\}`)
 // than replace. A provider with no preset keeps everything it was configured
 // with — there is no canonical entry to prefer.
 func canonicalProviderEntry(name string, provider config.ProviderConfig, presets []registry.Provider, presetIndex map[string]int) registry.Provider {
-	entry := registry.Provider{ID: name, Label: name, Adapter: provider.Adapter, BaseURL: provider.BaseURL, DefaultModel: provider.DefaultModel, StaticHeaders: provider.Headers}
+	entry := registry.Provider{ID: name, Label: name, Adapter: provider.Adapter, BaseURL: provider.BaseURL, DefaultModel: provider.DefaultModel, StaticHeaders: provider.Headers, AllowPrivateNetwork: provider.AllowPrivateNetwork}
 	for _, model := range provider.Models {
 		entry.Models = append(entry.Models, registry.ModelDefinition{ID: model})
 	}
@@ -404,6 +404,7 @@ func canonicalProviderEntry(name string, provider config.ProviderConfig, presets
 		return entry
 	}
 	preset := presets[position]
+	preset.AllowPrivateNetwork = provider.AllowPrivateNetwork
 	// The wire adapter is a property of the upstream protocol, so a saved value
 	// cannot change it. Per-model overrides still apply later, in
 	// configuredModelAdapter, where they are policy-checked.

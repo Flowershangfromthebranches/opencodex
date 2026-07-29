@@ -41,6 +41,10 @@ type Provider struct {
 	// AllowPrivateNetworkDefault is retained for callers using the original Go
 	// registry name. Keep it synchronized with AllowPrivateNetworkByDefault.
 	AllowPrivateNetworkDefault bool
+	// AllowPrivateNetwork carries the per-provider opt-in from the user's
+	// config, so the request-time destination check can honour an intentional
+	// local runtime without re-reading config down in the transport layer.
+	AllowPrivateNetwork bool
 	StaticHeaders              map[string]string
 	Models                     []ModelDefinition
 }
