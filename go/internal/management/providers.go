@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lidge-jun/opencodex-go/internal/codex"
 	"github.com/lidge-jun/opencodex-go/internal/config"
 	ocxlib "github.com/lidge-jun/opencodex-go/internal/lib"
 	"github.com/lidge-jun/opencodex-go/internal/providers"
@@ -246,17 +247,46 @@ func (a *API) testProvider(w http.ResponseWriter, r *http.Request) bool {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "Provider is disabled"})
 		return true
 	}
-	if a.fetchModels == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]any{"ok": false, "error": "live model fetch is not configured"})
+	// A probe that could not reach the upstream is a successful REPORT of a
+	// failed connection, so it answers 200 with ok:false. Returning 502 made
+	// the dashboard show an API outage for an ordinary bad key, and 501 when
+	// no fetcher was injected — which is what production actually did, because
+	// the server never passed one.
+	if a.fetchModels != nil {
+		models, err := a.fetchModels(r, name, provider)
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": ocxlib.RedactSecretString(err.Error())})
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "models": len(models)})
 		return true
 	}
-	models, err := a.fetchModels(r, name, provider)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": ocxlib.RedactSecretString(err.Error())})
-		return true
+	result := codex.ProbeProviderModels(r.Context(), nil, name, provider, a.providerProbeToken(provider))
+	payload := map[string]any{"ok": result.OK, "latencyMs": result.LatencyMS}
+	if result.Models > 0 || result.OK {
+		payload["models"] = result.Models
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "models": len(models)})
+	if result.Message != "" {
+		payload["message"] = result.Message
+	}
+	if result.Error != "" {
+		payload["error"] = ocxlib.RedactSecretString(result.Error)
+	}
+	writeJSON(w, http.StatusOK, payload)
 	return true
+}
+
+// providerProbeToken supplies the credential the probe presents.
+//
+// OAuth providers keep their token in the credential store, which this API does
+// not read — OAuthBackend exposes account state, not tokens. Passing the empty
+// string is deliberate: the probe then answers "not logged in" rather than
+// making an anonymous request and reporting the provider as broken.
+func (a *API) providerProbeToken(provider config.ProviderConfig) string {
+	if provider.AuthMode == "oauth" {
+		return ""
+	}
+	return provider.APIKey
 }
 
 func cloneProviders(input map[string]config.ProviderConfig) map[string]config.ProviderConfig {
