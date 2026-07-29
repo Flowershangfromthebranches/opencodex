@@ -91,6 +91,7 @@ func runServe(ctx context.Context, args []string, streams IO) error {
 	if err != nil {
 		return fmt.Errorf("resolve configuration environment: %w", err)
 	}
+	installReasoningSummaryCatalogLookup()
 	serviceTokenFile := *tokenFile
 	if serviceTokenFile == "" {
 		serviceTokenFile = os.Getenv("OCX_API_TOKEN_FILE")

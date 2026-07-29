@@ -55,7 +55,21 @@ func scrubResponsesCompactionItems(body map[string]any) {
 
 func stripDisabledResponsesReasoningSummaries(body map[string]any, provider config.ProviderConfig, modelID string) {
 	supported, configured := config.ModelRecordValue(provider.ModelSupportsReasoningSummaries, modelID)
-	if !configured || supported {
+	if !configured {
+		// The provider config says nothing, so ask the ACTIVE catalog. This is
+		// the case the oracle exists for (src/adapters/openai-responses.ts:61):
+		// a client that started before a catalog refresh keeps asking for
+		// summaries on a model that no longer supports them, and the request
+		// 400s. Checking per request is deliberate — the catalog changes
+		// underneath a long-lived client.
+		if CatalogModelSupportsReasoningSummaries == nil {
+			return
+		}
+		catalogSupported, known := CatalogModelSupportsReasoningSummaries(modelID)
+		if !known || catalogSupported {
+			return
+		}
+	} else if supported {
 		return
 	}
 	if stream, ok := body["stream_options"].(map[string]any); ok {
