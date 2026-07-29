@@ -57,8 +57,11 @@ type adapterTurn struct {
 	isolate        bool
 	externalModel  bool
 	lastWasTool    bool
-	emittedOutput  atomic.Bool
-	replayUnsafe   atomic.Bool
+	// rejectNativeMutations is decided per REQUEST, from the tools this turn
+	// advertises, because one executor serves many turns.
+	rejectNativeMutations bool
+	emittedOutput         atomic.Bool
+	replayUnsafe          atomic.Bool
 }
 
 var _ types.Adapter = (*Adapter)(nil)
@@ -117,11 +120,12 @@ func (a *Adapter) BuildRequest(ctx context.Context, request *types.NormalizedReq
 	}
 	turn := &adapterTurn{
 		ctx: turnCtx, cancel: cancel, writer: writer, run: built.Run,
-		parser:         NewEventParser(parserOptions),
-		clientThreadID: firstNonEmpty(strings.TrimSpace(adapterRequest.ClientThreadID), strings.TrimSpace(adapterRequest.Metadata[CursorClientThreadIDMetadata])),
-		identityScope:  firstNonEmpty(strings.TrimSpace(adapterRequest.CursorIdentity), adapterRequest.Metadata[CursorIdentityScopeMetadata]),
-		isolate:        adapterRequest.IsolateCursor || adapterRequest.Metadata[CursorIsolateConversationMetadata] == "true",
-		externalModel:  IsCursorExternalWireModel(built.Run.Model.ID),
+		parser:                NewEventParser(parserOptions),
+		clientThreadID:        firstNonEmpty(strings.TrimSpace(adapterRequest.ClientThreadID), strings.TrimSpace(adapterRequest.Metadata[CursorClientThreadIDMetadata])),
+		identityScope:         firstNonEmpty(strings.TrimSpace(adapterRequest.CursorIdentity), adapterRequest.Metadata[CursorIdentityScopeMetadata]),
+		isolate:               adapterRequest.IsolateCursor || adapterRequest.Metadata[CursorIsolateConversationMetadata] == "true",
+		externalModel:         IsCursorExternalWireModel(built.Run.Model.ID),
+		rejectNativeMutations: RequestAdvertisesApplyPatch(adapterRequest.Context.Tools, ParseToolChoice(adapterRequest.Options.ToolChoice)),
 	}
 	lastRole, _ := lastAction(adapterRequest.Context.Messages)
 	turn.lastWasTool = lastRole == "tool"
@@ -339,6 +343,7 @@ func (a *Adapter) consumeFrames(ctx context.Context, reader io.Reader, turn *ada
 				return decodeErr
 			}
 			execRequest.ClientToolDefinitions = turn.run.Tools
+			execRequest.RejectNativeMutations = turn.rejectNativeMutations
 			clientEvents, handled, drained, handleErr := turn.parser.HandleClientToolExec(execRequest)
 			if handleErr != nil {
 				return handleErr

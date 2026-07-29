@@ -125,6 +125,16 @@ func (e *FilesystemExecutor) Read(req ReadRequest) (ReadResult, error) {
 	return result, nil
 }
 
+// writeWithPolicy refuses a native write when the request advertises
+// apply_patch, so file edits go through the tool Codex can approve, diff and
+// record rather than being applied behind its back.
+func (e *FilesystemExecutor) writeWithPolicy(req WriteRequest, rejectNativeMutations bool) (WriteResult, error) {
+	if rejectNativeMutations {
+		return WriteResult{}, errors.New(NativeMutationRefusal("write"))
+	}
+	return e.Write(req)
+}
+
 func (e *FilesystemExecutor) Write(req WriteRequest) (WriteResult, error) {
 	path, err := e.Policy.CheckPath("write", req.Path)
 	if err != nil {
@@ -155,6 +165,13 @@ func (e *FilesystemExecutor) Write(req WriteRequest) (WriteResult, error) {
 		result.Content = cloneBytes(content)
 	}
 	return result, nil
+}
+
+func (e *FilesystemExecutor) deleteWithPolicy(req DeleteRequest, rejectNativeMutations bool) (DeleteResult, error) {
+	if rejectNativeMutations {
+		return DeleteResult{}, errors.New(NativeMutationRefusal("delete"))
+	}
+	return e.Delete(req)
 }
 
 func (e *FilesystemExecutor) Delete(req DeleteRequest) (DeleteResult, error) {

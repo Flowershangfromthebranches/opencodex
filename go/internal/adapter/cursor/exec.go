@@ -45,6 +45,10 @@ type ExecRequest struct {
 	RecordScreen *RecordScreenRequest
 	// ClientToolDefinitions are request-local Responses tools advertised in requestContextResult.
 	ClientToolDefinitions []MCPToolDefinition
+	// RejectNativeMutations is request-local because the executor is shared
+	// across turns: whether apply_patch is on the table is a property of THIS
+	// request, not of the provider.
+	RejectNativeMutations bool
 }
 
 type ExecResponse struct {
@@ -94,13 +98,13 @@ func (e *NativeExecutor) Execute(ctx context.Context, req ExecRequest) []ExecRes
 		if req.Write == nil {
 			return response(nil, missingPayload(req.Kind))
 		}
-		value, err := e.Filesystem.Write(*req.Write)
+		value, err := e.Filesystem.writeWithPolicy(*req.Write, req.RejectNativeMutations)
 		return response(value, err)
 	case ExecDelete:
 		if req.Delete == nil {
 			return response(nil, missingPayload(req.Kind))
 		}
-		value, err := e.Filesystem.Delete(*req.Delete)
+		value, err := e.Filesystem.deleteWithPolicy(*req.Delete, req.RejectNativeMutations)
 		return response(value, err)
 	case ExecList:
 		if req.List == nil {
