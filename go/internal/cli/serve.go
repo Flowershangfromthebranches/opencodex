@@ -5,11 +5,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -332,33 +334,105 @@ func (e *restartExitError) Error() string {
 }
 
 func configuredRegistry(cfg config.Config) *registry.ProviderRegistry {
-	base := registry.New().Entries()
-	index := make(map[string]int, len(base))
-	for position, entry := range base {
-		index[entry.ID] = position
+	presets := registry.New().Entries()
+	presetIndex := make(map[string]int, len(presets))
+	for position, entry := range presets {
+		presetIndex[entry.ID] = position
 	}
-	for name, provider := range cfg.Providers {
-		entry := registry.Provider{ID: name, Label: name, Adapter: provider.Adapter, BaseURL: provider.BaseURL, DefaultModel: provider.DefaultModel, StaticHeaders: provider.Headers}
-		for _, model := range provider.Models {
-			entry.Models = append(entry.Models, registry.ModelDefinition{ID: model})
+	// The configured set IS the routable set (oracle activeProviderEntries,
+	// src/router.ts:289). Seeding every built-in made a provider nobody
+	// configured reachable: a bare `claude-*` selector found the built-in
+	// Anthropic entry through the family fallback below and left with whatever
+	// credential that entry resolved.
+	//
+	// Preset order is kept so the dashboard and `models list` stay in the
+	// registry's display order rather than Go's random map order; custom
+	// providers follow, sorted for the same reason.
+	entries := make([]registry.Provider, 0, len(cfg.Providers))
+	appendConfigured := func(name string) {
+		provider := cfg.Providers[name]
+		if provider.Disabled || isLegacyRoutingProvider(name) {
+			return
 		}
-		if position, ok := index[name]; ok {
-			preset := base[position]
-			preset.Adapter, preset.BaseURL, preset.StaticHeaders = entry.Adapter, entry.BaseURL, entry.StaticHeaders
-			if entry.DefaultModel != "" {
-				preset.DefaultModel = entry.DefaultModel
-			}
-			if len(entry.Models) > 0 {
-				preset.Models = entry.Models
-			}
-			base[position] = preset
-		} else {
-			base = append(base, entry)
+		entries = append(entries, canonicalProviderEntry(name, provider, presets, presetIndex))
+	}
+	for _, preset := range presets {
+		if _, configured := cfg.Providers[preset.ID]; configured {
+			appendConfigured(preset.ID)
 		}
 	}
-	configured := registry.New(base...)
+	custom := make([]string, 0, len(cfg.Providers))
+	for name := range cfg.Providers {
+		if _, known := presetIndex[name]; !known {
+			custom = append(custom, name)
+		}
+	}
+	sort.Strings(custom)
+	for _, name := range custom {
+		appendConfigured(name)
+	}
+	configured := registry.New(entries...)
 	_ = configured.SetDefaultProvider(cfg.DefaultProvider)
 	return configured
+}
+
+// isLegacyRoutingProvider names the ids the OpenAI tier migration deletes. A
+// config still carrying one must not route through it, matching the oracle's
+// LEGACY_CHATGPT_PROVIDER_ID exclusion in activeProviderEntries.
+func isLegacyRoutingProvider(name string) bool {
+	return name == providerpolicy.LegacyChatGPTProviderID || name == providerpolicy.LegacyOpenAIMultiProviderID
+}
+
+// registryBaseURLTemplate matches the oracle's placeholder test
+// (src/router.ts:233): a registry URL carrying `{...}` is a preset to fill in,
+// not a pinned endpoint.
+var registryBaseURLTemplate = regexp.MustCompile(`\{[^}]*\}`)
+
+// canonicalProviderEntry merges one configured provider onto its registry
+// preset the way the oracle's routedProviderConfig does (src/router.ts:231-248):
+// the wire adapter is always the registry's, the endpoint is the registry's
+// unless that entry opted into an override, and static headers merge rather
+// than replace. A provider with no preset keeps everything it was configured
+// with — there is no canonical entry to prefer.
+func canonicalProviderEntry(name string, provider config.ProviderConfig, presets []registry.Provider, presetIndex map[string]int) registry.Provider {
+	entry := registry.Provider{ID: name, Label: name, Adapter: provider.Adapter, BaseURL: provider.BaseURL, DefaultModel: provider.DefaultModel, StaticHeaders: provider.Headers}
+	for _, model := range provider.Models {
+		entry.Models = append(entry.Models, registry.ModelDefinition{ID: model})
+	}
+	position, known := presetIndex[name]
+	if !known {
+		return entry
+	}
+	preset := presets[position]
+	// The wire adapter is a property of the upstream protocol, so a saved value
+	// cannot change it. Per-model overrides still apply later, in
+	// configuredModelAdapter, where they are policy-checked.
+	if entry.DefaultModel != "" {
+		preset.DefaultModel = entry.DefaultModel
+	}
+	if len(entry.Models) > 0 {
+		preset.Models = entry.Models
+	}
+	configuredURL := strings.TrimSpace(provider.BaseURL)
+	if configuredURL != "" && !registryBaseURLTemplate.MatchString(configuredURL) &&
+		(preset.AllowBaseURLOverride || registryBaseURLTemplate.MatchString(preset.BaseURL)) {
+		preset.BaseURL = configuredURL
+	}
+	preset.StaticHeaders = mergeStaticHeaders(preset.StaticHeaders, provider.Headers)
+	return preset
+}
+
+// mergeStaticHeaders keeps preset headers a config without a headers map would
+// otherwise erase (opencode-free's `x-opencode-client`), while letting a
+// configured value win for the keys it names.
+func mergeStaticHeaders(preset, configured map[string]string) map[string]string {
+	if len(preset) == 0 && len(configured) == 0 {
+		return nil
+	}
+	merged := make(map[string]string, len(preset)+len(configured))
+	maps.Copy(merged, preset)
+	maps.Copy(merged, configured)
+	return merged
 }
 
 func configuredAuth(cfg config.Config) (*oauth.AuthResolver, error) {

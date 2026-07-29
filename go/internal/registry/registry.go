@@ -180,6 +180,11 @@ var Providers = func() []Provider {
 			rows[i].AllowPrivateNetworkDefault, rows[i].AllowPrivateNetworkByDefault, rows[i].AllowBaseURLOverride, rows[i].KeyOptional = true, true, true, true
 		case "opencode-free":
 			rows[i].KeyOptional, rows[i].LiveModels = true, true
+			// Zen identifies the desktop tier by this header. The other Go
+			// registry (internal/providers) already carried it, so a provider
+			// added through `ocx provider add` sent it while the same provider
+			// reaching the runtime through this table did not.
+			rows[i].StaticHeaders = map[string]string{"x-opencode-client": "desktop"}
 		case "mimo-free":
 			rows[i].KeyOptional, rows[i].LiveModels, rows[i].DefaultModel = true, true, "mimo-auto"
 		case "nvidia", "cloudflare-workers-ai":

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,11 +17,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/lidge-jun/opencodex-go/internal/combos"
 	"github.com/lidge-jun/opencodex-go/internal/config"
-	"github.com/lidge-jun/opencodex-go/internal/oauth"
 )
 
 var realWorldBaseURLPattern = regexp.MustCompile(`(?m)^(?:openai_)?base_url\s*=\s*"([^"]+)"`)
@@ -137,7 +134,15 @@ func TestBuiltServeAddsRoutesAndDeletesProviderImmediately(t *testing.T) {
 	stopIsolatedOCX(t, serve, port, logs)
 }
 
-func TestBuiltServeComboRateLimitSwitchesOpenAIAccount(t *testing.T) {
+// A 429 on one combo target must hop to the next one, and the hop must carry
+// that target's own credential rather than reusing the exhausted one.
+//
+// This used to run on the canonical `openai` provider with its baseUrl pointed
+// at the local upstream. That override is discarded now — a pinned built-in
+// keeps its registry endpoint, exactly as the oracle does
+// (src/router.ts:231-248) — so the scenario runs on two configurable providers
+// instead. The combo hop, not the provider id, is what this test is about.
+func TestBuiltServeComboRateLimitHopsToTheNextAccount(t *testing.T) {
 	var mu sync.Mutex
 	seen := []string{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -162,21 +167,18 @@ func TestBuiltServeComboRateLimitSwitchesOpenAIAccount(t *testing.T) {
 	binary, ocxHome, codexHome, home := buildIsolatedOCX(t)
 	cfg := config.FreshInstall()
 	cfg.Port = 0
-	provider := cfg.Providers["openai"]
-	provider.BaseURL, provider.AllowPrivateNetwork = upstream.URL+"/v1", true
-	provider.Models = []string{"rate-limited", "fallback"}
-	provider.CodexAccountMode = ""
-	cfg.Providers["openai"] = provider
-	cfg.Combos["pooled"] = combos.Combo{Strategy: combos.StrategyFailover, MaxHops: 1, Targets: []combos.Target{{Provider: "openai", Model: "rate-limited"}, {Provider: "openai", Model: "fallback"}}}
+	cfg.Providers["primary"] = config.ProviderConfig{
+		Adapter: "openai-responses", BaseURL: upstream.URL + "/v1", APIKey: "combo-token-one", AuthMode: "key",
+		DefaultModel: "rate-limited", Models: []string{"rate-limited"}, AllowPrivateNetwork: true,
+	}
+	cfg.Providers["secondary"] = config.ProviderConfig{
+		Adapter: "openai-responses", BaseURL: upstream.URL + "/v1", APIKey: "combo-token-two", AuthMode: "key",
+		DefaultModel: "fallback", Models: []string{"fallback"}, AllowPrivateNetwork: true,
+	}
+	cfg.DefaultProvider = "primary"
+	cfg.Combos["pooled"] = combos.Combo{Strategy: combos.StrategyFailover, MaxHops: 1, Targets: []combos.Target{{Provider: "primary", Model: "rate-limited"}, {Provider: "secondary", Model: "fallback"}}}
 	if err := config.Save(filepath.Join(ocxHome, "config.json"), &cfg); err != nil {
 		t.Fatal(err)
-	}
-	store := oauth.NewCredentialStore(filepath.Join(ocxHome, "auth.json"))
-	for index, token := range []string{"combo-token-one", "combo-token-two"} {
-		credential := oauth.OAuthCredentials{Access: token, Refresh: "refresh", Expires: time.Now().Add(time.Hour).UnixMilli(), AccountID: fmt.Sprintf("combo-account-%d", index)}
-		if err := store.SaveCredential(context.Background(), "openai", credential); err != nil {
-			t.Fatal(err)
-		}
 	}
 	serve, logs := startIsolatedOCX(t, binary, ocxHome, codexHome, home)
 	port := waitRuntimePort(t, filepath.Join(ocxHome, "runtime-port"))

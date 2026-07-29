@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -297,62 +296,16 @@ func TestBuiltServeAppliesManagementProviderChangeToNextRequest(t *testing.T) {
 	stopIsolatedOCX(t, command, port, logs)
 }
 
-func TestBuiltServeMigratesLegacyOpenAIAccountPoolToCanonicalSelection(t *testing.T) {
-	authorizations := make(chan string, 2)
-	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		authorizations <- request.Header.Get("Authorization")
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(writer, `{"id":"resp-pool","object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`)
-	}))
-	defer upstream.Close()
-	binary, ocxHome, codexHome, home := buildIsolatedOCX(t)
-	cfg := config.FreshInstall()
-	cfg.Port = 0
-	provider := cfg.Providers["openai"]
-	provider.BaseURL, provider.AllowPrivateNetwork = upstream.URL+"/v1", true
-	provider.Models, provider.DefaultModel = []string{"pool-model"}, "pool-model"
-	provider.CodexAccountMode = "" // omitted mode defaults to pool for the canonical provider id
-	cfg.Providers["openai"] = provider
-	if err := config.Save(filepath.Join(ocxHome, "config.json"), &cfg); err != nil {
-		t.Fatal(err)
-	}
-	store := oauth.NewCredentialStore(filepath.Join(ocxHome, "auth.json"))
-	for index, token := range []string{"pool-token-one", "pool-token-two"} {
-		credential := oauth.OAuthCredentials{Access: token, Refresh: "refresh", Expires: time.Now().Add(time.Hour).UnixMilli(), AccountID: fmt.Sprintf("pool-account-%d", index)}
-		if err := store.SaveCredential(context.Background(), "openai", credential); err != nil {
-			t.Fatal(err)
-		}
-	}
-	command, logs := startIsolatedOCX(t, binary, ocxHome, codexHome, home)
-	port := waitRuntimePort(t, filepath.Join(ocxHome, "runtime-port"))
-	for _, threadID := range []string{"pool-thread-one", "pool-thread-two"} {
-		payload, _ := json.Marshal(map[string]any{"model": "pool-model", "input": "pool", "stream": false})
-		request, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:"+strconv.Itoa(port)+"/v1/responses", bytes.NewReader(payload))
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("thread-id", threadID)
-		response, err := http.DefaultClient.Do(request)
-		if err != nil {
-			t.Fatalf("pool request: %v\n%s", err, logs.String())
-		}
-		response.Body.Close()
-		if response.StatusCode != http.StatusOK {
-			t.Fatalf("pool response status=%d logs=%s", response.StatusCode, logs.String())
-		}
-	}
-	seen := map[string]int{}
-	for range 2 {
-		select {
-		case authorization := <-authorizations:
-			seen[authorization]++
-		case <-time.After(3 * time.Second):
-			t.Fatal("timed out waiting for pooled upstream request")
-		}
-	}
-	if seen["Bearer pool-token-one"] != 2 || seen["Bearer pool-token-two"] != 0 {
-		t.Fatalf("canonical authorizations = %#v", seen)
-	}
-	stopIsolatedOCX(t, command, port, logs)
-}
+// The canonical `openai` provider is pinned to chatgpt.com, so this scenario
+// can no longer point it at a local upstream to read the Authorization header
+// off the wire: a saved baseUrl for a pinned built-in is discarded, which is
+// exactly what the oracle does (src/router.ts:231-248, verified by running
+// routeModel against a 127.0.0.1 baseUrl). Asserting on the resolved auth
+// context instead keeps the real subject — that a legacy multi-account
+// credential set resolves through the canonical pool with thread affinity —
+// without asking the runtime to send Codex credentials somewhere else.
+// Live coverage of that selection is in
+// internal/cli: TestBuiltServeResolvesLegacyOpenAIAccountPoolThroughCanonicalSelection.
 
 func postModelRequest(t *testing.T, port int, model string, logs *bytes.Buffer) {
 	t.Helper()
