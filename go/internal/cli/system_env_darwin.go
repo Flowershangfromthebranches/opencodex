@@ -17,6 +17,12 @@ func installSystemEnv(ctx context.Context, cfg config.Config, port int) (bool, e
 
 func installSystemEnvWithDetector(ctx context.Context, cfg config.Config, port int, detect claudeAuthDetector) (bool, error) {
 	if cfg.ClaudeCode == nil || !cfg.ClaudeCode.SystemEnv || cfg.ClaudeCode.Enabled != nil && !*cfg.ClaudeCode.Enabled {
+		// Opting out has to REMOVE a previous install, not merely skip a new
+		// one. The teardown otherwise only runs on a graceful stop, so a crash,
+		// a kill, or a machine restart leaves the user's shell and launchctl
+		// permanently pointed at a proxy they have since switched off -- with
+		// no owner left to undo it.
+		_ = uninstallSystemEnv(ctx)
 		return false, nil
 	}
 	home, err := os.UserHomeDir()
