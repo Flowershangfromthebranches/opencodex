@@ -282,7 +282,7 @@ func (a *ChatAdapter) ParseStream(ctx context.Context, body io.ReadCloser) <-cha
 			}
 			if chunk["error"] != nil {
 				flush()
-				emit(types.AdapterEvent{Type: types.EventError, Error: responsesErrorMessage(chunk)})
+				emit(chatStreamErrorEvent(chunk))
 				return
 			}
 			if chunk["usage"] != nil {

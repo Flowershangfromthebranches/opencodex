@@ -429,11 +429,41 @@ func (m *machine) accept(event types.AdapterEvent) []Event {
 		}
 		status := event.StatusCode
 		errorType := event.ErrorType
-		if status == 0 {
+		var code string
+		if status == 0 && errorType == "" && event.Code == "" {
+			// Nothing classified upstream: fall back to reading the message.
 			inferred := lib.AdapterFailureFromMessage(message)
 			status, errorType, message = inferred.HTTPStatus, inferred.Error.Type, inferred.Error.Message
+		} else {
+			// The adapter classified this. Keep what it reported and fill only
+			// the gaps from the message, mirroring the oracle's
+			// adapterFailureFromEvent (src/bridge.ts:66-81). Dropping
+			// event.Code here was why a classified upstream failure still
+			// reached the client as a bare 502.
+			fallback := lib.AdapterFailureFromMessage(message)
+			if status == 0 {
+				status = fallback.HTTPStatus
+			}
+			if errorType == "" {
+				errorType = fallback.Error.Type
+			}
+			code = event.Code
+			if lib.IsCyberPolicyCode(code) {
+				// Codex maps a policy refusal to 400 whether it arrived in the
+				// body or mid-stream; never leave it as a retryable 502.
+				code, errorType, status = lib.CyberPolicyErrorCode, "invalid_request_error", 400
+			}
 		}
 		failure := responseError(status, errorType, message)
+		if code != "" {
+			failure["code"] = code
+		}
+		// classifyError derives a type from the status, so an upstream that
+		// named its own type has to be restored afterwards — the oracle does
+		// the same (src/bridge.ts:73).
+		if event.ErrorType != "" && !lib.IsCyberPolicyCode(event.Code) {
+			failure["type"] = event.ErrorType
+		}
 		out = append(out, m.finishFailure(failure, event.Retryable)...)
 	case types.EventIncomplete:
 		m.usage = cloneUsage(event.Usage)
