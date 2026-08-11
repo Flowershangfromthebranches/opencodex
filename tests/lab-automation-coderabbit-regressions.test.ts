@@ -11,6 +11,7 @@ import {
   saveLabAutomationPolicy,
   saveLabAutomationState,
 } from "../src/lab/automation/persistence";
+import { loadLabAutomationConfig } from "../src/lab/automation/config-persistence";
 import { LAB_AUTOMATION_HARD_MAX } from "../src/lab/automation/constants";
 import { enqueuePlannedRuns } from "../src/lab/automation/queue";
 import { runBudgetRemaining } from "../src/lab/automation/budgets";
@@ -271,7 +272,7 @@ describe("CL-08 CodeRabbit regressions", () => {
       layers: { protocolConformance: false, liveRouteCompatibility: true, taskEffectiveness: false },
     }, home);
     expect(await handleLabCommand(["automation", "enable", "--json"], { configDir: home })).toBe(0);
-    const policy = loadLabAutomationPolicy(home);
+    const policy = loadLabAutomationConfig(home).policy;
     expect(policy.enabled).toBe(true);
     expect(policy.layers.protocolConformance).toBe(false);
     expect(policy.layers.liveRouteCompatibility).toBe(true);
