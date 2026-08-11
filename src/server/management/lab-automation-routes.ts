@@ -21,15 +21,16 @@ import {
 } from "../../lab/automation/orchestrator";
 import { planManualLabRun } from "../../lab/automation/planner";
 import {
-  loadLabAutomationPolicy,
   loadLabAutomationState,
   normalizeLabAutomationRoutesV1,
-  saveLabAutomationPolicy,
-  saveLabAutomationRoutes,
 } from "../../lab/automation/persistence";
+import {
+  loadLabAutomationConfig,
+  saveLabAutomationConfig,
+} from "../../lab/automation/config-persistence";
 import { normalizeLabAutomationPolicyV1 } from "../../lab/automation/policy";
 import { listLabAutomationRuns } from "../../lab/automation/runs-query";
-import type { LabAutomationLayer, LabAutomationPolicyV1, LabAutomationRoutesV1 } from "../../lab/automation/types";
+import type { LabAutomationLayer, LabAutomationPolicyV1 } from "../../lab/automation/types";
 import { LabAutomationError } from "../../lab/automation/types";
 import { jsonResponse } from "../auth-cors";
 import { readManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
@@ -165,8 +166,7 @@ export async function handleLabAutomationRoutes(ctx: ManagementContext): Promise
       if (!isPlainRecord(body)) return automationErrorResponse("invalid_body", "body must be an object", 400, ctx);
       // Only policy/routes are authoritative. Other top-level properties are ignored rather than
       // treated as injectable process-local capabilities (for example a fake routeExecutor).
-      let policy = loadLabAutomationPolicy(configDir);
-      let routes: LabAutomationRoutesV1 | undefined;
+      let { policy, routes } = loadLabAutomationConfig(configDir);
       if (body.policy !== undefined) {
         if (!isPlainRecord(body.policy)) return automationErrorResponse("invalid_policy", "policy must be an object", 400, ctx);
         const incoming = body.policy as Record<string, unknown>;
@@ -186,10 +186,11 @@ export async function handleLabAutomationRoutes(ctx: ManagementContext): Promise
         routes = normalizeLabAutomationRoutesV1(body.routes);
       }
 
-      // Validate the complete requested update before persisting either file so an invalid routes
-      // payload cannot leave a valid policy half-applied.
-      if (body.routes !== undefined && routes) saveLabAutomationRoutes(routes, configDir);
-      if (body.policy !== undefined) saveLabAutomationPolicy(policy, configDir);
+      // One atomic rename publishes policy and routes as a coherent generation. A failed write
+      // leaves the previous generation authoritative and scheduler reconciliation is not applied.
+      if (body.policy !== undefined || body.routes !== undefined) {
+        saveLabAutomationConfig(policy, routes, configDir);
+      }
       applySchedulerPolicy(policy, configDir);
       return jsonResponse(buildLabAutomationStatus(configDir), 200, req, config);
     } catch (error) {
