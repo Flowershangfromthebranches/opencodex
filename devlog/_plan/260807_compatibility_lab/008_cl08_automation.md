@@ -2,10 +2,10 @@
 
 ## Programme position
 
-**Repository:** `lidge-jun/opencodex`  
-**Integration target:** `dev`  
-**Branch:** `feat/cl-08-lab-automation`  
-**Starting SHA:** `da8ebd3135553c1d4dd85c1f258e998a5de14f28`  
+**Repository:** `lidge-jun/opencodex`
+**Integration target:** `dev`
+**Branch:** `feat/cl-08-lab-automation`
+**Starting SHA:** `da8ebd3135553c1d4dd85c1f258e998a5de14f28`
 **CL-07 merge prerequisite:** `02e62fc8c7354c544ef71f8bb3db5ebba42cb600`
 
 CL-07 is accepted and closed.
