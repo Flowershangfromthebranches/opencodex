@@ -6,12 +6,21 @@ import type { OcxConfig } from "../src/types";
 import { defaultLabAutomationPolicyV1 } from "../src/lab/automation/policy";
 import * as persistence from "../src/lab/automation/persistence";
 import {
+  loadLabAutomationConfig,
+  saveLabAutomationConfig,
+  setLabAutomationConfigCommitFaultForTests,
+} from "../src/lab/automation/config-persistence";
+import {
   isLabAutomationSchedulerRunning,
   resetLabAutomationSchedulerStateForTests,
   runLabAutomationTick,
   setLabAutomationDispatchDeps,
   startLabAutomationScheduler,
 } from "../src/lab/automation/orchestrator";
+import {
+  acquireServerResourceOwner,
+  resetServerResourceOwnershipForTests,
+} from "../src/lib/server-resource-ownership";
 
 const HOMES: string[] = [];
 
@@ -27,62 +36,52 @@ function emptyConfig(): OcxConfig {
 }
 
 afterEach(() => {
+  setLabAutomationConfigCommitFaultForTests(null);
+  resetServerResourceOwnershipForTests();
   resetLabAutomationSchedulerStateForTests();
   for (const dir of HOMES.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 describe("CL-08 Ingwannu regressions", () => {
-  test("same-root successor survives predecessor runtime release", async () => {
+  test("same-root successor survives predecessor server-owner release", async () => {
     const home = tempHome();
     let firstLoads = 0;
     let secondLoads = 0;
 
-    const releaseFirst = setLabAutomationDispatchDeps({
+    const firstOwner = acquireServerResourceOwner();
+    setLabAutomationDispatchDeps({
       configDir: home,
       loadConfig: () => {
         firstLoads += 1;
         return emptyConfig();
       },
-    }) as unknown;
-    expect(typeof releaseFirst).toBe("function");
-    if (typeof releaseFirst !== "function") return;
-
+    });
     startLabAutomationScheduler(home);
     expect(isLabAutomationSchedulerRunning(home)).toBe(true);
 
-    const releaseSecond = setLabAutomationDispatchDeps({
+    const secondOwner = acquireServerResourceOwner();
+    setLabAutomationDispatchDeps({
       configDir: home,
       loadConfig: () => {
         secondLoads += 1;
         return emptyConfig();
       },
-    }) as unknown;
-    expect(typeof releaseSecond).toBe("function");
-    if (typeof releaseSecond !== "function") return;
-
+    });
     startLabAutomationScheduler(home);
-    releaseFirst();
+
+    firstOwner.release();
     expect(isLabAutomationSchedulerRunning(home)).toBe(true);
 
     await runLabAutomationTick(home);
     expect(firstLoads).toBe(0);
     expect(secondLoads).toBeGreaterThan(0);
 
-    releaseSecond();
+    secondOwner.release();
     expect(isLabAutomationSchedulerRunning(home)).toBe(false);
   });
 
   test("failed combined automation config commit leaves the prior generation effective", async () => {
     const home = tempHome();
-    const saveConfig = Reflect.get(persistence, "saveLabAutomationConfig") as unknown;
-    const loadConfig = Reflect.get(persistence, "loadLabAutomationConfig") as unknown;
-    const setCommitFault = Reflect.get(persistence, "setLabAutomationConfigCommitFaultForTests") as unknown;
-
-    expect(typeof saveConfig).toBe("function");
-    expect(typeof loadConfig).toBe("function");
-    expect(typeof setCommitFault).toBe("function");
-    if (typeof saveConfig !== "function" || typeof loadConfig !== "function" || typeof setCommitFault !== "function") return;
-
     const initialPolicy = {
       ...defaultLabAutomationPolicyV1(),
       enabled: true,
@@ -93,7 +92,7 @@ describe("CL-08 Ingwannu regressions", () => {
       },
     };
     const initialRoutes = persistence.defaultLabAutomationRoutesV1();
-    saveConfig(initialPolicy, initialRoutes, home);
+    saveLabAutomationConfig(initialPolicy, initialRoutes, home);
 
     const nextPolicy = {
       ...initialPolicy,
@@ -104,14 +103,11 @@ describe("CL-08 Ingwannu regressions", () => {
       routes: [{ providerName: "provider-new", modelId: "model-new" }],
     };
 
-    setCommitFault("before_publish");
-    expect(() => saveConfig(nextPolicy, nextRoutes, home)).toThrow();
-    setCommitFault(null);
+    setLabAutomationConfigCommitFaultForTests("before_publish");
+    expect(() => saveLabAutomationConfig(nextPolicy, nextRoutes, home)).toThrow();
+    setLabAutomationConfigCommitFaultForTests(null);
 
-    const effective = loadConfig(home) as {
-      policy: typeof initialPolicy;
-      routes: typeof initialRoutes;
-    };
+    const effective = loadLabAutomationConfig(home);
     expect(effective.policy).toEqual(initialPolicy);
     expect(effective.routes).toEqual(initialRoutes);
 
