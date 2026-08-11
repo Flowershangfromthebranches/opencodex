@@ -1,13 +1,13 @@
 import { readConfigDiagnostics } from "../../config";
+import { registerCurrentServerResourceCleanup } from "../../lib/server-resource-ownership";
 import { queryLabStatus } from "../query";
 import { rebuildLabProjection } from "../projection/rebuild";
 import { planLabAutomationRuns } from "./planner";
 import {
-  loadLabAutomationPolicy,
-  loadLabAutomationRoutes,
   loadLabAutomationState,
   mutateLabAutomationState,
 } from "./persistence";
+import { loadLabAutomationConfig } from "./config-persistence";
 import {
   rollBudgetWindow,
   runBudgetRemaining,
@@ -41,10 +41,20 @@ import { LabAutomationError } from "./types";
 import { LAB_AUTOMATION_HARD_MAX } from "./constants";
 import { cancelQueuedRun } from "./queue";
 
-const schedulerTimers = new Map<string, ReturnType<typeof setInterval>>();
+type SchedulerOwner = {
+  timer: ReturnType<typeof setInterval>;
+  ownerToken: symbol;
+};
+
+type DispatchOwner = {
+  token: symbol;
+  deps: AutomationDispatchDeps;
+};
+
+const schedulerTimers = new Map<string, SchedulerOwner>();
 const ticksInProgress = new Set<string>();
 let shutdownRequested = false;
-const dispatchDepsByConfigDir = new Map<string, AutomationDispatchDeps>();
+const dispatchDepsByConfigDir = new Map<string, DispatchOwner>();
 const inFlightControllers = new Map<string, AbortController>();
 const cancellingRunIds = new Set<string>();
 
@@ -53,20 +63,48 @@ function configKey(configDir?: string): string {
 }
 
 function dispatchDepsFor(configDir?: string): AutomationDispatchDeps {
-  return dispatchDepsByConfigDir.get(configKey(configDir)) ?? {};
+  return dispatchDepsByConfigDir.get(configKey(configDir))?.deps ?? {};
 }
 
 function cancellationCooldownUntil(policy: LabAutomationPolicyV1, now: number): number {
   return now + Math.max(policy.failureCooldownMs, LAB_AUTOMATION_HARD_MAX.schedulerTickMs);
 }
 
-export function setLabAutomationDispatchDeps(deps: AutomationDispatchDeps): void {
+/**
+ * Register process-local dispatch authority for one runtime owner.
+ *
+ * The returned receipt releases only the authority that this call installed. If a same-root
+ * successor has already replaced it, releasing the predecessor is a no-op for the successor.
+ */
+export function setLabAutomationDispatchDeps(deps: AutomationDispatchDeps): () => void {
   const key = configKey(deps.configDir);
   if (Object.keys(deps).length === 0) {
     dispatchDepsByConfigDir.delete(key);
-    return;
+    return () => {};
   }
-  dispatchDepsByConfigDir.set(key, deps);
+
+  const token = Symbol("lab-automation-runtime-owner");
+  dispatchDepsByConfigDir.set(key, { token, deps });
+  const existingScheduler = schedulerTimers.get(key);
+  if (existingScheduler) existingScheduler.ownerToken = token;
+
+  let released = false;
+  let detachServerCleanup = () => {};
+  const release = () => {
+    if (released) return;
+    released = true;
+    detachServerCleanup();
+    const current = dispatchDepsByConfigDir.get(key);
+    if (current?.token !== token) return;
+    dispatchDepsByConfigDir.delete(key);
+    const scheduler = schedulerTimers.get(key);
+    if (scheduler?.ownerToken === token) {
+      clearInterval(scheduler.timer);
+      schedulerTimers.delete(key);
+    }
+  };
+  detachServerCleanup = registerCurrentServerResourceCleanup(release);
+  return release;
 }
 
 export function isLabAutomationSchedulerRunning(configDir?: string): boolean {
@@ -81,8 +119,7 @@ export function requestLabAutomationShutdown(): void {
 }
 
 export function buildLabAutomationStatus(configDir?: string): LabAutomationStatusV1 {
-  const policy = loadLabAutomationPolicy(configDir);
-  const routes = loadLabAutomationRoutes(configDir);
+  const { policy, routes } = loadLabAutomationConfig(configDir);
   const state = loadLabAutomationState(configDir);
   const now = Date.now();
   const hourAgo = now - LAB_AUTOMATION_HARD_MAX.budgetWindowMs;
@@ -144,8 +181,7 @@ function reconcileQueuedState(
 
 /** Apply current policy/route enrollment to already queued scheduled work without executing it. */
 export function reconcileLabAutomationQueue(configDir?: string): void {
-  const policy = loadLabAutomationPolicy(configDir);
-  const routes = loadLabAutomationRoutes(configDir);
+  const { policy, routes } = loadLabAutomationConfig(configDir);
   const now = Date.now();
   mutateLabAutomationState(configDir, (state) => ({
     state: trimTerminalRuns(reconcileQueuedState(state, policy, routes, now), now),
@@ -276,8 +312,9 @@ async function runDispatchBatch(
   options: { manualRunId?: string; abortSignal?: AbortSignal } = {},
 ): Promise<void> {
   if (shutdownRequested) return;
-  const initialPolicy = loadLabAutomationPolicy(configDir);
-  const initialRoutes = loadLabAutomationRoutes(configDir);
+  const initialConfig = loadLabAutomationConfig(configDir);
+  const initialPolicy = initialConfig.policy;
+  const initialRoutes = initialConfig.routes;
   if (initialPolicy.enabled && options.manualRunId === undefined && !ensureAutomationProjection(configDir)) {
     reconcileLabAutomationQueue(configDir);
     return;
@@ -300,8 +337,7 @@ async function runDispatchBatch(
   const maxDispatches = options.manualRunId ? 1 : Math.max(1, initialPolicy.maxConcurrentRuns);
   for (let dispatched = 0; dispatched < maxDispatches; dispatched += 1) {
     if (shutdownRequested) break;
-    const policy = loadLabAutomationPolicy(configDir);
-    const routes = loadLabAutomationRoutes(configDir);
+    const { policy, routes } = loadLabAutomationConfig(configDir);
     const run = claimNextRun(
       policy,
       routes,
@@ -357,10 +393,14 @@ export async function runLabAutomationTick(configDir?: string): Promise<void> {
 
 export function startLabAutomationScheduler(configDir?: string): void {
   const key = configKey(configDir);
-  if (schedulerTimers.has(key)) return;
+  const currentOwner = dispatchDepsByConfigDir.get(key)?.token;
+  const existing = schedulerTimers.get(key);
+  if (existing) {
+    if (currentOwner) existing.ownerToken = currentOwner;
+    return;
+  }
   shutdownRequested = false;
-  const policy = loadLabAutomationPolicy(configDir);
-  const routes = loadLabAutomationRoutes(configDir);
+  const { policy, routes } = loadLabAutomationConfig(configDir);
   const now = Date.now();
   mutateLabAutomationState(configDir, (state) => {
     let next = recoverLabAutomationState(policy, state, now);
@@ -371,19 +411,22 @@ export function startLabAutomationScheduler(configDir?: string): void {
     void runLabAutomationTick(configDir);
   }, LAB_AUTOMATION_HARD_MAX.schedulerTickMs);
   timer.unref?.();
-  schedulerTimers.set(key, timer);
+  schedulerTimers.set(key, {
+    timer,
+    ownerToken: currentOwner ?? Symbol("lab-automation-manual-scheduler"),
+  });
 }
 
 /** Stop periodic scheduling only. Process shutdown is a separate explicit signal. */
 export function stopLabAutomationScheduler(configDir?: string): void {
   if (configDir !== undefined) {
     const key = configKey(configDir);
-    const timer = schedulerTimers.get(key);
-    if (timer) clearInterval(timer);
+    const scheduler = schedulerTimers.get(key);
+    if (scheduler) clearInterval(scheduler.timer);
     schedulerTimers.delete(key);
     return;
   }
-  for (const timer of schedulerTimers.values()) clearInterval(timer);
+  for (const scheduler of schedulerTimers.values()) clearInterval(scheduler.timer);
   schedulerTimers.clear();
 }
 
@@ -423,7 +466,7 @@ export function cancelLabAutomationRun(runId: string, configDir?: string): boole
     controller.abort(new Error("cancelled"));
     return true;
   }
-  const policy = loadLabAutomationPolicy(configDir);
+  const policy = loadLabAutomationConfig(configDir).policy;
   const now = Date.now();
   return mutateLabAutomationState(configDir, (state) => {
     const run = state.runs.find((row) => row.runId === runId);
