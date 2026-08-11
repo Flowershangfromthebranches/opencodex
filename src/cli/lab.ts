@@ -52,11 +52,11 @@ import {
   startLabAutomationScheduler,
   stopLabAutomationScheduler,
 } from "../lab/automation/orchestrator";
+import { loadLabAutomationState } from "../lab/automation/persistence";
 import {
-  loadLabAutomationPolicy,
-  saveLabAutomationPolicy,
-  loadLabAutomationState,
-} from "../lab/automation/persistence";
+  loadLabAutomationConfig,
+  saveLabAutomationPolicyConfig,
+} from "../lab/automation/config-persistence";
 import { planManualLabRun } from "../lab/automation/planner";
 import { listLabAutomationRuns } from "../lab/automation/runs-query";
 import { LabAutomationError, type LabAutomationLayer } from "../lab/automation/types";
@@ -360,7 +360,7 @@ export async function handleLabCommand(argv: string[], deps: LabCliDeps = {}): P
               const enableLive = takeFlag(automationRest, "--live");
               rejectArgs(automationRest, USAGE);
               const selectionExplicit = enableProtocol || enableLive;
-              const current = loadLabAutomationPolicy(configDir);
+              const current = loadLabAutomationConfig(configDir).policy;
               const policy = {
                 ...current,
                 enabled: true,
@@ -371,7 +371,7 @@ export async function handleLabCommand(argv: string[], deps: LabCliDeps = {}): P
                 },
                 taskEffectivenessBackgroundEnabled: false,
               };
-              saveLabAutomationPolicy(policy, configDir);
+              saveLabAutomationPolicyConfig(policy, configDir);
               reconcileLabAutomationQueue(configDir);
               startLabAutomationScheduler(configDir);
               const status = buildLabAutomationStatus(configDir);
@@ -380,8 +380,8 @@ export async function handleLabCommand(argv: string[], deps: LabCliDeps = {}): P
             }
             case "disable": {
               rejectArgs(automationRest, USAGE);
-              const policy = { ...loadLabAutomationPolicy(configDir), enabled: false };
-              saveLabAutomationPolicy(policy, configDir);
+              const policy = { ...loadLabAutomationConfig(configDir).policy, enabled: false };
+              saveLabAutomationPolicyConfig(policy, configDir);
               reconcileLabAutomationQueue(configDir);
               stopLabAutomationScheduler(configDir);
               const status = buildLabAutomationStatus(configDir);
