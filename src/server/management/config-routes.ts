@@ -463,8 +463,9 @@ export async function handleConfigRoutes(ctx: ManagementContext): Promise<Respon
       };
     };
     if (body.webSearch && body.webSearch.backend !== undefined && body.webSearch.backend !== null
-      && body.webSearch.backend !== "openai" && body.webSearch.backend !== "anthropic") {
-      return jsonResponse({ error: "webSearch.backend must be openai, anthropic, or null" }, 400);
+      && body.webSearch.backend !== "openai" && body.webSearch.backend !== "anthropic"
+      && body.webSearch.backend !== "xai" && body.webSearch.backend !== "google") {
+      return jsonResponse({ error: "webSearch.backend must be openai, anthropic, xai, google, or null" }, 400);
     }
     if (body.webSearch && body.webSearch.streamRoutedModelOutput !== undefined
       && typeof body.webSearch.streamRoutedModelOutput !== "boolean") {
@@ -527,7 +528,8 @@ export async function handleConfigRoutes(ctx: ManagementContext): Promise<Respon
         else config.webSearchSidecar.model = body.webSearch.model;
       }
       if (body.webSearch.backend === null) delete config.webSearchSidecar.backend;
-      else if (body.webSearch.backend === "openai" || body.webSearch.backend === "anthropic") {
+      else if (body.webSearch.backend === "openai" || body.webSearch.backend === "anthropic"
+        || body.webSearch.backend === "xai" || body.webSearch.backend === "google") {
         config.webSearchSidecar.backend = body.webSearch.backend;
       }
       if (typeof body.webSearch.reasoning === "string") config.webSearchSidecar.reasoning = body.webSearch.reasoning;

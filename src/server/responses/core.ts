@@ -3020,6 +3020,8 @@ async function handleResponsesInner(
       backend: wsPlan.backend,
       forwardProvider: wsPlan.forwardSidecar?.provider,
       anthropicSidecar: wsPlan.anthropicSidecar,
+      xaiSidecar: wsPlan.xaiSidecar,
+      googleSidecar: wsPlan.googleSidecar,
       hostedTool: wsPlan.hostedTool,
       selectedForwardHeaders: wsPlan.forwardSidecar?.headers ?? selectedForwardHeaders,
       settings: wsPlan.settings,

@@ -1029,9 +1029,13 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
       const section = body[field];
       if (section === undefined || section === null) continue;
       if (!isPlainObject(section)) return jsonResponse({ error: `${field} must be an object or null` }, 400);
+      // webSearchSidecar accepts the provider-native backends; visionSidecar stays two-valued.
+      const allowedBackends: readonly string[] = field === "webSearchSidecar"
+        ? ["openai", "anthropic", "xai", "google"]
+        : ["openai", "anthropic"];
       if (section.backend !== undefined && section.backend !== null
-        && section.backend !== "openai" && section.backend !== "anthropic") {
-        return jsonResponse({ error: `${field}.backend must be openai, anthropic, or null` }, 400);
+        && !(typeof section.backend === "string" && allowedBackends.includes(section.backend))) {
+        return jsonResponse({ error: `${field}.backend must be ${allowedBackends.join(", ")}, or null` }, 400);
       }
       if (section.model !== undefined && typeof section.model !== "string") {
         return jsonResponse({ error: `${field}.model must be a string` }, 400);
@@ -1051,22 +1055,27 @@ export async function handleAgentSettingsRoutes(ctx: ManagementContext): Promise
       }
     }
     const next = { ...(config.claudeCode ?? {}) };
-    for (const field of ["webSearchSidecar", "visionSidecar"] as const) {
+    // Generic per-field merge; B widens per field (webSearchSidecar carries the provider-native
+    // backends, visionSidecar stays two-valued — the validation loop above enforced each union).
+    const applySidecarOverride = <F extends "webSearchSidecar" | "visionSidecar">(field: F): void => {
       const section = body[field];
-      if (section === undefined) continue;
+      if (section === undefined) return;
       if (section === null || Object.keys(section as Record<string, unknown>).length === 0) {
         delete next[field];
-        continue;
+        return;
       }
-      const requested = section as { backend?: "openai" | "anthropic" | null; model?: string };
-      const override: NonNullable<OcxClaudeCodeConfig[typeof field]> = { ...next[field] };
+      type Override = NonNullable<OcxClaudeCodeConfig[F]>;
+      const requested = section as { backend?: NonNullable<Override["backend"]> | null; model?: string };
+      const override: Override = { ...next[field] } as Override;
       if (requested.backend === null) delete override.backend;
       else if (requested.backend !== undefined) override.backend = requested.backend;
       if (requested.model === "") delete override.model;
       else if (requested.model !== undefined) override.model = requested.model;
       if (Object.keys(override).length > 0) next[field] = override;
       else delete next[field];
-    }
+    };
+    applySidecarOverride("webSearchSidecar");
+    applySidecarOverride("visionSidecar");
     if (body.enabled !== undefined) {
       if (typeof body.enabled !== "boolean") return jsonResponse({ error: "enabled must be a boolean" }, 400);
       next.enabled = body.enabled;

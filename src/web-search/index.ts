@@ -1,5 +1,6 @@
 import type { OcxConfig, OcxParsedRequest, OcxProviderConfig } from "../types";
 import { modelInList, toolChoiceToolPredicate } from "../types";
+import { resolveEnvValue } from "../config";
 import type { SidecarSettings } from "./executor";
 import type { ResolvedOpenAiForwardSidecar } from "../providers/openai-sidecar";
 import { getAccountSet } from "../oauth/store";
@@ -13,6 +14,11 @@ export { runAnthropicWebSearch, parseAnthropicSidecarSSE } from "./anthropic-exe
 const DEFAULT_SIDECAR_MODEL = "gpt-5.6-luna";
 // Default Claude model for the anthropic-backed sidecar (used when cfg.model is unset).
 const DEFAULT_ANTHROPIC_SIDECAR_MODEL = "claude-sonnet-5";
+// Default Grok model for the xai-backed sidecar: cheap, search-capable, huge context
+// (docs.x.ai demonstrates web_search on the grok-4 family; 4-1-fast is the economical tier).
+const DEFAULT_XAI_SIDECAR_MODEL = "grok-4-1-fast";
+// Default Gemini model for the google-backed sidecar (registry default; search-supported family).
+const DEFAULT_GOOGLE_SIDECAR_MODEL = "gemini-3.5-flash";
 // "low" is the lightest effort the ChatGPT backend allows with web_search ("minimal" is rejected:
 // "tools cannot be used with reasoning.effort 'minimal'") — keeps the sidecar fast/cheap.
 const DEFAULT_SIDECAR_REASONING = "low";
@@ -94,25 +100,77 @@ export function findAnthropicSidecarProvider(config: OcxConfig): AnthropicSideca
   return undefined;
 }
 
+/** A configured provider whose OWN credential can run that provider's native server-side search. */
+export interface NativeSearchProvider {
+  providerName: string;
+  provider: OcxProviderConfig;
+}
+
+/** True when the stored apiKey (after env expansion) is a real value rather than a sentinel. */
+function hasUsableApiKey(provider: OcxProviderConfig): boolean {
+  const key = resolveEnvValue(provider.apiKey)?.trim();
+  return !!key && !key.startsWith("<") && key !== "N/A";
+}
+
+/**
+ * First enabled xAI provider holding a usable API key. Key-mode only: the Grok-CLI OAuth transport
+ * (cli-chat-proxy.grok.com) is a chat-completions surface with a first-party fingerprint, and there
+ * is no evidence /responses + web_search works through it — so an OAuth-only xai provider does NOT
+ * qualify. Matched by baseUrl host (api.x.ai), not provider name, so renamed/custom rows still work.
+ */
+export function findXaiSearchProvider(config: OcxConfig): NativeSearchProvider | undefined {
+  for (const [name, prov] of Object.entries(config.providers)) {
+    if (prov.disabled === true || !hasUsableApiKey(prov)) continue;
+    let host: string;
+    try {
+      host = new URL(prov.baseUrl).hostname;
+    } catch {
+      continue;
+    }
+    if (host === "api.x.ai") return { providerName: name, provider: prov };
+  }
+  return undefined;
+}
+
+/**
+ * First enabled google-adapter provider in plain Gemini API mode holding a usable API key.
+ * Vertex and Cloud Code Assist modes are excluded: different endpoint shapes, and CCA grounding
+ * has no public contract (devlog/_plan/260815_native_web_search_backends/000_research.md).
+ */
+export function findGoogleSearchProvider(config: OcxConfig): NativeSearchProvider | undefined {
+  for (const [name, prov] of Object.entries(config.providers)) {
+    if (prov.disabled === true || prov.adapter !== "google" || !hasUsableApiKey(prov)) continue;
+    if (prov.googleMode !== undefined && prov.googleMode !== "ai-studio") continue;
+    return { providerName: name, provider: prov };
+  }
+  return undefined;
+}
+
 /**
  * Precedence: explicit config wins; unset defaults to "openai" (ChatGPT forward path). The
  * anthropic backend (web_search_20250305) is only used when explicitly configured — auto-selecting
  * it from credential availability caused the sidecar to send incompatible models (e.g. gpt-5.6-luna)
- * to the Anthropic API.
+ * to the Anthropic API. The provider-native backends ("xai" Grok Live Search, "google" Gemini
+ * google_search grounding) follow the same rule: explicit only, and fail closed without a usable
+ * provider credential.
  */
 export function resolveSidecarBackend(
-  explicit: "openai" | "anthropic" | undefined,
-): "openai" | "anthropic" {
-  return explicit === "anthropic" ? "anthropic" : "openai";
+  explicit: "openai" | "anthropic" | "xai" | "google" | undefined,
+): "openai" | "anthropic" | "xai" | "google" {
+  return explicit === "anthropic" || explicit === "xai" || explicit === "google" ? explicit : "openai";
 }
 
 export interface SidecarPlan {
   /** Which executor runs the search. Anthropic does not require a forward provider. */
-  backend: "openai" | "anthropic";
+  backend: "openai" | "anthropic" | "xai" | "google";
   /** Present for the openai backend (ChatGPT forward path); undefined for anthropic. */
   forwardSidecar?: ResolvedOpenAiForwardSidecar;
   /** Present for the anthropic backend (stored-OAuth /v1/messages path); undefined for openai. */
   anthropicSidecar?: AnthropicSidecarProvider;
+  /** Present for the xai backend (provider-key Responses web_search path). */
+  xaiSidecar?: NativeSearchProvider;
+  /** Present for the google backend (provider-key generateContent google_search path). */
+  googleSidecar?: NativeSearchProvider;
   hostedTool: Record<string, unknown>;
   settings: SidecarSettings;
   maxSearches: number;
@@ -181,6 +239,38 @@ export function planWebSearch(
       anthropicSidecar,
       hostedTool: parsed._webSearch,
       settings: { model: cfg.model ?? DEFAULT_ANTHROPIC_SIDECAR_MODEL, reasoning, timeoutMs, describeImages },
+      maxSearches,
+      routedModelStallTimeoutMs,
+      stallTimeoutSec,
+      streamRoutedModelOutput,
+    };
+  }
+
+  // Provider-native backends authenticate with the PROVIDER'S OWN key. Same fail-closed rule as
+  // anthropic: an explicit choice with no usable provider yields no plan — never a silent fallback
+  // to a different credential.
+  if (backend === "xai") {
+    const xaiSidecar = findXaiSearchProvider(config);
+    if (!xaiSidecar) return undefined;
+    return {
+      backend: "xai",
+      xaiSidecar,
+      hostedTool: parsed._webSearch,
+      settings: { model: cfg.model ?? DEFAULT_XAI_SIDECAR_MODEL, reasoning, timeoutMs, describeImages },
+      maxSearches,
+      routedModelStallTimeoutMs,
+      stallTimeoutSec,
+      streamRoutedModelOutput,
+    };
+  }
+  if (backend === "google") {
+    const googleSidecar = findGoogleSearchProvider(config);
+    if (!googleSidecar) return undefined;
+    return {
+      backend: "google",
+      googleSidecar,
+      hostedTool: parsed._webSearch,
+      settings: { model: cfg.model ?? DEFAULT_GOOGLE_SIDECAR_MODEL, reasoning, timeoutMs, describeImages },
       maxSearches,
       routedModelStallTimeoutMs,
       stallTimeoutSec,
