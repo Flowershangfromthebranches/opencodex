@@ -336,7 +336,7 @@ test("Codex discovery restores account rows for supported natives hidden on disk
   }
 });
 
-test("Codex discovery preserves an observed account-only native id exactly", async () => {
+test("Codex discovery exposes the observed native as a selector row plus one global bare row", async () => {
   const config = configWithStaticModels();
   config.providers.openai = {
     adapter: "openai-responses",
@@ -378,7 +378,9 @@ test("Codex discovery preserves an observed account-only native id exactly", asy
     const plain = await fetch(new URL("/v1/models", server.url))
       .then(response => response.json()) as { data: Array<{ id: string }> };
     expect(plain.data).toContainEqual(expect.objectContaining({ id: "team/gpt-daybreak-blue-latest" }));
-    expect(plain.data.some(model => model.id === "gpt-daybreak-blue-latest")).toBe(false);
+    // Daybreak is globally allowlisted (owner decision, devlog 260816_.../011), so the bare
+    // id is now discoverable too, exactly once.
+    expect(plain.data.filter(model => model.id === "gpt-daybreak-blue-latest")).toHaveLength(1);
 
     const managementUrl = new URL("http://localhost/api/models");
     const managementResponse = await handleManagementAPI(
@@ -391,7 +393,7 @@ test("Codex discovery preserves an observed account-only native id exactly", asy
       id: "team/gpt-daybreak-blue-latest",
       native: true,
     }));
-    expect(management.some(model => model.id === "gpt-daybreak-blue-latest")).toBe(false);
+    expect(management.filter(model => model.id === "gpt-daybreak-blue-latest")).toHaveLength(1);
 
     const catalog = await fetch(new URL("/v1/models?client_version=1.0.0", server.url))
       .then(response => response.json()) as { models: Array<{ slug: string; visibility?: string }> };
