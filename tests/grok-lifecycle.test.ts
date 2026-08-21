@@ -33,16 +33,16 @@ describe("Grok fence lifecycle wiring", () => {
     expect(grokSyncAt).toBeGreaterThan(registryCatchAt);
   });
 
-  test("ensure passes the observed bind host on the live branch and the current host after spawning", () => {
+  test("ensure passes only the observed live bind host across the mutation boundary", () => {
     const ensureFn = sliceFn(CLI_SOURCE, "async function handleEnsure(", "async function handleTrayProxyStart(");
     const liveBranch = ensureFn.slice(0, ensureFn.indexOf("const pinPort"));
     const spawnBranch = ensureFn.slice(ensureFn.indexOf("const pinPort"));
 
     // live.hostname is what the proxy ACTUALLY bound; config.hostname may have drifted.
-    expect(liveBranch).toContain("live.hostname ? { hostname: live.hostname }");
-    // Spawn must not reuse the pre-waitForProxy snapshot for hostname / desired state.
-    expect(spawnBranch).toContain("const current = loadConfig()");
-    expect(spawnBranch).toContain("current.hostname ? { hostname: current.hostname }");
+    expect(liveBranch).toContain('{ kind: "live", hostname: live.hostname }');
+    // Spawn passes no config-derived input; the reconciler loads the current hostname.
+    expect(spawnBranch).toContain('{ kind: "spawned" }');
+    expect(spawnBranch).not.toContain("current.hostname");
     expect(spawnBranch).not.toContain("config.hostname ? { hostname: config.hostname }");
   });
 
@@ -61,7 +61,7 @@ describe("Grok fence lifecycle wiring", () => {
     expect(helper).toContain("deps.syncGrokConfig(");
     expect(ENSURE_SOURCE).toContain('await import("../grok/sync")');
     expect(helper.indexOf("deps.loadConfig()")).toBeLessThan(helper.indexOf("shouldSyncGrokOnStart(config)"));
-    expect(ensureFn).toContain("ensureGrokFenceMatchesDesired(");
+    expect(ensureFn).toContain("reconcileEnsureDesiredIntegrations(");
     expect(ensureFn).not.toMatch(/await import\("\.\.\/grok\/sync"\)/);
   });
 
@@ -75,8 +75,7 @@ describe("Grok fence lifecycle wiring", () => {
     expect(helper).toContain("claudeDesktopIntegrationEnabled(config)");
     expect(helper).toContain("deps.removeDesktop3pStandardPivot(");
     expect(helper.indexOf("deps.loadConfig()")).toBeLessThan(helper.indexOf("claudeDesktopIntegrationEnabled(config)"));
-    expect(ensureFn).toContain("ensureClaudeDesktopMatchesDesired()");
-    expect(ensureFn).not.toContain("ensureClaudeDesktopMatchesDesired(config)");
+    expect(ENSURE_SOURCE).toContain("ensureClaudeDesktopMatchesDesired(deps)");
   });
 
   test("both ensure branches re-read persisted config after the in-flight await window", () => {
@@ -85,14 +84,9 @@ describe("Grok fence lifecycle wiring", () => {
     const spawnBranch = ensureFn.slice(ensureFn.indexOf("const pinPort"));
     const liveAfterAwait = liveBranch.slice(liveBranch.indexOf("injectSystemEnv"));
     const spawnAfterAwait = spawnBranch.slice(spawnBranch.indexOf("waitForProxy"));
-    expect(liveAfterAwait).toContain("const current = loadConfig()");
-    expect(liveAfterAwait.indexOf("const current = loadConfig()")).toBeLessThan(
-      liveAfterAwait.indexOf("ensureGrokFenceMatchesDesired("),
-    );
-    expect(spawnAfterAwait).toContain("const current = loadConfig()");
-    expect(spawnAfterAwait.indexOf("const current = loadConfig()")).toBeLessThan(
-      spawnAfterAwait.indexOf("ensureGrokFenceMatchesDesired("),
-    );
+    expect(liveAfterAwait).toContain("reconcileEnsureDesiredIntegrations(");
+    expect(spawnAfterAwait).toContain("reconcileEnsureDesiredIntegrations(");
+    expect(ENSURE_SOURCE.match(/const config = deps\.loadConfig\(\)/g)).toHaveLength(2);
   });
 
   test("handleStop gates shared teardown on ownership but still reverts system env", () => {

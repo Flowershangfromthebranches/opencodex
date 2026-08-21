@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  ensureClaudeDesktopMatchesDesired,
-  ensureGrokFenceMatchesDesired,
+  reconcileEnsureDesiredIntegrations,
   type EnsureDesiredIntegrationsDeps,
 } from "../src/cli/ensure-desired-integrations";
 import type { OcxConfig } from "../src/types";
@@ -80,27 +79,26 @@ function harness(initial: OcxConfig) {
  * Live-proxy branch: snapshot, then model-sync/env (the race window), then mutate.
  * Spawned-proxy branch: snapshot, then waitForProxy, then mutate with the current hostname.
  */
-async function runLiveBranch(h: ReturnType<typeof harness>, liveHostname = "127.0.0.1"): Promise<void> {
+async function runLiveBranch(
+  h: ReturnType<typeof harness>,
+  next: OcxConfig,
+  liveHostname = "127.0.0.1",
+): Promise<void> {
   const stale = h.deps.loadConfig();
   void stale;
-  await ensureGrokFenceMatchesDesired(
+  h.flip(next);
+  await reconcileEnsureDesiredIntegrations(
     10100,
-    liveHostname ? { hostname: liveHostname } : {},
+    { kind: "live", hostname: liveHostname },
     h.deps,
   );
-  ensureClaudeDesktopMatchesDesired(h.deps);
 }
 
-async function runSpawnedBranch(h: ReturnType<typeof harness>): Promise<void> {
+async function runSpawnedBranch(h: ReturnType<typeof harness>, next: OcxConfig): Promise<void> {
   const stale = h.deps.loadConfig();
   void stale;
-  const current = h.deps.loadConfig();
-  await ensureGrokFenceMatchesDesired(
-    10100,
-    current.hostname ? { hostname: current.hostname } : {},
-    h.deps,
-  );
-  ensureClaudeDesktopMatchesDesired(h.deps);
+  h.flip(next);
+  await reconcileEnsureDesiredIntegrations(10100, { kind: "spawned" }, h.deps);
 }
 
 describe("ensure desired-state races", () => {
@@ -108,8 +106,7 @@ describe("ensure desired-state races", () => {
     const staleOff = config({ grok: false, desktop: false, hostname: "stale-host", fingerprint: "fp-off" });
     const currentOn = config({ hostname: "fresh-host", fingerprint: "fp-on" });
     const h = harness(staleOff);
-    h.flip(currentOn);
-    await runLiveBranch(h, "live-bound");
+    await runLiveBranch(h, currentOn, "live-bound");
     expect(h.grokActions).toEqual([{ action: "sync", config: currentOn, hostname: "live-bound" }]);
     expect(h.desktopActions).toEqual([]);
   });
@@ -118,8 +115,7 @@ describe("ensure desired-state races", () => {
     const staleOn = config({ hostname: "stale-host", fingerprint: "fp-on" });
     const currentOff = config({ grok: false, desktop: false, hostname: "fresh-host", fingerprint: "fp-off" });
     const h = harness(staleOn);
-    h.flip(currentOff);
-    await runLiveBranch(h, "live-bound");
+    await runLiveBranch(h, currentOff, "live-bound");
     expect(h.grokActions).toEqual([{ action: "strip", config: currentOff }]);
     expect(h.desktopActions).toEqual([{ action: "remove", fingerprint: "fp-off" }]);
   });
@@ -128,8 +124,7 @@ describe("ensure desired-state races", () => {
     const staleOff = config({ grok: false, desktop: false, hostname: "stale-host", fingerprint: "fp-off" });
     const currentOn = config({ hostname: "fresh-host", fingerprint: "fp-on" });
     const h = harness(staleOff);
-    h.flip(currentOn);
-    await runSpawnedBranch(h);
+    await runSpawnedBranch(h, currentOn);
     expect(h.grokActions).toEqual([{ action: "sync", config: currentOn, hostname: "fresh-host" }]);
     expect(h.desktopActions).toEqual([]);
   });
@@ -138,8 +133,7 @@ describe("ensure desired-state races", () => {
     const staleOn = config({ hostname: "stale-host", fingerprint: "fp-on" });
     const currentOff = config({ grok: false, desktop: false, hostname: "fresh-host", fingerprint: "fp-off" });
     const h = harness(staleOn);
-    h.flip(currentOff);
-    await runSpawnedBranch(h);
+    await runSpawnedBranch(h, currentOff);
     expect(h.grokActions).toEqual([{ action: "strip", config: currentOff }]);
     expect(h.desktopActions).toEqual([{ action: "remove", fingerprint: "fp-off" }]);
   });

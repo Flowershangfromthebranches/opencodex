@@ -63,9 +63,8 @@ import {
   syncClaudeAgentDefsAtProxyStartup,
 } from "./claude-agent-startup-sync";
 import {
-  ensureClaudeDesktopMatchesDesired,
-  ensureGrokFenceMatchesDesired,
   grokSyncFailureMessage,
+  reconcileEnsureDesiredIntegrations,
 } from "./ensure-desired-integrations";
 
 /**
@@ -473,14 +472,12 @@ async function handleEnsure(options: { existingIsSuccess?: boolean } = {}): Prom
       if (!systemEnv.injected) await syncClaudeAgentDefsAtProxyStartup(config, live.port);
       // Refresh the Grok Build fence too (same contract as start). live.hostname is the
       // hostname the running proxy actually bound — config.hostname may have drifted.
-      // Re-read immediately before mutating client files: the snapshot above predates
-      // model sync and env reconcile, so a toggle during that window must win.
-      const current = loadConfig();
-      await ensureGrokFenceMatchesDesired(
+      // The reconciler re-reads immediately before each client-file mutation; only
+      // the live proxy's observed bind host is safe to carry across this boundary.
+      await reconcileEnsureDesiredIntegrations(
         live.port,
-        live.hostname ? { hostname: live.hostname } : current.hostname ? { hostname: current.hostname } : {},
+        { kind: "live", hostname: live.hostname },
       );
-      ensureClaudeDesktopMatchesDesired();
       console.log(`✅ Proxy running on port ${live.port}`);
       return true;
     }
@@ -503,14 +500,9 @@ async function handleEnsure(options: { existingIsSuccess?: boolean } = {}): Prom
   // Deterministic fence guarantee when the durable switch is ON: the spawned child
   // injects late in its own startup, but this parent returns as soon as /healthz
   // responds — align here too so `ocx ensure` never returns with a stale ON/OFF mismatch.
-  // Re-read after waitForProxy: the snapshot taken before spawn is stale if the
-  // user flipped Grok or Claude Desktop while the child was coming up.
-  const current = loadConfig();
-  await ensureGrokFenceMatchesDesired(
-    port,
-    current.hostname ? { hostname: current.hostname } : {},
-  );
-  ensureClaudeDesktopMatchesDesired();
+  // Persisted state is loaded inside each mutation after waitForProxy, so a
+  // toggle while the child starts wins over the pre-spawn snapshot.
+  await reconcileEnsureDesiredIntegrations(port, { kind: "spawned" });
   // Always sync the LIVE port: after a fallback-port start, config.port still names the
   // busy preferred port — syncing that would point Codex at a dead listener.
   const synced = await syncModelsToCodex(port).catch(e => {

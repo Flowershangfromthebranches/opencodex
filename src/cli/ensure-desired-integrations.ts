@@ -127,3 +127,26 @@ export function ensureClaudeDesktopMatchesDesired(
     error(`⚠️  Claude Desktop cleanup failed: ${detail}.`);
   }
 }
+
+export type EnsureDesiredIntegrationsBranch =
+  | { kind: "live"; hostname?: string }
+  | { kind: "spawned" };
+
+/**
+ * Reconcile the two external integration files after either ensure race window.
+ * Only the live proxy's observed bind host crosses this boundary; persisted
+ * config is deliberately loaded inside each mutation helper.
+ */
+export async function reconcileEnsureDesiredIntegrations(
+  port: number,
+  branch: EnsureDesiredIntegrationsBranch,
+  deps: EnsureDesiredIntegrationsDeps = productionDeps,
+): Promise<void> {
+  const liveHost = branch.kind === "live" ? branch.hostname : undefined;
+  await ensureGrokFenceMatchesDesired(
+    port,
+    liveHost ? { hostname: liveHost } : {},
+    deps,
+  );
+  ensureClaudeDesktopMatchesDesired(deps);
+}
