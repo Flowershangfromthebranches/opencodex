@@ -52,3 +52,4 @@ OUT: `src/`, `tests/`, `gui/`, `docs-site/`; senpi vendored proto copy; CLI spaw
 
 OpenCodex is not missing a Cursor provider. It already speaks `agent.v1.AgentService/Run` over Connect, answers `interactionQuery`, owns HTTP/1 `RunSSE` fallback, conversation-keyed `usedTokens` accounting, native-exec policy, and Responses-tool suspend. senpi's newer work is mostly overflow classification, turn-end close, exec-frame completeness, and a CLI fallback lane that OpenCodex deliberately does not have.
 
+- WP1: H2 session pool (PR #2332, Fermat verified MERGE)
