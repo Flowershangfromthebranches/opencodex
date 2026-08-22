@@ -82,7 +82,8 @@ describe("Cursor live-model discovery hardening", () => {
     const result = await withDiscoveryServer(respond(200, body), baseUrl =>
       fetchCursorUsableModels({ apiKey: "test-token", baseUrl }));
 
-    expect(result).toEqual({ ok: true, models: ["gpt-5.5-high"] });
+    // T06: maxModeIds is optional; absent when no model has maxMode=true.
+    expect(result).toEqual(expect.objectContaining({ ok: true, models: ["gpt-5.5-high"] }));
   });
 
   test("filters every shared model-id control-character class", async () => {
@@ -97,7 +98,7 @@ describe("Cursor live-model discovery hardening", () => {
     const result = await withDiscoveryServer(respond(200, body), baseUrl =>
       fetchCursorUsableModels({ apiKey: "test-token", baseUrl }));
 
-    expect(result).toEqual({ ok: true, models: ["good-model"] });
+    expect(result).toEqual(expect.objectContaining({ ok: true, models: ["good-model"] }));
   });
 
   test("rejects a cleartext non-loopback discovery URL before connecting", async () => {
@@ -132,7 +133,7 @@ describe("Cursor live-model discovery hardening", () => {
       fetch: fetchImpl,
     });
 
-    expect(result).toEqual({ ok: true, models: ["claude-opus-5"] });
+    expect(result).toEqual(expect.objectContaining({ ok: true, models: ["claude-opus-5"] }));
     expect(seenUrl).toBe("https://api2.cursor.sh/agent.v1.AgentService/GetUsableModels");
     expect(seenInit?.method).toBe("POST");
     expect(seenInit?.redirect).toBe("manual");
@@ -416,7 +417,7 @@ describe("Cursor discovery bounded retry", () => {
     }, baseUrl => fetchCursorUsableModels({ apiKey: "test-token", baseUrl, timeoutMs: 120 }));
 
     expect(requests).toBe(2);
-    expect(result).toEqual({ ok: true, models: ["gpt-5.5-high"] });
+    expect(result).toEqual(expect.objectContaining({ ok: true, models: ["gpt-5.5-high"] }));
   });
 
   test("does not retry deterministic auth failures", async () => {

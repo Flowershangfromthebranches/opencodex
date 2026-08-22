@@ -43,7 +43,7 @@ export interface CursorUsableModelsOptions {
 }
 
 export type CursorUsableModelsResult =
-  | { ok: true; models: string[] }
+  | { ok: true; models: string[]; maxModeIds?: Set<string> }
   | { ok: false; error: "auth" | "http" | "policy" | "transport" | "timeout" | "decode" | "empty" | "too_large"; detail?: string };
 
 /** Test-only seam for management connectivity probes; production callers retain the HTTP/2 path. */
@@ -120,6 +120,8 @@ function decodeCursorUsableModels(bytes: Uint8Array): CursorUsableModelsResult {
     // make stale configured ids such as `composer-2` look activated.
     const ids: string[] = [];
     const seenIds = new Set<string>();
+    // T06: capture live maxMode so the run request can honor it instead of hardcoding false.
+    const maxModeIds = new Set<string>();
     for (const model of response.models ?? []) {
       const rawId = (model as { modelId?: string }).modelId;
       if (typeof rawId !== "string") continue;
@@ -127,9 +129,10 @@ function decodeCursorUsableModels(bytes: Uint8Array): CursorUsableModelsResult {
       if (!isValidModelDiscoveryModelId(id) || seenIds.has(id)) continue;
       seenIds.add(id);
       ids.push(id);
+      if ((model as { maxMode?: boolean }).maxMode === true) maxModeIds.add(id);
       if (ids.length >= CURSOR_MAX_DISCOVERED_MODELS) break;
     }
-    return ids.length > 0 ? { ok: true, models: ids } : { ok: false, error: "empty" };
+    return ids.length > 0 ? { ok: true, models: ids, maxModeIds } : { ok: false, error: "empty" };
   } catch {
     return { ok: false, error: "decode", detail: "Invalid GetUsableModels protobuf response" };
   }

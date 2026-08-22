@@ -126,6 +126,13 @@ export async function pollCursorAuth(
         delay = Math.min(delay * POLL_BACKOFF, POLL_MAX_DELAY_MS);
         continue;
       }
+      // T07 (senpi #905): definitive rejections fail fast. 404 is "not approved yet";
+      // 400/401/403/410 are terminal and must not burn the transient-error budget.
+      if (response.status === 400 || response.status === 401 || response.status === 403 || response.status === 410) {
+        throw new Error(`Cursor auth login rejected (HTTP ${response.status})`);
+      }
+      // 429 keeps polling; the backoff already slows down.
+      if (response.status === 429) continue;
 
       if (response.ok) {
         const data = (await response.json()) as { accessToken?: string; refreshToken?: string };
