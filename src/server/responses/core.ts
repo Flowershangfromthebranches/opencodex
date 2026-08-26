@@ -145,7 +145,6 @@ import {
   type CodexAuthContext,
 } from "../../codex/auth-context";
 import {
-  CodexModelEntitlementDiscoveryUnavailableError,
   entitledCodexAccountIdsForModel,
   invalidateCodexModelEntitlementsForAccount,
   resolveCodexModelEntitlements,
@@ -914,7 +913,6 @@ type CodexPoolAccountRetryResult =
     selectedForwardHeaders: Headers;
   }
   | { kind: "no-alternate" }
-  | { kind: "eligibility-unavailable" }
   | {
     kind: "transport";
     error: unknown;
@@ -1015,13 +1013,10 @@ async function retryCodexPoolOnAlternateAccount(
     invalidateCodexModelEntitlementsForAccount(firstAuthCtx.accountId);
     let refreshed;
     try {
-      refreshed = await resolveCodexModelEntitlementsForRequest(entitlementResolver, config);
+      refreshed = await entitlementResolver(config);
     } catch (error) {
       await firstResponse.body?.cancel().catch(() => undefined);
       releaseCodexAuthContextProbeLease(firstAuthCtx);
-      if (error instanceof CodexModelEligibilityUnavailableError) {
-        return { kind: "eligibility-unavailable" };
-      }
       throw error;
     }
     if (entitledCodexAccountIdsForModel(refreshed, route.modelId)?.has(firstAuthCtx.accountId)) {
@@ -1043,12 +1038,7 @@ async function retryCodexPoolOnAlternateAccount(
           excludeAccountId: firstAuthCtx.accountId,
           modelId: route.modelId,
           beginCodexAccountSelection: codexAccountSelectionForTurn(options.turnAdmissionLease),
-          resolveCodexModelEntitlements: (entitlementConfig, resolveOptions) =>
-            resolveCodexModelEntitlementsForRequest(
-              entitlementResolver,
-              entitlementConfig,
-              resolveOptions,
-            ),
+          resolveCodexModelEntitlements: entitlementResolver,
         },
       );
   } catch (error) {
@@ -1060,9 +1050,6 @@ async function retryCodexPoolOnAlternateAccount(
     if (unexpectedRetryError) {
       await firstResponse.body?.cancel().catch(() => undefined);
       releaseCodexAuthContextProbeLease(firstAuthCtx);
-      if (error instanceof CodexModelEligibilityUnavailableError) {
-        return { kind: "eligibility-unavailable" };
-      }
       throw error;
     }
   }
@@ -1188,15 +1175,12 @@ async function retryCodexPoolOnAlternateAccount(
       invalidateCodexModelEntitlementsForAccount(retryAuthCtx.accountId);
       let refreshed: Awaited<ReturnType<typeof resolveCodexModelEntitlements>>;
       try {
-        refreshed = await resolveCodexModelEntitlementsForRequest(entitlementResolver, config);
+        refreshed = await entitlementResolver(config);
       } catch (error) {
         await upstreamResponse.body?.cancel().catch(() => undefined);
         await firstResponse.body?.cancel().catch(() => undefined);
         releaseCodexAuthContextProbeLease(firstAuthCtx);
         releaseCodexAuthContextProbeLease(retryAuthCtx);
-        if (error instanceof CodexModelEligibilityUnavailableError) {
-          return { kind: "eligibility-unavailable" };
-        }
         throw error;
       }
       if (!entitledCodexAccountIdsForModel(refreshed, route.modelId)?.has(retryAuthCtx.accountId)) break;
@@ -1639,12 +1623,7 @@ async function resolveResponsesCodexAuth(
         modelId: route.modelId,
         substituteMainCredentialForDirect: substituteMainCredential,
         beginCodexAccountSelection: codexAccountSelectionForTurn(options.turnAdmissionLease),
-        resolveCodexModelEntitlements: (entitlementConfig, resolveOptions) =>
-          resolveCodexModelEntitlementsForRequest(
-            options.resolveCodexModelEntitlements ?? resolveCodexModelEntitlements,
-            entitlementConfig,
-            resolveOptions,
-          ),
+        resolveCodexModelEntitlements: options.resolveCodexModelEntitlements,
       });
       options.onCodexAuthContextResolved?.(authCtx);
     } else {
@@ -1674,61 +1653,12 @@ async function resolveResponsesCodexAuth(
     if (err instanceof ForwardAdmissionCredentialError) {
       return { ok: false, response: formatErrorResponse(401, "authentication_error", err.message) };
     }
-    if (err instanceof CodexModelEligibilityUnavailableError) {
-      return { ok: false, response: codexModelEligibilityUnavailableResponse() };
-    }
     const response = mapCodexAuthContextErrorToResponse(err, {
       accountSelector: route.codexAccountNamespace,
       now: Date.now(),
     });
     if (response) return { ok: false, response };
     throw err;
-  }
-}
-
-const CODEX_MODEL_ELIGIBILITY_UNAVAILABLE_MESSAGE =
-  "Codex model eligibility is temporarily unavailable; retry this request";
-
-class CodexModelEligibilityUnavailableError extends Error {
-  constructor() {
-    super(CODEX_MODEL_ELIGIBILITY_UNAVAILABLE_MESSAGE);
-    this.name = "CodexModelEligibilityUnavailableError";
-  }
-}
-
-/** Return a retryable, redacted failure without letting discovery errors escape the request boundary. */
-function codexModelEligibilityUnavailableResponse(): Response {
-  return formatErrorResponse(503, "server_error", CODEX_MODEL_ELIGIBILITY_UNAVAILABLE_MESSAGE);
-}
-
-/** Wrap account-roster discovery so both preview and final auth share one fail-closed error contract. */
-async function resolveCodexModelEntitlementsForRequest(
-  resolver: typeof resolveCodexModelEntitlements,
-  config: Parameters<typeof resolveCodexModelEntitlements>[0],
-  options?: Parameters<typeof resolveCodexModelEntitlements>[1],
-): ReturnType<typeof resolveCodexModelEntitlements> {
-  try {
-    return await resolver(config, options);
-  } catch (cause) {
-    if (!(cause instanceof CodexModelEntitlementDiscoveryUnavailableError)) throw cause;
-    const diagnosticCause = cause.cause ?? cause;
-    let detail = "unknown error";
-    try {
-      const rawDetail = diagnosticCause instanceof Error
-        ? `${diagnosticCause.name}: ${diagnosticCause.message}`
-        : String(diagnosticCause);
-      detail = sanitizeLogMetadataString(rawDetail, 300) ?? detail;
-    } catch {
-      // A hostile thrown value must not replace the fixed retryable response.
-    }
-    try {
-      console.warn(
-        `[codex-entitlements] model eligibility discovery failed; returning a retryable 503: ${detail}`,
-      );
-    } catch {
-      // Logging is diagnostic only; the request boundary remains fail-closed below.
-    }
-    throw new CodexModelEligibilityUnavailableError();
   }
 }
 
@@ -1742,11 +1672,7 @@ async function resolveSubagentFallbackModelEligibility(args: {
   const excludeAccountIds = args.nativeMainReadsForbidden
     ? new Set([MAIN_CODEX_ACCOUNT_ID])
     : undefined;
-  const snapshot = await resolveCodexModelEntitlementsForRequest(
-    args.resolver,
-    args.config,
-    { excludeAccountIds },
-  );
+  const snapshot = await args.resolver(args.config, { excludeAccountIds });
   return (modelId) => {
     const entitledAccountIds = entitledCodexAccountIdsForModel(snapshot, modelId);
     return entitledAccountIds
@@ -2608,19 +2534,12 @@ async function handleResponsesInner(
     // "legacy" affinity bucket and never find a binding made under "shared" or a native
     // model scope, making the preview diverge from the account that actually authenticates.
     const fallbackChain = initialSubagentFallbackChain;
-    try {
-      subagentFallbackModelEligibleAccountIdsForModel = await resolveSubagentFallbackModelEligibility({
-        config,
-        fallbackChain,
-        nativeMainReadsForbidden,
-        resolver: options.resolveCodexModelEntitlements ?? resolveCodexModelEntitlements,
-      });
-    } catch (error) {
-      if (error instanceof CodexModelEligibilityUnavailableError) {
-        return codexModelEligibilityUnavailableResponse();
-      }
-      throw error;
-    }
+    subagentFallbackModelEligibleAccountIdsForModel = await resolveSubagentFallbackModelEligibility({
+      config,
+      fallbackChain,
+      nativeMainReadsForbidden,
+      resolver: options.resolveCodexModelEntitlements ?? resolveCodexModelEntitlements,
+    });
     const fallbackNow = Date.now();
     subagentFallbackAccountPreview = (modelId, previewNow, modelEligibleAccountIds) => previewCodexAccountForRequest(
       poolAffinityKey,
@@ -3828,9 +3747,6 @@ async function handleResponsesInner(
             captureAffinityResponse(response, retryAuthCtx, retryRequest, true);
           },
         });
-        if (retry.kind === "eligibility-unavailable") {
-          return codexModelEligibilityUnavailableResponse();
-        }
         if (retry.kind === "transport") {
           authCtx = retry.authCtx;
           return transportFailureResponse(retry.error);
