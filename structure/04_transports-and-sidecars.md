@@ -44,17 +44,19 @@ Responses-compatible streaming output.
 First-party Kimi and Moonshot chat endpoints implement a JSON-Schema subset in which `$ref` must
 stand alone. Their `openai-chat` boundary therefore expands resolvable local `$defs`/`definitions`
 references only when the node also carries sibling keywords. Pure refs remain refs, the node's own
-keywords win over the referenced defaults, and third-party chat gateways keep their original schema
-shape. Depth, node, and reference-expansion limits bound the rewrite; an over-limit tool is omitted
-rather than partially weakened.
+non-conflicting keywords combine with the referenced schema, and equal duplicate assertions remain
+single assertions. Conflicting duplicate assertions degrade to a pure ref instead of approximating
+JSON Schema conjunction by overwriting the referenced constraint. Third-party chat gateways keep
+their original schema shape. Depth, node, and reference-expansion limits bound the rewrite; an
+over-limit tool is omitted rather than partially weakened.
 
 [Decision Log]
 - 목적과 의도: Keep Codex-generated 2020-12 tool schemas usable on first-party Moonshot validators without changing every OpenAI-compatible chat destination.
 - 기존 구현 및 제약 조건: The generic chat path fixed only the root object type, while Moonshot rejected nested `$ref` nodes carrying `type`, `minLength`, or `format`; xAI and Google already own different provider-specific schema subsets.
 - 검토한 주요 대안: Strip all sibling constraints; normalize every chat provider; reuse Google's lossy allowlist; or add a bounded Moonshot-only local-ref expansion module.
-- 선택한 방식: Expand local sibling refs for the three first-party hosts, preserve pure refs, degrade unresolved or cyclic sibling refs to a pure ref, and omit a tool when traversal bounds are exceeded.
+- 선택한 방식: Expand local sibling refs for the three first-party hosts only when duplicate assertions are equal, preserve pure refs, degrade unresolved, cyclic, or conflicting sibling refs to a pure ref, and omit a tool when traversal bounds are exceeded.
 - 다른 대안 대신 이 방식을 선택한 이유: Global rewriting would change providers that already accept 2020-12 semantics, while stripping valid constraints loses model guidance and Google's allowlist would discard unrelated Moonshot-supported keywords.
-- 장점, 단점 및 영향: Reported tool catalogs reach Moonshot without ref siblings and third-party gateways stay unchanged; ambiguous refs retain identity but may lose sibling constraints, and pathological schemas lose the one tool instead of failing the whole request with a partial rewrite.
+- 장점, 단점 및 영향: Reported tool catalogs reach Moonshot without ref siblings and third-party gateways stay unchanged; ambiguous or conflicting refs retain referenced identity without weakening its assertions but may lose sibling constraints, and pathological schemas lose the one tool instead of failing the whole request with a partial rewrite.
 
 ### Fetch-helper import boundary
 

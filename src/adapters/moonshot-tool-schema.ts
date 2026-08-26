@@ -28,6 +28,29 @@ function lookupLocalRef(root: Schema, ref: string): unknown {
   return current;
 }
 
+function schemaValuesEqual(left: unknown, right: unknown): boolean {
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A 2020-12 ref and its siblings are conjunctive. Moonshot does not expose a documented
+ * composition subset that we can rely on, so never approximate conjunction by overwriting a
+ * referenced assertion. Equal duplicate assertions and non-conflicting keys are safe to inline;
+ * any conflicting duplicate makes the caller retain the pure ref instead.
+ */
+function mergeCompatibleRefSiblings(target: Schema, siblings: Schema): Schema | undefined {
+  const merged: Schema = { ...target };
+  for (const [key, value] of Object.entries(siblings)) {
+    if (Object.hasOwn(target, key) && !schemaValuesEqual(target[key], value)) return undefined;
+    merged[key] = value;
+  }
+  return merged;
+}
+
 function normalizeNode(
   value: unknown,
   root: Schema,
@@ -65,7 +88,9 @@ function normalizeNode(
       state.activeRefs.delete(ref);
       const normalizedOverlay = normalizeNode(Object.fromEntries(siblingEntries), root, state, depth + 1);
       if (isRecord(normalizedTarget) && isRecord(normalizedOverlay)) {
-        return { ...normalizedTarget, ...normalizedOverlay };
+        const merged = mergeCompatibleRefSiblings(normalizedTarget, normalizedOverlay);
+        if (merged !== undefined) return merged;
+        return { $ref: ref };
       }
       if (normalizedTarget === undefined || normalizedOverlay === undefined) return undefined;
     }

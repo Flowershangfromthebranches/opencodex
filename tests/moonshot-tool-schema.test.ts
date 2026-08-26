@@ -74,6 +74,49 @@ describe("Moonshot tool schema compatibility", () => {
     })?.properties).toEqual({ value: { $ref: "#/$defs/missing" } });
   });
 
+  test("does not overwrite conflicting referenced assertions", () => {
+    const normalized = normalizeMoonshotToolParameters({
+      type: "object",
+      properties: {
+        value: {
+          $ref: "#/$defs/Base",
+          required: ["b"],
+          properties: { b: { type: "number" } },
+        },
+      },
+      $defs: {
+        Base: {
+          type: "object",
+          required: ["a"],
+          properties: { a: { type: "string" } },
+        },
+      },
+    });
+
+    expect((normalized?.properties as Record<string, unknown>).value).toEqual({
+      $ref: "#/$defs/Base",
+    });
+  });
+
+  test("does not replace a referenced enum or minimum with a sibling assertion", () => {
+    const normalized = normalizeMoonshotToolParameters({
+      type: "object",
+      properties: {
+        mode: { $ref: "#/$defs/Mode", enum: ["b"] },
+        count: { $ref: "#/$defs/Count", minimum: 1 },
+      },
+      $defs: {
+        Mode: { type: "string", enum: ["a"] },
+        Count: { type: "integer", minimum: 5 },
+      },
+    });
+
+    expect(normalized?.properties).toEqual({
+      mode: { $ref: "#/$defs/Mode" },
+      count: { $ref: "#/$defs/Count" },
+    });
+  });
+
   test.each([
     "https://api.kimi.com/coding/v1",
     "https://api.moonshot.ai/v1",
