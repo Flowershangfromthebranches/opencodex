@@ -26,6 +26,7 @@ import {
 } from "../providers/fastwire";
 import { openaiChatCompletionsUrl } from "./openai-chat-url";
 import { stripResponsesOnlyEncryptedMarker } from "./responses-tool-schema";
+import { normalizeMoonshotToolParameters } from "./moonshot-tool-schema";
 import {
   isTranslatorBudgetExceededError,
   retainTranslatedEventBatch,
@@ -932,6 +933,20 @@ function isXaiSchemaTarget(provider: OcxProviderConfig): boolean {
   }
 }
 
+const MOONSHOT_SCHEMA_HOSTS = new Set([
+  "api.kimi.com",
+  "api.moonshot.ai",
+  "api.moonshot.cn",
+]);
+
+function isMoonshotSchemaTarget(provider: OcxProviderConfig): boolean {
+  try {
+    return MOONSHOT_SCHEMA_HOSTS.has(new URL(provider.baseUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
 const VOLCENGINE_ARK_HOSTNAMES = new Set([
   "ark.cn-beijing.volces.com",
   "ark.ap-southeast.volces.com",
@@ -1228,10 +1243,13 @@ function toolsToChatFormat(parsed: OcxParsedRequest, provider: OcxProviderConfig
   const tools = parsed.context.tools.filter(toolChoiceToolPredicate(parsed.options.toolChoice, parsed.context.tools));
   if (tools.length === 0) return undefined;
   const xaiTarget = isXaiSchemaTarget(provider);
+  const moonshotTarget = isMoonshotSchemaTarget(provider);
   const formatted = tools.flatMap(t => {
     const parameters = stripResponsesOnlyEncryptedMarker(xaiTarget
       ? normalizeXaiToolParameters(t.parameters)
-      : ensureRootObjectType(t.parameters));
+      : moonshotTarget
+        ? normalizeMoonshotToolParameters(t.parameters)
+        : ensureRootObjectType(t.parameters));
 
     if (parameters === undefined) return [];
     return [{
