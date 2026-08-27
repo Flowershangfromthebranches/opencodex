@@ -128,7 +128,7 @@ import { drainAndShutdown } from "../lifecycle";
 import { filterRequestLogs, getRequestLogEntries, type RequestLogEntry } from "../request-log";
 import { estimateComboCost, estimateRequestCost, normalizeCostTokens, tokensPerSecond } from "../../usage/cost";
 import type { PersistedUsageAttempt } from "../../usage/log";
-import { isAllowedRequestOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO, corsHeaders } from "../auth-cors";
+import { isAllowedRequestOrigin, jsonResponse, providerManagementConfigError, publicProviderBaseUrl, safeConfigDTO } from "../auth-cors";
 import { applySystemEnvToggle } from "../system-env";
 import {
   ClientPathError,
@@ -151,6 +151,7 @@ import type { MetricUnavailableReason, TokPerSecondResult, CostEstimateReason, C
 import type { ManagementContext } from "./context";
 import { listManagementModelRows, loadExportModels } from "./model-rows";
 import { readManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
+import { catalogManagementResponse, serializePersistedCatalog } from "../catalog-download";
 import {
   hasModelPreset,
   markModelPresetDiverged,
@@ -332,17 +333,11 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
   }
 
   if (url.pathname === "/api/catalog" && req.method === "GET") {
-    const { readCatalog, readCodexCatalogPath } = await import("../../codex/catalog");
-    const catalog = readCatalog(readCodexCatalogPath());
-    if (!catalog) return jsonResponse({ error: "catalog not found" }, 404, req, config);
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      ...corsHeaders(req, config),
-    };
-    const { loadPersistedCodexRuntime } = await import("../../codex/runtime");
-    const version = loadPersistedCodexRuntime()?.selectedVersion;
-    if (version) headers["x-opencodex-codex-version"] = version;
-    return new Response(JSON.stringify(catalog), { status: 200, headers });
+    try {
+      return catalogManagementResponse(await serializePersistedCatalog(), req, config);
+    } catch {
+      return jsonResponse({ error: "catalog unavailable" }, 500, req, config);
+    }
   }
 
   if (url.pathname === "/api/models" && req.method === "GET") {

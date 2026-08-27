@@ -152,6 +152,7 @@ import {
   resolveApiAuth,
   resolveResponsesApiAuth,
   requestPolicyView,
+  type DataPlaneAdmission,
   type RequestPolicyView,
   safeConfigDTO,
   setCorsOrigin,
@@ -208,9 +209,21 @@ import {
 } from "../lib/package-tree-integrity";
 import { detectInstall } from "../update/index";
 import { readyProtocolMetadata } from "../remote/protocol";
+import { catalogDataPlaneResponse, serializePersistedCatalog } from "./catalog-download";
 
 export const MAX_WS_FRAME_BYTES = 50 * 1024 * 1024;
 const WEBSOCKET_IDLE_TIMEOUT_SECONDS = 0;
+const REMOTE_CATALOG_KEY_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+function withRemoteCatalogKeyId(response: Response, admission: DataPlaneAdmission): Response {
+  if ((response.status !== 200 && response.status !== 304) || admission.kind !== "configured") return response;
+  if (!REMOTE_CATALOG_KEY_ID_PATTERN.test(admission.keyId)) {
+    console.warn("[remote-catalog] configured API key id is not header-safe; omitting x-opencodex-key-id");
+    return response;
+  }
+  response.headers.set("x-opencodex-key-id", admission.keyId);
+  return response;
+}
 const LIVE_SIDEBAND_PENDING_MAX = 32;
 const LIVE_SIDEBAND_PENDING_BYTES_MAX = 1024 * 1024;
 const LIVE_SIDEBAND_CLOSE_FALLBACK_MS = 1_000;
@@ -654,8 +667,8 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
    * Routes the unauthenticated loopback listener will serve. Everything else 404s.
    *
    * This is an allowlist rather than a filter applied to the public handler, because a filter
-   * inverts the failure mode: a route added later would be reachable here by default. The four
-   * entries are exactly what a directly-spawned `codex app-server` needs.
+   * inverts the failure mode: a route added later would be reachable here by default. The entries
+   * are exactly what a directly-spawned `codex app-server` or remote catalog client needs.
    *
    * `GET /v1/models` is on the list for a reason that is easy to miss. When catalog
    * materialization fails or finds no source, `syncCodex` warns and injects with
@@ -670,6 +683,7 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
     }
     if (path === "/v1/responses/compact") return req.method === "POST";
     if (path === "/v1/models") return req.method === "GET";
+    if (path === "/v1/catalog") return req.method === "GET";
     // Standalone realtime voice sessions (codex-rs thread/realtime/start, WebSocket
     // transport) — a directly-spawned `codex app-server` needs these for desktop
     // voice the same way it needs /v1/responses. WebSocket upgrades only; plain
@@ -1024,6 +1038,20 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
         const mgmtResponse = await handleManagementAPI(req, url, config, deps.managementApi, principal);
         if (mgmtResponse) return withManagementCors(mgmtResponse, req, config);
         return withManagementCors(formatErrorResponse(404, "not_found", `Unknown endpoint: ${req.method} ${url.pathname}`), req, config);
+      }
+
+      if (url.pathname === "/v1/catalog" && req.method === "GET") {
+        const admission = resolveResponsesApiAuth(req, policy);
+        if (!admission) return withCors(formatErrorResponse(401, "authentication_error", "opencodex API key required"), req, policy);
+        if (!isAllowedRequestOrigin(req, policy)) {
+          return withCors(formatErrorResponse(403, "origin_rejected", "cross-origin data-plane request blocked"), req, policy);
+        }
+        try {
+          const response = catalogDataPlaneResponse(await serializePersistedCatalog(), req, policy);
+          return withRemoteCatalogKeyId(response, admission);
+        } catch {
+          return withCors(formatErrorResponse(500, "server_error", "catalog unavailable", { code: "catalog_unavailable" }), req, policy);
+        }
       }
 
       if (url.pathname === "/v1/models" && req.method === "GET") {
