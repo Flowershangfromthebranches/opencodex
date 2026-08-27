@@ -1,15 +1,22 @@
 /**
  * Read-time resolution of the optional quotaResetNotify config section.
  *
- * Cached against the config generation. loadConfig is a readFileSync plus a full
- * configSchema.safeParse with no memoization, and the enable check runs once per pooled
- * response, so calling it there directly would put a config parse on the hot path for a
- * feature nobody enabled. Keying the cache on captureConfigGeneration keeps a config edit
- * effective without a restart.
+ * Cached, because loadConfig is a readFileSync plus a full configSchema.safeParse with no
+ * memoization and the enable check runs once per pooled response — a config parse per request
+ * for a feature nobody enabled.
+ *
+ * Keyed on the config file's mtime and size, NOT on captureConfigGeneration. The generation
+ * counter only advances when state-store reconciliation runs
+ * (src/lib/state-store-sweeper.ts:149, reached from reconcileLiveStateStores on
+ * account/provider changes), so editing quotaResetNotify alone would never bump it and the
+ * cached answer would stay stale until an unrelated account edit happened to occur. A short
+ * TTL bounds the stat call so the hot path does not stat on every single write.
  */
 
+import { statSync } from "node:fs";
+import { join } from "node:path";
 import { loadConfig } from "../config";
-import { captureConfigGeneration } from "../lib/state-store-sweeper";
+import { getConfigDir } from "../config/paths";
 import type { QuotaResetKind } from "./reset-detector";
 
 export type ResolvedQuotaResetNotify = {
@@ -94,11 +101,37 @@ export function resolveQuotaResetNotify(raw: unknown): ResolvedQuotaResetNotify 
   });
 }
 
-let cached: { generation: number; resolved: ResolvedQuotaResetNotify } | null = null;
+/** Bounds how often the hot path stats the config file. */
+const STAT_TTL_MS = 5_000;
+
+type Cached = {
+  checkedAt: number;
+  signature: string;
+  resolved: ResolvedQuotaResetNotify;
+};
+
+let cached: Cached | null = null;
+
+/** mtime + size of the config file. Cheap, and changes on any edit including an in-place one. */
+function configSignature(): string {
+  try {
+    const stat = statSync(join(getConfigDir(), "config.json"));
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return "absent";
+  }
+}
 
 export function currentQuotaResetNotify(): ResolvedQuotaResetNotify {
-  const generation = captureConfigGeneration();
-  if (cached && cached.generation === generation) return cached.resolved;
+  const now = Date.now();
+  if (cached && now - cached.checkedAt < STAT_TTL_MS) return cached.resolved;
+
+  const signature = configSignature();
+  if (cached && cached.signature === signature) {
+    cached.checkedAt = now;
+    return cached.resolved;
+  }
+
   let resolved = DISABLED;
   try {
     resolved = resolveQuotaResetNotify(
@@ -107,7 +140,7 @@ export function currentQuotaResetNotify(): ResolvedQuotaResetNotify {
   } catch {
     // An unreadable config must not enable a notifier, and must not throw on a quota write.
   }
-  cached = { generation, resolved };
+  cached = { checkedAt: now, signature, resolved };
   return resolved;
 }
 
