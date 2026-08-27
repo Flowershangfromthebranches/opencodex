@@ -32,6 +32,8 @@ labels `bug`, `review-ready`. Failing `ci` and `macos`.
 The `macos` job (run `33059606933`, job `98534630924`) fails on
 `release version line` — the shared baseline, again. The `ci` job fails with
 `needed job(s) did not pass`, i.e. it is a fan-in that inherits the same failure.
+Unlike #2764 and #2767, #2747's `gates` job is green: its head predates the
+release-runbook document that trips `privacy:scan`. Version line only.
 
 Touches exactly one file: `tests/update-stop-first.test.ts` (+46/-18). Test-only,
 no `src/` change, no overlap. This is the causal repair of a flaky test — it reaps
