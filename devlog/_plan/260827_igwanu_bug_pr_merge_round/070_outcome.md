@@ -84,6 +84,14 @@ incorrect correction is worse than the original error.
 7. A safety net that exists in code is not a safety net that functions.
 8. `gh run rerun` replays the same commit. When the fix landed elsewhere, only a
    rebase moves the evidence.
+9. A stalled remote suite is not necessarily a wedged suite. `ocx-run` reported
+   `RUNNING (775s since last output)` while `bun scripts/test.ts` sat printing
+   "another Bun test run holds the machine lock; waiting". The owner recorded in
+   `/tmp/opencodex-bun-test.lock/owner.json` was pid `2108243`, and `ps` showed it
+   dead — a **root-owned stale lock** blocking a user-owned run, which is the
+   documented failure mode. Removed the lock directory; the suite resumed within
+   seconds. `OCX_TEST_NO_QUEUE=1` remains the wrong answer: it leaks into the child
+   process `tests/test-runner.test.ts` spawns and fails the machine-lock cases.
 
 ## Follow-ups outside this round's scope
 
