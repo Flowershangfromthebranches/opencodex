@@ -14,7 +14,7 @@ Six merges, no direct commit (verified: first-parent count 6, no-merges count 0)
 | #2764 | Ingwannu | L1 | **MERGED** | `3b5302410`; rebased, patch ID unchanged, 26 green |
 | #2767 | Ingwannu | L1 | **MERGED** | `50e955604`; rebased, patch ID unchanged, 26 green |
 | #2729 | lidge-jun | L4 | **CLOSED-SUPERSEDED** | by #2769; patch IDs match exactly |
-| #2769 | lidge-jun | L4 | **NEEDS_HUMAN** (approval) | CI green at head `16cb875b8`; self-approval refused |
+| #2769 | lidge-jun | L4 | **NEEDS_HUMAN** (approval) | head `16cb875b8`: CI 23 green / 0 fail, full suite 15350/0; self-approval refused |
 | #2747 | olddonkey | L1 | **NEEDS_AUTHOR** (rebase) | approved; fork head, rerun cannot move base |
 | #2740 | luvs01 | L1 | **NEEDS_AUTHOR** (ready+rebase) | reviewed, oracle 2/0 vs 0/2, tsc 0 |
 | #2693 | yxr1995-maker | L4 | **BLOCKED** (author) | 3 reproduced blockers stand, 131 behind |
