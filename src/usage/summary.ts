@@ -896,6 +896,12 @@ export function projectUsageSummary<T extends UsageSummary>(
   // carries a single optional cost, so priced/unpriced/unmetered counts could
   // only be guessed per model rather than counted per request.
   //
+  // Key ownership is the outer slice: no provider/model attribution or bucket
+  // construction may observe rows belonging to another client key.
+  const keyFilteredEntries = apiKeyId === null
+    ? entries ?? []
+    : (entries ?? []).filter(entry => entry.apiKeyId === apiKeyId);
+
   // The entries are already in hand on every path that filters, so the honest
   // computation is also the simple one.
   const matches = (rowProvider: string, rowModel: string): boolean => {
@@ -911,12 +917,9 @@ export function projectUsageSummary<T extends UsageSummary>(
   // combo filtered to its cheap model reported the expensive model's spend
   // too. Rewriting the entry down to its matching attempts is what makes the
   // filtered numbers mean what the flag says.
-  const source = apiKeyId === null
-    ? entries ?? []
-    : (entries ?? []).filter(entry => entry.apiKeyId === apiKeyId);
   let comboOverlap = false;
   const filtered: PersistedUsageEntry[] = [];
-  for (const entry of source) {
+  for (const entry of keyFilteredEntries) {
     if (!entry.attempts?.length) {
       if (matches(entry.provider, antigravityUsageModel(entry.provider, entry.model))) filtered.push(entry);
       continue;
