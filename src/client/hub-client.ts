@@ -1,4 +1,5 @@
 import { MAX_REMOTE_CATALOG_BYTES } from "../server/catalog-download";
+import { readBoundedResponseBytes } from "../lib/bounded-body";
 import {
   checkRemoteProtocolCompatibility,
   parseRemoteReadyMetadata,
@@ -80,14 +81,40 @@ async function boundedText(response: Response, maxBytes: number): Promise<string
   if (Number.isFinite(declared) && declared > maxBytes) {
     throw new HubClientError("body_too_large", "Hub response exceeded the allowed size", response.status);
   }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > maxBytes) {
+  const result = await readBoundedResponseBytes(response, { maxBytes });
+  if (result.oversized) {
     throw new HubClientError("body_too_large", "Hub response exceeded the allowed size", response.status);
   }
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return new TextDecoder("utf-8", { fatal: true }).decode(result.bytes);
   } catch (error) {
     throw new HubClientError("body_invalid", "Hub response was not valid UTF-8", response.status, { cause: error });
+  }
+}
+
+function jsonCompatibleContentType(response: Response): boolean {
+  const value = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  return value === "application/json" || value?.endsWith("+json") === true;
+}
+
+function validateRemoteCatalog(value: unknown): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HubClientError("catalog_schema_invalid", "Hub catalog response was invalid");
+  }
+  const models = (value as Record<string, unknown>).models;
+  if (!Array.isArray(models) || models.length > 2_000) {
+    throw new HubClientError("catalog_schema_invalid", "Hub catalog model list was invalid");
+  }
+  const slugs = new Set<string>();
+  for (const row of models) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      throw new HubClientError("catalog_schema_invalid", "Hub catalog model row was invalid");
+    }
+    const slug = (row as Record<string, unknown>).slug;
+    if (typeof slug !== "string" || !slug.trim() || /[\x00-\x1f\x7f]/.test(slug) || slugs.has(slug)) {
+      throw new HubClientError("catalog_schema_invalid", "Hub catalog model slug was invalid");
+    }
+    slugs.add(slug);
   }
 }
 
@@ -278,24 +305,47 @@ export async function downloadClientCatalog(
   serverUrl: string,
   admissionToken: string,
   options: { etag?: string; timeoutMs?: number; maxBytes?: number; fetchImpl?: typeof fetch } = {},
-): Promise<{ kind: "fresh"; body: string; etag?: string } | { kind: "not-modified" }> {
+): Promise<{ kind: "fresh"; body: string; etag?: string; keyId?: string } | { kind: "not-modified" }> {
   const origin = normalizeHubOrigin(serverUrl);
   const headers = new Headers({ Accept: "application/json", "x-opencodex-api-key": admissionToken });
   if (options.etag) headers.set("If-None-Match", options.etag);
-  const response = await fetchBounded(options.fetchImpl ?? fetch, `${origin}/v1/catalog`, {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  let response = await fetchBounded(fetchImpl, `${origin}/v1/catalog`, {
     method: "GET",
     headers,
   }, options.timeoutMs);
+  if (response.status === 304 && !options.etag) {
+    response = await fetchBounded(fetchImpl, `${origin}/v1/catalog`, {
+      method: "GET",
+      headers: { Accept: "application/json", "x-opencodex-api-key": admissionToken },
+    }, options.timeoutMs);
+    if (response.status === 304) {
+      throw new HubClientError("catalog_304_without_lkg", "Hub returned 304 without a validated local catalog", 304);
+    }
+  }
   if (response.status === 304) return { kind: "not-modified" };
   if (!response.ok) {
     const code = response.status === 401 ? "catalog_unauthorized" : `catalog_http_${response.status}`;
     throw new HubClientError(code, `Hub catalog request failed (${response.status})`, response.status);
   }
+  if (!jsonCompatibleContentType(response)) {
+    try { await response.body?.cancel(); } catch { /* best effort */ }
+    throw new HubClientError("catalog_content_type_invalid", "Hub catalog response was not JSON", response.status);
+  }
   const body = await boundedText(response, options.maxBytes ?? MAX_REMOTE_CATALOG_BYTES);
   const parsed = parseJson(body, "catalog_invalid");
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new HubClientError("catalog_invalid", "Hub catalog response was invalid", response.status);
-  }
+  validateRemoteCatalog(parsed);
   const etag = response.headers.get("etag")?.trim() || undefined;
-  return { kind: "fresh", body, ...(etag ? { etag } : {}) };
+  const keyId = response.headers.get("x-opencodex-key-id")?.trim() || undefined;
+  return { kind: "fresh", body, ...(etag ? { etag } : {}), ...(keyId ? { keyId } : {}) };
+}
+
+export async function probeClientKeyId(
+  serverUrl: string,
+  admissionToken: string,
+  expectedKeyId: string,
+  options: { timeoutMs?: number; fetchImpl?: typeof fetch } = {},
+): Promise<boolean> {
+  const catalog = await downloadClientCatalog(serverUrl, admissionToken, options);
+  return catalog.kind === "fresh" && catalog.keyId === expectedKeyId;
 }
