@@ -92,3 +92,27 @@ is the signature of pre-existing macOS timing flakiness rather than a regression
 Re-run rather than diagnosed — and that distinction is recorded here deliberately,
 because "it was flaky" is the claim this repository's standing gates exist to
 distrust.
+## The approval gate is not satisfiable here, and that is correct
+
+#2769 cannot be merged by me. GitHub refuses the review outright:
+
+```
+failed to create review: GraphQL: Review Can not approve your own pull request
+```
+
+The four Ingwannu PRs earlier in this round were approvable because `Ingwannu`
+authored them and `lidge-jun` approved — two different maintainers. Here I both
+authored the branch and hold the only maintainer session, so `MAINTAINERS.md`
+§"Authors do not approve their own pull requests" bites, and it is enforced by
+the platform rather than by discipline.
+
+That is the correct outcome. The alternative — a maintainer writing a fix to an
+error-classification path and merging it on their own say-so — is exactly what
+the rule exists to prevent, and the fact that the fix is well-evidenced does not
+change who checked it. The evidence is posted on the PR as a comment so a second
+maintainer can act on it.
+
+**Disposition: #2729 CLOSED-SUPERSEDED by #2769; #2769 is NEEDS_HUMAN (non-author
+approval).** Every technical gate is green — full suite 15349/0, required CI
+green at the exact head, mutation oracle held. The only thing missing is a person
+who is not me.
