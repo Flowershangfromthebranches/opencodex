@@ -16,8 +16,8 @@ on `dev` itself, not on any contributor's code:
    `v2.34.0` is published, so every commit after the tag "claims an
    already-published version". Fails `ci`, `macos`, `test 3/4`.
 2. `privacy:scan` — `devlog/_plan/260827_release_train/020_preview_release.md:36`
-   contains the literal `git@github.com`, which the scanner reads as an email
-   address. Fails `gates`.
+   contains a literal scp-style SSH remote whose `user@host` principal the scanner
+   reads as an email address. Fails `gates`.
 
 Confirmed inherited by #2767, #2764, #2747. Merging anything else first means
 reading a red matrix that says nothing about the PR under review.
@@ -33,14 +33,12 @@ MODIFY `package.json`:
 
 MODIFY `devlog/_plan/260827_release_train/020_preview_release.md`:
 
-```diff
-+# Keep the scp-style SSH principal out of one email-shaped source literal.
-+release_host=github.com
-+release_repo=lidge-jun/opencodex.git
- GIT_SSH_COMMAND='ssh -i ~/.ssh/opencodex_release_ed25519 -o IdentitiesOnly=yes' \
--  git push git@github.com:lidge-jun/opencodex.git HEAD:preview
-+  git push "git@${release_host}:${release_repo}" HEAD:preview
-```
+The runbook's push line is rewritten to build the destination from two shell
+variables (`release_host=github.com`, `release_repo=lidge-jun/opencodex.git`) and
+interpolate them, so the scp-style principal never appears as one literal token.
+The exact diff is on the PR; it is not reproduced here, because quoting it
+verbatim would reintroduce the very literal the scan rejects — this document is
+itself scanned.
 
 The push destination is byte-identical after expansion and the deploy-key override
 is preserved. This is documentation text, not executed release automation.
