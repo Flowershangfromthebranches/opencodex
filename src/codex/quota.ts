@@ -530,6 +530,12 @@ export function updateAccountQuota(
 
   accountQuota.set(accountId, quota);
   schedulePersistAccountQuotas();
+  // Observed like the other committed write. This function has no in-repo caller today, but it
+  // is re-exported as public API through src/codex/auth-api.ts, so a future caller would
+  // otherwise bypass detection AND leave a stale baseline that corrupts the next real diff.
+  // The credits-only path at setAccountQuotaFromParsed deliberately does not notify; this one
+  // writes window percentages and deadlines, so it must.
+  notifyCodexQuotaSnapshot(accountId, quota);
 }
 
 function hydrateAccountQuotasFromDisk(): void {

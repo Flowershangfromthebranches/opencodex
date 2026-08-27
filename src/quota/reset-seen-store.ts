@@ -21,6 +21,10 @@ import type { QuotaResetEvent, QuotaWindowObservation } from "./reset-detector";
 
 const STATE_FILENAME = "quota-reset-state.json";
 const PERSIST_DEBOUNCE_MS = 250;
+/**
+ * Longest a pending write may be deferred by continued activity. See schedulePersist.
+ */
+const MAX_PERSIST_DEFERRAL_MS = 1_000;
 
 /**
  * Age floor for pruning a claimed key.
@@ -65,6 +69,8 @@ let ring: QuotaResetEvent[] = [];
 const observed = new Map<string, QuotaWindowObservation[]>();
 let hydrated = false;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
+/** When the currently pending debounced write was FIRST scheduled, or null if none is pending. */
+let firstDeferredPersistAt: number | null = null;
 let accountSalt: string | null = null;
 
 function statePath(): string {
@@ -145,6 +151,7 @@ function persistNow(): void {
     clearTimeout(persistTimer);
     persistTimer = null;
   }
+  firstDeferredPersistAt = null;
   try {
     atomicWriteFile(statePath(), `${JSON.stringify(stateFileBody())}\n`);
   } catch {
@@ -152,10 +159,35 @@ function persistNow(): void {
   }
 }
 
+/**
+ * Debounce with a MAXIMUM STALENESS cap.
+ *
+ * A plain re-arming debounce is starvable: it clears and re-sets the timer on every
+ * observation, so any write cadence faster than the debounce pushes the deadline out forever.
+ * Measured on the unfixed version: 75 observations at 40 ms intervals produced ZERO disk writes,
+ * and 200 at 10 ms also produced zero. A busy pooled install that is then SIGKILLed (container
+ * stop, OOM) loses its entire baseline and re-baselines on restart, silently missing any reset
+ * that spans the gap — which defeats the across-a-restart guarantee this store exists for.
+ *
+ * So the deferral is bounded: once a write has been pending for MAX_PERSIST_DEFERRAL_MS, the
+ * next call writes immediately instead of deferring again. At 0.29 ms per serialize-and-write,
+ * a forced write every second under sustained load costs nothing measurable.
+ *
+ * Claims deliberately do NOT use this path — they write synchronously, because an unref'd timer
+ * cannot be trusted to fire before process exit.
+ */
 function schedulePersist(): void {
+  const now = Date.now();
+  if (firstDeferredPersistAt === null) firstDeferredPersistAt = now;
+  else if (now - firstDeferredPersistAt >= MAX_PERSIST_DEFERRAL_MS) {
+    // persistNow clears the timer and resets the window below.
+    persistNow();
+    return;
+  }
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = null;
+    firstDeferredPersistAt = null;
     try {
       atomicWriteFile(statePath(), `${JSON.stringify(stateFileBody())}\n`);
     } catch {
@@ -328,6 +360,7 @@ export function resetQuotaResetStoreForTests(): void {
     clearTimeout(persistTimer);
     persistTimer = null;
   }
+  firstDeferredPersistAt = null;
 }
 
 /** Test-only: flush the debounced write immediately. */

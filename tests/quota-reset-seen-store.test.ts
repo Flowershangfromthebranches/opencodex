@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir } from "../src/config";
 import type { QuotaResetEvent } from "../src/quota/reset-detector";
@@ -194,5 +194,33 @@ describe("a cleared quota row forgets its baseline", () => {
     expect(claimQuotaReset("codex|tagaaaaa|weekly|1", NOW, NOW + DAY)).toBe(true);
     forgetLastObservedWindows("codex", "tagaaaaa");
     expect(claimQuotaReset("codex|tagaaaaa|weekly|1", NOW, NOW + DAY)).toBe(false);
+  });
+});
+
+describe("the debounced write cannot be starved", () => {
+  test("sustained sub-debounce activity still reaches disk", async () => {
+    // Measured on the unfixed version: 75 observations at 40 ms produced ZERO writes, because a
+    // re-arming debounce pushes its own deadline out on every call. A busy install that is then
+    // SIGKILLed loses its whole baseline, which defeats the across-a-restart guarantee.
+    //
+    // Asserts on the CONTENT reaching disk, not on the file existing: the file is already there
+    // from earlier hydration, so an existence check passes with or without the fix and proves
+    // nothing. Verified by removing the cap and watching this fail.
+    resetQuotaResetStoreForTests();
+    const path = join(getConfigDir(), "quota-reset-state.json");
+    writeFileSync(path, JSON.stringify({ version: 1, claims: {}, events: [] }));
+
+    const windows = [{ window: "weekly", percent: 42, resetAt: NOW + DAY }];
+    // ~1.5 s of traffic at 40 ms: far faster than the 250 ms debounce, so every call defers.
+    for (let index = 0; index < 38; index += 1) {
+      swapLastObservedWindows("codex", "starvetag", windows);
+      await new Promise(resolve => setTimeout(resolve, 40));
+    }
+
+    // The staleness cap must have forced a write while the traffic was still arriving.
+    const onDisk = JSON.parse(readFileSync(path, "utf8")) as {
+      observed?: Record<string, unknown>;
+    };
+    expect(Object.keys(onDisk.observed ?? {}).some(key => key.includes("starvetag"))).toBe(true);
   });
 });
