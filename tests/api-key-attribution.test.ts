@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig } from "../src/config";
@@ -8,12 +8,14 @@ import { AUTH_MATRIX } from "../src/server/auth-cors";
 import { clearApiKeyUsageCacheForTests, rollupApiKeyUsage } from "../src/server/management/api-key-usage";
 import { normalizeUsageEntryForTest, usageLogPath, type PersistedUsageEntry } from "../src/usage/log";
 import type { OcxConfig } from "../src/types";
+import { installIsolatedCodexHome, type IsolatedCodexHome } from "./helpers/isolated-codex-home";
 
 const ADMIN_TOKEN = "admin-secret-for-attribution";
 const previousHome = process.env.OPENCODEX_HOME;
 const previousDataToken = process.env.OPENCODEX_API_AUTH_TOKEN;
 const previousAdminToken = process.env.OPENCODEX_ADMIN_AUTH_TOKEN;
 let testHome = "";
+let isolatedCodexHome: IsolatedCodexHome | null = null;
 
 function remoteConfig(): OcxConfig {
   return {
@@ -48,12 +50,16 @@ async function keysGet(server: { url: URL }): Promise<Record<string, unknown>> {
 beforeEach(() => {
   testHome = mkdtempSync(join(tmpdir(), "ocx-attribution-"));
   process.env.OPENCODEX_HOME = testHome;
+  isolatedCodexHome = installIsolatedCodexHome("ocx-attribution-codex-");
+  writeFileSync(join(isolatedCodexHome.path, "opencodex-catalog.json"), '{"models":[]}');
   delete process.env.OPENCODEX_API_AUTH_TOKEN;
   process.env.OPENCODEX_ADMIN_AUTH_TOKEN = ADMIN_TOKEN;
   clearApiKeyUsageCacheForTests();
 });
 
 afterEach(() => {
+  isolatedCodexHome?.restore();
+  isolatedCodexHome = null;
   if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
   else process.env.OPENCODEX_HOME = previousHome;
   if (previousDataToken === undefined) delete process.env.OPENCODEX_API_AUTH_TOKEN;
@@ -465,7 +471,7 @@ describe("AUTH_MATRIX is true of the running server", () => {
           [row.xApiKey, { "x-api-key": key }],
         ];
         for (const [disposition, headers] of cases) {
-          const isGet = row.endpoint === "/v1/models";
+          const isGet = row.endpoint === "/v1/models" || row.endpoint === "/v1/catalog";
           const res = await fetch(new URL(row.endpoint, server.url), {
             method: isGet ? "GET" : "POST",
             headers: { "content-type": "application/json", ...headers },
@@ -493,10 +499,41 @@ describe("AUTH_MATRIX is true of the running server", () => {
           const admitted = res.status !== 401;
           expect({ endpoint: row.endpoint, headers: Object.keys(headers)[0], admitted })
             .toEqual({ endpoint: row.endpoint, headers: Object.keys(headers)[0], admitted: disposition !== "rejected" });
+          if (row.endpoint === "/v1/catalog") {
+            expect(res.status).toBe(disposition === "rejected" ? 401 : 200);
+            expect(res.headers.get("x-opencodex-key-id")).toBe(disposition === "rejected" ? null : "key-one");
+          }
         }
       }
     } finally {
       await server.stop(true);
+    }
+  });
+
+  test("catalog environment and loopback admission stay unattributed", async () => {
+    process.env.OPENCODEX_API_AUTH_TOKEN = "catalog-environment-token";
+    saveConfig(remoteConfig());
+    const remote = startServer(0);
+    try {
+      const response = await fetch(new URL("/v1/catalog", remote.url), {
+        headers: { "x-opencodex-api-key": "catalog-environment-token" },
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-opencodex-key-id")).toBeNull();
+    } finally {
+      await remote.stop(true);
+    }
+
+    const loopbackConfig = remoteConfig();
+    loopbackConfig.hostname = "127.0.0.1";
+    saveConfig(loopbackConfig);
+    const loopback = startServer(0);
+    try {
+      const response = await fetch(new URL("/v1/catalog", loopback.url));
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-opencodex-key-id")).toBeNull();
+    } finally {
+      await loopback.stop(true);
     }
   });
 });
