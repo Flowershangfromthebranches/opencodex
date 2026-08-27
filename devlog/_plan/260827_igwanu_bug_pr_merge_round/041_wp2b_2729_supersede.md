@@ -83,15 +83,56 @@ mutation oracle (revert fix, keep test)        45 pass / 1 fail
 mutation oracle (with fix)                     46 pass / 0 fail
 ```
 
-One macOS CI failure remains, and it is not this change:
+One macOS CI failure remains **unattributed**:
 `CL-07 task effectiveness producer > inactivity timeout is bounded for trusted
-route executors`, a wall-clock test in `src/lab/` that references nothing in the
-changed path and passes 47/0 locally. A clean dev merge commit (`d1def682d`) failed
-the same day on a *different* timing test, `ocx launcher graceful shutdown`, which
-is the signature of pre-existing macOS timing flakiness rather than a regression.
-Re-run rather than diagnosed — and that distinction is recorded here deliberately,
-because "it was flaky" is the claim this repository's standing gates exist to
-distrust.
+route executors`, a wall-clock test in `src/lab/`. It failed once at `2483f4047`
+(15352 pass / 1 fail) and passed on re-run (15353 / 0).
+
+An earlier draft called it pre-existing flakiness on two claims, and the final
+auditor disproved both:
+
+- "references nothing in the changed path" — false. The import chain is
+  `tests/lab-fabric-task.test.ts` -> `src/lab/index.ts` ->
+  `observe/from-conformance.ts` -> `conformance/executor.ts` ->
+  `src/claude/outbound.ts` -> `src/lib/errors.ts`. That does not prove causation,
+  but it removes the argument I was leaning on.
+- "a clean dev merge failed the same day on another macOS timing test" — false.
+  `d1def682d` failed on **Linux** `test 2/4`, in `shutdown-launcher.test.ts`.
+
+Neither failure reproduces locally (5/5 and 47/0 at both the PR head and clean
+`dev`), so it is not proven a regression either. The honest label is
+**unattributed**, and it is recorded that way on purpose: "it was flaky" is the
+claim this repository's standing gates exist to distrust, and I reached for it
+with two facts that did not hold.
+
+## Then the arm itself turned out not to fire
+
+The final audit also found that #2729's `failed_precondition` branch did not
+trigger on the shape it exists to catch. It sat **after** the overload keywords in
+both `classifyCursorError` and `inferHttpStatusFromAdapterMessage`, and a
+plan-gated rejection normally reads `failed_precondition: model unavailable for
+this plan` — which matches `unavailable` first:
+
+```
+classifyCursorError            -> "Cursor server overloaded"
+inferHttpStatusFromAdapterMessage -> 503
+```
+
+So clients retried a deterministic rejection that can never succeed. The original
+test covered only `"Cursor Connect error failed_precondition: Error"`, which
+carries no competing keyword, and 25/25 passed straight over the defect.
+
+Fixed by moving the check ahead of the overload keywords in both functions: the
+explicit gRPC status is a structured backend signal, while `unavailable` and
+`temporarily` beside it are inference over free text. Differential against
+`origin/dev`: exactly one case moves (503 -> 400); real overloads, auth, rate
+limit, timeout and invalid-request are unchanged, and authentication still
+outranks both.
+
+**This is the third time in one PR that a fix was correct in principle and wrong
+in precedence** — the envelope masking, my blanket 502, and now this. The pattern
+is the same each time: a new rule was added without checking what already ran
+before it. A keyword table is an ordered program, not a set.
 ## The approval gate is not satisfiable here, and that is correct
 
 #2769 cannot be merged by me. GitHub refuses the review outright:
@@ -113,6 +154,8 @@ change who checked it. The evidence is posted on the PR as a comment so a second
 maintainer can act on it.
 
 **Disposition: #2729 CLOSED-SUPERSEDED by #2769; #2769 is NEEDS_HUMAN (non-author
-approval).** Every technical gate is green — full suite 15349/0, required CI
-green at the exact head, mutation oracle held. The only thing missing is a person
-who is not me.
+approval).** As of head `16cb875b8`: 211 pass / 0 fail across the ten affected
+suites, `tsc` exit 0, mutation oracle held, and the precedence defect above fixed
+with its own regression. An earlier draft claimed approval was the *only* missing
+gate while that defect was still open — it was not, and the claim is corrected
+here rather than quietly dropped.

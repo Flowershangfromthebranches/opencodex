@@ -13,13 +13,17 @@ Six merges, no direct commit (verified: first-parent count 6, no-merges count 0)
 | #2761 | Ingwannu | L1 | **MERGED** | `d1def682d`; 92/0 focused, oracle at writer.ts:286,:314 |
 | #2764 | Ingwannu | L1 | **MERGED** | `3b5302410`; rebased, patch ID unchanged, 26 green |
 | #2767 | Ingwannu | L1 | **MERGED** | `50e955604`; rebased, patch ID unchanged, 26 green |
-| #2729 | lidge-jun | L4 | **CLOSED-SUPERSEDED** | by #2769, commits carried unmodified |
-| #2769 | lidge-jun | L4 | **NEEDS_HUMAN** (approval) | all gates green; self-approval refused |
+| #2729 | lidge-jun | L4 | **CLOSED-SUPERSEDED** | by #2769; patch IDs match exactly |
+| #2769 | lidge-jun | L4 | **NEEDS_HUMAN** (approval) | CI green at head `16cb875b8`; self-approval refused |
 | #2747 | olddonkey | L1 | **NEEDS_AUTHOR** (rebase) | approved; fork head, rerun cannot move base |
 | #2740 | luvs01 | L1 | **NEEDS_AUTHOR** (ready+rebase) | reviewed, oracle 2/0 vs 0/2, tsc 0 |
-| #2693 | yxr1995-maker | L4 | **BLOCKED** (author) | 3 reproduced blockers stand, 118 behind |
-| #2638 | luvs01 | L4 | **NEEDS_HUMAN** (security) | auth/routing boundary, 179 behind |
-| #2497 | MarcTCruz | L4 | **NEEDS_HUMAN** (security) | OAuth refresh, 386 behind, conflicting |
+| #2693 | yxr1995-maker | L4 | **BLOCKED** (author) | 3 reproduced blockers stand, 131 behind |
+| #2638 | luvs01 | L4 | **NEEDS_HUMAN** (security) | auth/routing boundary, 192 behind |
+| #2497 | MarcTCruz | L4 | **NEEDS_HUMAN** (security) | OAuth refresh, 399 behind, conflicting |
+
+(Behind-counts are against `dev@50e955604`, re-measured at close-out. An earlier
+draft quoted them against the round's opening base and was 13 commits stale —
+the round's own merges moved the target.)
 
 Six merged, one closed as superseded, six open with a named unblocking condition
 and the specific person who owns it. Every row cites evidence produced in this
@@ -87,8 +91,18 @@ incorrect correction is worse than the original error.
   `devlog/_plan/260826_wp7e_presence_driven_oauth_failover/` and
   `devlog/_plan/260827_dev_hardening/`. Pre-existing, other work streams, needs
   separate authority. **Escalated, not silently rewritten.**
-- macOS timing flakiness is real and unattributed: `CL-07 ... inactivity timeout`
-  failed twice then passed on rerun, and a clean `dev` merge (`d1def682d`) failed
-  the same day on `ocx launcher graceful shutdown`. Two different wall-clock tests
-  in one day is a pattern, and "it was flaky" is the claim these gates exist to
-  distrust. Worth its own causal investigation.
+- `CL-07 task effectiveness producer > inactivity timeout is bounded for trusted
+  route executors` failed once on the macOS shard at `2483f4047` (15352 pass / 1
+  fail) and passed on re-run (15353 / 0). **It is unattributed.** I called it
+  "pre-existing flakiness" on two arguments the final auditor demolished: the test
+  does reach the changed code transitively
+  (`lab-fabric-task` -> `src/lab/index.ts` -> `observe/from-conformance` ->
+  `conformance/executor` -> `src/claude/outbound.ts` -> `src/lib/errors.ts`), and
+  the comparison failure I cited on `d1def682d` was a **Linux** `test 2/4` failure
+  in `shutdown-launcher.test.ts`, not a macOS one. Neither run reproduces locally
+  (5/5 and 47/0 at both the PR head and clean `dev`).
+
+  So it is neither proven flaky nor proven a regression, and the honest label is
+  unattributed. Recording it that way matters more than the individual test:
+  "it was flaky" is exactly the claim these gates exist to distrust, and I reached
+  for it with two wrong facts. Worth its own causal investigation.
