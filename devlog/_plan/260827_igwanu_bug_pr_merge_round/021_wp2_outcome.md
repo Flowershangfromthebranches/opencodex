@@ -73,21 +73,26 @@ carries two approval events, submitted 15 seconds apart at `15:27:49Z` and
 That is the difference between a gate being satisfied and a gate being skipped,
 and from the outside the merge log would look identical either way.
 
-## Fork branches are not writable, and that is a real constraint
+## #2747: a choice, not a constraint
 
-#2747 is `olddonkey`'s fork. Pushing its rebase created a same-named branch on the
-origin instead of updating the PR, which was deleted immediately once observed
-(`git push origin --delete`, confirmed `0` remaining refs).
+#2747's head is on `olddonkey`'s fork. My first attempt pushed the rebase to
+`origin` and created a same-named branch there instead of updating the PR; it was
+deleted as soon as it was observed (`git push origin --delete`, confirmed `0`
+remaining refs).
 
-So the constraint is real: rewriting a contributor's branch is not available, and
-it should not be. What I reached for instead — `gh run rerun --failed` — does not
-work either, for the reason recorded above: it replays the same commit, so it
-re-tested the same unrepaired tree and came back red.
+My second attempt, `gh run rerun --failed`, could not work either — it replays the
+same commit, so it re-tested the same unrepaired tree and came back red.
 
-There is no action available on this side that turns #2747 green. The only thing
-that moves it is an author rebase onto the repaired `dev`, which is what was
-requested on the PR, with the #2764/#2767 result attached as the evidence that
-the failure is not theirs.
+**A first draft of this section then claimed rewriting the contributor's branch
+was "not available". That is false.** GitHub reports `maintainerCanModify: true`
+for this PR, so a maintainer push to the fork branch was available the whole time.
+
+The accurate statement is that I *chose* not to take it. Force-pushing a rebase
+onto a contributor's branch rewrites work they own, silently, on a PR whose only
+problem was a defect in our base — so I requested the rebase on the PR instead,
+with the #2764/#2767 result attached as evidence that the failure was never
+theirs. That is a judgement about contributor ownership, and it should be
+recorded as one rather than dressed up as a technical limit.
 
 ## Carried into wp3
 
