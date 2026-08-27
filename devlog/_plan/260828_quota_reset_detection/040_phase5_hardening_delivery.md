@@ -30,8 +30,12 @@ situation AGENTS.md calls out: "this paragraph was the only thing holding the gu
 wp5 therefore ADDS a real guard, `tests/quota-reset-core-boundary.test.ts`, reusing the same
 walker shape:
 
-- no static/side-effect/re-export edge from any of the four protected entrypoints reaches
-  `src/quota/reset-`
+- the walker is parameterized over a TARGET SET, not a single hardcoded string, so it checks
+  both `/src/lab/` and `/src/quota/reset-` from the four protected entrypoints. Audit
+  blocker 5 confirmed all four reach `src/codex/quota.ts` statically (for example
+  `core.ts -> codex/auth-context.ts -> codex/quota.ts`) and three reach
+  `src/providers/quota.ts` (`core.ts -> oauth/anthropic-routing.ts -> providers/quota.ts`),
+  so the lazy-import requirement is load-bearing rather than precautionary
 - `src/codex/quota.ts` and `src/providers/quota.ts` name the observer ONLY through
   `import(` — a static import in either is a failure, since both are reachable from
   `src/server/responses/core.ts`
@@ -74,7 +78,8 @@ Every conditional path this unit adds needs a fired-path artifact, recorded in
 | sink failure isolation | throwing webhook | `ok: false` + command sink still ran |
 | blocked destination | private URL, flag off | `"blocked-destination"` |
 | poller idempotence | double start | one timer |
-| boundary guard | temporary static import | the new guard fails, then passes once reverted |
+| boundary guard | synthetic static-import fixture, like the existing attack cases at tests/core-lab-boundary.test.ts:301 | the guard fails on the fixture and passes on the real tree |
+| webhookUrl redaction | ocx config show with a configured webhook | the URL prints as `********` |
 
 A green suite with no test driving a trigger does not satisfy any row.
 

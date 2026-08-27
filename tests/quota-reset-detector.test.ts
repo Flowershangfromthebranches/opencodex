@@ -8,6 +8,7 @@ import {
 
 const NOW = 1_772_000_000_000;
 const HOUR = 60 * 60_000;
+const DAY_MS = 24 * HOUR;
 
 function detect(
   previous: { percent?: number; resetAt?: number } | undefined,
@@ -35,10 +36,23 @@ describe("quota reset detection", () => {
   });
 
   test("a passed deadline with no drop is still a scheduled rollover", () => {
-    // A window that rolls over while barely used reports the same low percent. Requiring a
-    // drop here would silently skip every low-usage rollover.
-    const event = detect({ percent: 3, resetAt: NOW - 60_000 }, { percent: 3 });
+    // Barely-used window: percent is unchanged, but upstream issued a NEW deadline, which
+    // is the corroboration that it really turned over.
+    const event = detect(
+      { percent: 3, resetAt: NOW - 60_000 },
+      { percent: 3, resetAt: NOW + 7 * 24 * HOUR },
+    );
     expect(event?.kind).toBe("scheduled");
+  });
+
+  test("a carried-forward window past its deadline is NOT a reset", () => {
+    // src/codex/quota.ts:323-329 copies the previous burst tuple verbatim when a header
+    // write omits it. Identical percent AND identical deadline means upstream said nothing,
+    // so an expired clock alone must not fire — this path runs once per pooled response.
+    expect(detect(
+      { percent: 42, resetAt: NOW - 60_000 },
+      { percent: 42, resetAt: NOW - 60_000 },
+    )).toBeNull();
   });
 
   test("usage rising past a passed deadline is not a reset", () => {
@@ -145,5 +159,41 @@ describe("quota reset detection", () => {
       now: NOW,
     });
     expect(events).toEqual([]);
+  });
+
+  test("a clockless reset keys on the expired deadline instead of a shared sentinel", () => {
+    // Upstream reported no NEW deadline. Keying every such reset as "none" would let the
+    // first claim permanently suppress every later reset of this window.
+    const first = detect({ percent: 90, resetAt: NOW - 1_000 }, { percent: 1 });
+    const later = detect(
+      { percent: 90, resetAt: NOW + 30 * DAY_MS },
+      { percent: 1 },
+      NOW + 31 * DAY_MS,
+    );
+    expect(first?.kind).toBe("scheduled");
+    expect(later?.kind).toBe("scheduled");
+    expect(first?.key).not.toBe(later?.key);
+  });
+
+  test("a window with no deadline on either side is not evaluated", () => {
+    // Credit-balance providers never emit a reset clock; a bare drop there is as likely to
+    // be a top-up as a rollover.
+    expect(detect({ percent: 90 }, { percent: 5 })).toBeNull();
+  });
+
+  test("a deadline moving backward before its own expiry is not a reset", () => {
+    expect(detect(
+      { percent: 40, resetAt: NOW + 2 * HOUR },
+      { percent: 40, resetAt: NOW + HOUR },
+    )).toBeNull();
+  });
+
+  test("a deadline exactly equal to now counts as expired", () => {
+    expect(detect({ percent: 90, resetAt: NOW }, { percent: 1, resetAt: NOW + HOUR })?.kind)
+      .toBe("scheduled");
+  });
+
+  test("a clockless snapshot past an expired deadline still fires when usage fell", () => {
+    expect(detect({ percent: 90, resetAt: NOW - 1_000 }, { percent: 1 })?.kind).toBe("scheduled");
   });
 });

@@ -62,6 +62,22 @@ const quotaResetNotifySchema = z.object({
    `loadConfig` success branches (`:1832`, `:1856`, `:1876`). A new section is not in
    `SALVAGEABLE_CONFIG_SECTIONS` (`:3161`), so `.catch(undefined)` plus this warning is the
    whole degradation story — worth stating rather than discovering later.
+5. **`validFileConfigDiagnostics` (`:1957`) — added after the wp2 audit (blocker 4).**
+   A diagnostics surface SEPARATE from the three load branches, feeding
+   `ocx config show --source`. `agentTaskRecovery` appears in both (`:1975` and `:1832`);
+   registering only the load branch leaves the CLI silent about a degraded section.
+
+### Two more consumers the first chain audit missed (blocker 4)
+
+- **`webhookUrl` MUST be redacted.** `SECRET_KEYS` at `src/cli/config-command.ts:18`
+  matches `apiKey|key|accessToken|refreshToken|idToken|token|password|clientSecret` —
+  `webhookUrl` matches none. For Slack and Discord the URL *is* the credential, so
+  `ocx config show` would print it and `config export` (`:190`) would write it to disk.
+  Add `webhookUrl` to that pattern; a redaction test comes with it.
+- **`safeConfigDTO` (`src/server/auth-cors.ts:695`) is an explicit whitelist**, so
+  `quotaResetNotify` is correctly invisible to `GET /api/config`. That is the intended
+  outcome, recorded here so a later GUI toggle reads it as a deliberate omission rather than
+  an oversight.
 
 `getDefaultConfig()` is NOT touched: it carries no optional-feature keys, deliberately.
 Absent means off.
@@ -112,7 +128,12 @@ has the policy for it. Then `fetch` with `signalWithTimeout(timeoutMs)` from
 No retry: a reset notification is only interesting while it is fresh, and the mark-seen
 ordering in wp3 already forbids re-delivery.
 
-Command: `Bun.spawn` with the event JSON on stdin, the same timeout, output ignored.
+Command: `Bun.spawn` with the event JSON on stdin as ENCODED BYTES —
+`stdin: new TextEncoder().encode(json)`. A plain string throws `ERR_INVALID_ARG_TYPE` on
+Bun 1.4.0 (audit blocker 7), and every existing call site in this repo uses `"ignore"` or
+`"inherit"` (`src/oauth/kiro.ts:98`, `src/codex/user-identity.ts:128`), so there is no
+in-repo precedent to copy. The argv form is used deliberately: the command is NOT shell
+interpreted, so an operator-supplied string cannot become an injection surface.
 
 Both sinks are independently try/caught, so one failing never suppresses the other, and
 neither ever throws to the caller (criterion c-6).

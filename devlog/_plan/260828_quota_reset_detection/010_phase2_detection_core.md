@@ -103,8 +103,9 @@ export function resetQuotaResetStoreForTests(): void;
 ```
 
 Persistence: `join(getConfigDir(), "quota-reset-state.json")`, version 1, written with
-`atomicWriteFile` (mode 0600) under the same 250 ms trailing debounce
-`src/codex/quota.ts:493` uses. Deliberately NOT `config.json`: this is high-frequency
+`atomicWriteFile` (mode 0600) under the same 250 ms trailing debounce as the codex quota
+cache (`QUOTA_PERSIST_DEBOUNCE_MS` at `src/codex/quota.ts:43`; the scheduler itself is at
+`:493`). Deliberately NOT `config.json`: this is high-frequency
 job state, and `mutatePersistedConfig` fails closed when config came from anywhere but a
 file. Hydration is lazy-once, mirroring `src/codex/quota.ts:473`, and a corrupt or
 version-mismatched file is discarded rather than throwing — a broken cache must never break

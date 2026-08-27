@@ -122,9 +122,10 @@ deliverable list; a later cycle amends its own doc rather than reinterpreting th
 | Phase | Doc | Delivers | New files | Depends on |
 |---|---|---|---|---|
 | wp1 | `000`, `001`, `010`–`040` | roadmap, contract, 7 traps, audit response | 6 docs | — |
+| wp2 amendment | `002_wp2_audit_response.md` | the 9-blocker A-gate response | 1 doc | wp1 |
 | wp2 | `010_phase2_detection_core.md` | pure detector + durable claim store | `src/quota/reset-detector.ts`, `src/quota/reset-seen-store.ts`, 2 test files | wp1 |
 | wp3 | `020_phase3_observation_wiring.md` | codex + provider seams, opt-in poller | `src/quota/reset-observer.ts`, `src/quota/reset-poller.ts`, 1 test file; edits `src/codex/quota.ts`, `src/providers/quota.ts`, `src/server/background-lifecycle.ts` | wp2 |
-| wp4 | `030_phase4_sinks_and_surface.md` | config section, sinks, event ring, API + CLI | `src/quota/reset-notify-config.ts`, `src/quota/reset-sinks.ts`, `src/server/management/quota-reset-routes.ts`, 1 test file; edits `src/types/config.ts`, `src/config.ts`, `src/server/management-api.ts`, `src/cli/provider-runtime.ts`, `src/cli/registry.ts` | wp3 |
+| wp4 | `030_phase4_sinks_and_surface.md` | config section, sinks, event ring, API + CLI | `src/quota/reset-notify-config.ts`, `src/quota/reset-sinks.ts`, `src/server/management/quota-reset-routes.ts`, 1 test file; edits `src/types/config.ts`, `src/config.ts` (schema, register, write-validate, warn ×3, `validFileConfigDiagnostics`), `src/cli/config-command.ts` (redact `webhookUrl`), `src/server/management-api.ts`, `src/cli/provider-runtime.ts`, `src/cli/registry.ts` | wp3 |
 | wp5 | `040_phase5_hardening_delivery.md` | boundary guard, full gates, docs, evidence, PR | `tests/quota-reset-core-boundary.test.ts`, `050_activation_evidence.md`, `060_closeout.md`; edits 3 docs-site pages | wp4 |
 
 Ordering is structural: nothing can be wired before the contract exists, no sink can fire

@@ -30,12 +30,19 @@ export function observeQuotaSnapshot(input: {
 }): void;
 ```
 
-Body: bail immediately when the feature is off (`isQuotaResetNotificationEnabled()` from
-wp4, which reads config and is cheap); otherwise pair windows by identity, call
-`detectQuotaReset` per window, drop events whose key `hasSeenQuotaReset`, then
-`markQuotaResetSeen` + `recordQuotaResetEvent` + hand to the sink. Everything wrapped in
-`try/catch` at the top level, matching the fail-safe posture of
-`src/server/memory-watchdog.ts:127`.
+Body: bail immediately when the feature is off, then swap in the new windows via
+`swapLastObservedWindows`, call `detectQuotaResets` against the returned prior value,
+`claimQuotaReset` each event's key, and for each winner `recordQuotaResetEvent` plus hand to
+the sink. Everything wrapped in `try/catch` at the top level, matching the fail-safe posture
+of `src/server/memory-watchdog.ts:127`.
+
+**The enable check must be generation-cached (audit blocker 3).** `loadConfig`
+(`src/config.ts:1805`) is a `readFileSync` plus a full `configSchema.safeParse` with no
+memoization, and this observer runs once per pooled response. Calling it there merely to ask
+"is this feature off" would put a config parse on the hot path for a feature nobody enabled.
+`isQuotaResetNotificationEnabled()` therefore caches its resolution against
+`captureConfigGeneration()` — already imported by `src/codex/quota.ts` — so a config edit
+still takes effect without a restart.
 
 Order matters: the key is CLAIMED before dispatch, via the single synchronous
 `claimQuotaReset` from wp2. A sink that fails must not cause a re-notification storm on the
@@ -106,7 +113,40 @@ function notifyCodexQuotaSnapshot(
 
 ## MODIFY `src/providers/quota.ts`
 
-One seam: the sole site where a newer report displaces an older one.
+**Amended after the wp2 audit (blocker 1, Critical).** The original design diffed against
+`previous` at `:2290`. That can never work: `previous` is bound only when
+`cache.key === key`, and `cacheKeyWithAggregationState` (`:193`) folds
+`quotaSignatureValue` (`:155`) — including `weeklyResetAt`, `monthlyResetAt` and
+`updatedAt` — into a digest appended to the key. A reset changes exactly those values, so
+the key rotates, `previous` is empty, and the no-prev rule returns null on every install
+with a Codex pool provider. The seam would have been dead on arrival.
+
+The detector therefore owns its own last-seen map instead of borrowing the report cache.
+`src/quota/reset-seen-store.ts` gains:
+
+```ts
+/** Last observed windows for one (scope, accountTag): returns the prior value, then stores. */
+export function swapLastObservedWindows(
+  scope: string,
+  accountTag: string,
+  windows: ReadonlyArray<QuotaWindowObservation>,
+): ReadonlyArray<QuotaWindowObservation> | undefined;
+```
+
+Persisted in the same version-1 file, bounded to 64 rows. A restart keeps its "before" side,
+which the report cache never could — it is process-memory only, with no `writeFile`
+anywhere in `src/providers/quota.ts`.
+
+### Residual: the dropped-observation window (audit blocker 8)
+
+Two concurrent forced refreshes — a poller tick racing a dashboard `refresh=1` — make the
+loser fail the `epoch === invalidationEpoch` check at `:2338` and skip its commit. With
+observation moved off `cache.key` the loser still observes through the swap map, so the
+transition is not lost; whichever probe swaps first defines the baseline, and both compute
+the same idempotence key for the same new deadline, so the claim store collapses them to one
+notification. Stated rather than hidden.
+
+### The seam itself
 
 Before (`:2337`):
 ```ts
@@ -116,18 +156,19 @@ Before (`:2337`):
 After:
 ```ts
       const reports = response.reports.filter(item => mayCommitProviderQuotaKey(item.provider, writerGeneration));
-      const superseded = previous;
       cache = { key, ts: Date.now(), response: { ...response, reports } };
-      notifyProviderQuotaSnapshot(superseded, reports);
+      notifyProviderQuotaSnapshot(reports);
 ```
 
-Committing first, notifying second: the cache write is the source of truth and must not be
-delayed by observation. `previous` is already bound at `:2290`.
+Commit first, observe second: the cache write is the source of truth and must not be delayed
+by observation. No `previous` is passed — the observer swaps against its own last-seen map.
 
-`notifyProviderQuotaSnapshot` mirrors the codex helper (lazy import, per-provider pairing,
-`accountKey` = the provider's active-account key so a switch cannot inherit history).
-Providers present in `previous` but absent from `reports` are skipped entirely — trap 3 and
-the terminal-failure deletion at `:2330` both remove rows for reasons that are not resets.
+`notifyProviderQuotaSnapshot` mirrors the codex helper (lazy import, per-provider windows,
+`accountKey` = the provider's active-account id so a switch cannot inherit another
+account's history). Providers absent from `reports` are skipped WITHOUT clearing their
+last-seen row: trap 3 and the terminal-failure deletion at `:2330` remove rows for reasons
+that are not resets, and forgetting the baseline would turn the next reappearance into a
+false event.
 
 ## NEW `src/quota/reset-poller.ts`
 

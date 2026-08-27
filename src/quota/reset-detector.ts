@@ -74,8 +74,16 @@ export function quotaResetKey(input: {
   readonly accountTag: string;
   readonly window: string;
   readonly resetAt?: number;
+  readonly previousResetAt?: number;
 }): string {
-  return [input.scope, input.accountTag, input.window, input.resetAt ?? "none"].join("|");
+  // Prefer the NEW deadline: every later observation of the same post-reset window computes
+  // the same key, which is what makes repeated detection idempotent.
+  //
+  // Fall back to the deadline that just expired when upstream reports no new one. A bare
+  // "none" discriminator would collapse every clockless reset of one window onto a single
+  // key, so the first claim would permanently suppress all later ones.
+  const discriminator = input.resetAt ?? input.previousResetAt ?? "none";
+  return [input.scope, input.accountTag, input.window, discriminator].join("|");
 }
 
 function finitePercent(value: number | undefined): number | undefined {
@@ -129,7 +137,13 @@ export function detectQuotaReset(input: {
     ...(previousResetAt !== undefined ? { previousResetAt } : {}),
     ...(resetAt !== undefined ? { resetAt } : {}),
     detectedAt: now,
-    key: quotaResetKey({ scope, accountTag, window: next.window, resetAt }),
+    key: quotaResetKey({
+      scope,
+      accountTag,
+      window: next.window,
+      ...(resetAt !== undefined ? { resetAt } : {}),
+      ...(previousResetAt !== undefined ? { previousResetAt } : {}),
+    }),
   });
 
   // A window whose percent vanished says nothing about a reset: upstream simply stopped
@@ -139,10 +153,20 @@ export function detectQuotaReset(input: {
   const deadlinePassed = previousResetAt !== undefined && now >= previousResetAt;
 
   if (deadlinePassed) {
-    // The window's own clock expired, which is the evidence. A drop is NOT required: a
-    // window that rolls over while barely used legitimately reports the same low percent,
-    // and demanding a drop would silently skip every low-usage rollover.
     if (percentBefore !== undefined && percentAfter > percentBefore) return null;
+    // An expired deadline alone is NOT enough. src/codex/quota.ts:323-329 carries the
+    // previous burst tuple forward verbatim when a header write omits it, so a partial
+    // write reproduces the old deadline and the old percent exactly. Once wall-clock passes
+    // that copied deadline, "the clock expired" would fire on a snapshot where upstream
+    // said nothing at all — a false positive on the highest-frequency write path in the
+    // system (one per pooled response).
+    //
+    // Require corroboration that the window actually turned over: either usage fell, or
+    // upstream issued a new deadline. A byte-identical carried-forward window gives
+    // neither, so it stays silent.
+    const usageFell = percentBefore !== undefined && percentAfter < percentBefore;
+    const deadlineAdvanced = resetAt !== undefined && resetAt > previousResetAt!;
+    if (!usageFell && !deadlineAdvanced) return null;
     return build("scheduled");
   }
 
@@ -158,6 +182,11 @@ export function detectQuotaReset(input: {
     if (resetAt !== undefined && resetAt > previousResetAt) return build("surprise");
   }
 
+  // A window with no deadline on either side is not evaluated. Several provider parsers
+  // never emit a reset clock at all (credit balances, prepaid pools), and a bare percent
+  // drop there is as likely to be a top-up or a plan change as a window rollover. Firing on
+  // it would make the channel noise; the honest answer is that those providers expose no
+  // window semantics to detect.
   return null;
 }
 
