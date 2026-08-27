@@ -21,7 +21,7 @@ not the one that tag names. The tree claims an already-published version.
 
 `dev` still carries `2.34.0` after tag `v2.34.0` shipped, so *every* PR opened
 after the release train inherits a red matrix. A second shared failure hits
-`gates`: `privacy:scan` reads the scp-style remote `git@github.com` recorded in
+`gates`: `privacy:scan` reads the scp-style SSH remote principal recorded in
 `devlog/_plan/260827_release_train/020_preview_release.md` as an email address.
 
 **#2766 repairs both.** It is the keystone: until it lands, no other PR in this
