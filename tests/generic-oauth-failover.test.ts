@@ -254,4 +254,72 @@ describe("sidecar on429 wiring", () => {
     // Kiro routing metadata still travels with its own token.
     expect(body).toContain("_kiroAuthContext");
   });
+
+  test("the helper rotates the credential IDENTITY, not just the credential", () => {
+    // Rotating the bearer without rotating the identity of that bearer leaves the two naming
+    // different accounts, and both consumers of that identity then misbehave:
+    //
+    //   sentOAuthSnapshot          feeds forceRefreshOAuthAccessSnapshot, which refreshes the
+    //                              SNAPSHOT's account - so a stale value renews the account the
+    //                              request just rotated AWAY from while transport points at the
+    //                              rotated one.
+    //   replayOAuthCredentialSnapshot  scopes the reasoning replay cache - so a stale value lets
+    //                              continuation state minted under one account be replayed under
+    //                              another.
+    //
+    // Asserted INSIDE the helper rather than anywhere in the file: three rotation sites already
+    // disagreed about which of these to update, and only runTurn got it right, by hand.
+    const start = coreSource.indexOf("const applyFailoverSnapshot =");
+    expect(start).toBeGreaterThan(-1);
+    const body = coreSource.slice(start, coreSource.indexOf("\n  };", start));
+    expect(body).toContain("sentOAuthSnapshot = snapshot");
+    expect(body).toContain("accountId: snapshot.accountId");
+    expect(body).toContain("generation: snapshot.generation");
+  });
+
+  test("every generic-OAuth rotation site re-scopes reasoning replay to the rotated account", () => {
+    // The three generic-OAuth 429 sites diverged: runTurn rebound the replay scope, the sidecar
+    // bound WITHOUT the credential snapshot (which fails the OAuth replay key closed and so
+    // carries no account identity at all), and the HTTP site did not rebind at all. Sealing the
+    // attempt identity is not a substitute - it records what happened, it does not re-scope the
+    // cache.
+    //
+    // Scoped to the generic-OAuth sites deliberately. Key-pool and terminal-guard rotations swap
+    // an API KEY, which carries no OAuth account identity, so a snapshot there would be
+    // meaningless.
+    //
+    // The window is bounded by the rotation's OWN recovery call rather than searching forward
+    // indefinitely: an unbounded search finds the NEXT site's bind and passes even when this
+    // site has none. That weaker form was written first and it survived deleting the bind.
+    const marker = "applyFailoverSnapshot(snapshot)";
+    let cursor = 0;
+    const windows: string[] = [];
+    for (;;) {
+      const at = coreSource.indexOf(marker, cursor);
+      if (at === -1) break;
+      cursor = at + marker.length;
+      // Each site ends at the call that actually reissues the request under the new account.
+      const rest = coreSource.slice(cursor);
+      const ends = [
+        rest.indexOf("rebuildAndRefetch("),
+        rest.indexOf("return rotatedAdapter;"),
+        rest.indexOf("return true;"),
+      ].filter(index => index > -1);
+      windows.push(rest.slice(0, Math.min(...ends)));
+    }
+    expect(windows.length).toBe(3);
+
+    for (const [index, window] of windows.entries()) {
+      expect(`site${index}:${window.includes("bindRouteReasoningReplayScope({")}`).toBe(`site${index}:true`);
+      expect(`site${index}:${window.includes("oauthCredentialSnapshot")}`).toBe(`site${index}:true`);
+    }
+  });
+  test("a 401 after a rotation resolves transport from the REFRESHED account", () => {
+    // getOAuthCredentialApiBaseUrl reads the ACTIVE credential, and generic 429 failover never
+    // promotes the active account. So after a rotation the active account is still the one that
+    // was rate-limited, and resolving Copilot transport from it pairs a refreshed bearer with the
+    // wrong origin. The refreshed snapshot carries its own account-scoped origin; prefer it.
+    const refreshSites = coreSource.match(/refreshed\.apiBaseUrl \?\? getOAuthCredentialApiBaseUrl/g) ?? [];
+    expect(refreshSites.length).toBe(2);
+  });
 });

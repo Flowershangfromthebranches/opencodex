@@ -2841,6 +2841,19 @@ async function handleResponsesInner(
     if (snapshot.projectId) rotatedProvider = { ...rotatedProvider, project: snapshot.projectId };
     route.provider = rotatedProvider;
     if (route.providerName === "kiro") parsed._kiroAuthContext = { ...(snapshot.kiro ?? {}) };
+    // Rotating the credential without rotating the IDENTITY of that credential leaves the two
+    // describing different accounts. `sentOAuthSnapshot` feeds the 401 forced refresh, which
+    // refreshes the SNAPSHOT's account rather than whichever account is on the route now — so a
+    // stale snapshot makes a later 401 renew the account we just rotated AWAY from, while the
+    // transport still points at the rotated one. `replayOAuthCredentialSnapshot` scopes reasoning
+    // replay, so a stale value lets continuation state minted under one account be replayed under
+    // another.
+    //
+    // This lives in the helper rather than at each call site on purpose: three rotation sites
+    // already disagreed about which of these to update, and the one that got it right (runTurn)
+    // got it right by hand. A fourth site would have to remember too. Here it cannot forget.
+    if (isOAuth401ReplayProvider) sentOAuthSnapshot = snapshot;
+    replayOAuthCredentialSnapshot = { accountId: snapshot.accountId, generation: snapshot.generation };
     return true;
   };
   const anthropicSessionKey = route.providerName === "anthropic" && route.provider.authMode === "oauth"
@@ -3538,7 +3551,7 @@ async function handleResponsesInner(
         route.providerName,
         { ...route.provider, apiKey: refreshed.accessToken },
         parsed.options.promptCacheKey,
-        route.providerName === "github-copilot" ? getOAuthCredentialApiBaseUrl(route.providerName) : undefined,
+        route.providerName === "github-copilot" ? (refreshed.apiBaseUrl ?? getOAuthCredentialApiBaseUrl(route.providerName)) : undefined,
       );
       route.provider = refreshedProvider;
       const refreshedAdapter = resolveAdapter(
@@ -4341,6 +4354,11 @@ async function handleResponsesInner(
       providerName: route.providerName,
       provider: route.provider,
       adapterName: rotatedAdapter.name,
+      // Omitting this fails the OAuth replay key CLOSED, which looks safe and is not: the scope
+      // then carries no account identity at all, so it cannot distinguish state minted under the
+      // account we just rotated away from. `applyFailoverSnapshot` now keeps this value in step
+      // with the rotated credential, so passing it is what makes the scope account-accurate.
+      oauthCredentialSnapshot: replayOAuthCredentialSnapshot,
     });
     return rotatedAdapter;
   };
@@ -5064,7 +5082,7 @@ async function handleResponsesInner(
           route.providerName,
           { ...route.provider, apiKey: refreshed.accessToken },
           parsed.options.promptCacheKey,
-          route.providerName === "github-copilot" ? getOAuthCredentialApiBaseUrl(route.providerName) : undefined,
+          route.providerName === "github-copilot" ? (refreshed.apiBaseUrl ?? getOAuthCredentialApiBaseUrl(route.providerName)) : undefined,
         );
         route.provider = refreshedProvider;
         invalidateSameTargetRequest();
@@ -5222,6 +5240,19 @@ async function handleResponsesInner(
             resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, inboundWire),
             config.cacheRetention,
           );
+          // The other two rotation sites rebind the reasoning replay scope here and this one did
+          // not, so continuation state minted under the previous account stayed addressable after
+          // the swap. Sealing the attempt identity records what happened; it does not re-scope the
+          // replay cache.
+          bindRouteReasoningReplayScope({
+            parsed,
+            providerName: route.providerName,
+            provider: route.provider,
+            adapterName: activeAdapter.name,
+            oauthCredentialSnapshot: replayOAuthCredentialSnapshot,
+            codexAuthContext: authCtx,
+            forwardHeaders: selectedForwardHeaders,
+          });
           sealRequestAttemptIdentity(logCtx.activeAttempt, logCtx.provider, activeAdapter.name, logCtx.accountLogLabel);
           const result = await rebuildAndRefetch("oauth-account-429");
           if ("failed" in result) return result.failed;
