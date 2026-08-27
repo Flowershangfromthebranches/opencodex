@@ -67,8 +67,8 @@ The gate turned out to be satisfiable — the operator authenticates as
 `lidge-jun`, project owner, and every one of these PRs was authored by
 `Ingwannu` or a community contributor, so no approval was a self-approval. Each
 approval names the exact head it applies to and the evidence behind it. (#2766
-carries two approval events, one before and one after a check re-run; the
-effective approval is the latest one, at the merged head.)
+carries two approval events, submitted 15 seconds apart at `15:27:49Z` and
+`15:28:04Z`; both target the merged head and the latest is the effective one.)
 
 That is the difference between a gate being satisfied and a gate being skipped,
 and from the outside the merge log would look identical either way.
@@ -79,9 +79,15 @@ and from the outside the merge log would look identical either way.
 origin instead of updating the PR, which was deleted immediately once observed
 (`git push origin --delete`, confirmed `0` remaining refs).
 
-The correct action for a fork PR whose failure was environmental is to re-run its
-CI against the repaired base, not to rewrite the contributor's branch. Done via
-`gh run rerun --failed`.
+So the constraint is real: rewriting a contributor's branch is not available, and
+it should not be. What I reached for instead — `gh run rerun --failed` — does not
+work either, for the reason recorded above: it replays the same commit, so it
+re-tested the same unrepaired tree and came back red.
+
+There is no action available on this side that turns #2747 green. The only thing
+that moves it is an author rebase onto the repaired `dev`, which is what was
+requested on the PR, with the #2764/#2767 result attached as the evidence that
+the failure is not theirs.
 
 ## Carried into wp3
 
