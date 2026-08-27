@@ -3,6 +3,9 @@ import { CLI_COMMANDS } from "../src/cli/registry";
 import { DISPATCH_ALIASES, DISPATCH_COMMANDS, dispatchCommand, resolveDispatchCommand } from "../src/cli/dispatch";
 import type { CliDispatchDeps } from "../src/cli/dispatch";
 import { runGuiCommand } from "../src/cli/gui";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 /** Minimal fake deps. dispatchCommand only touches deps for real command
  * runners, which these tests never invoke, so an empty object is enough. */
@@ -59,6 +62,34 @@ describe("CLI dispatch aliases", () => {
 });
 
 describe("dispatchCommand exit codes", () => {
+  test("invalid client state refuses sync before local proxy discovery", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-dispatch-client-invalid-"));
+    const previous = process.env.OPENCODEX_HOME;
+    let discoveries = 0;
+    try {
+      process.env.OPENCODEX_HOME = home;
+      writeFileSync(join(home, "config.json"), JSON.stringify({
+        port: 10100,
+        providers: {},
+        defaultProvider: "openai",
+        runtimeRole: "client",
+        client: { apiKeyId: "half-present" },
+      }), "utf8");
+      const args = ["sync"];
+      const deps = {
+        ...fakeDeps,
+        args,
+        findLiveProxy: async () => { discoveries += 1; return null; },
+      };
+      expect(await dispatchCommand({ kind: "command", command: "sync", args }, deps)).toBe(1);
+      expect(discoveries).toBe(0);
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODEX_HOME;
+      else process.env.OPENCODEX_HOME = previous;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test("returns 0 for help forms", async () => {
     expect(await dispatchCommand({ kind: "help", command: "help", args: ["help"] }, fakeDeps)).toBe(0);
     expect(await dispatchCommand({ kind: "help", command: "--help", args: ["--help"] }, fakeDeps)).toBe(0);
