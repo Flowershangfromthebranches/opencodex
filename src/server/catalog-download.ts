@@ -6,7 +6,7 @@ import { corsHeaders, jsonResponse, type RequestPolicyView } from "./auth-cors";
 export const MAX_REMOTE_CATALOG_BYTES = 32 * 1024 * 1024;
 
 export interface SerializedCatalog {
-  bytes: Uint8Array;
+  bytes: Uint8Array<ArrayBuffer>;
   codexVersion?: string;
 }
 
@@ -19,7 +19,9 @@ export async function serializePersistedCatalog(): Promise<SerializedCatalog | n
   if (!existsSync(path)) return null;
   const catalog = parseCatalogJson(readFileSync(path, "utf8"));
   if (!catalog) throw new Error("Persisted Codex catalog is malformed");
-  const bytes = new TextEncoder().encode(JSON.stringify(catalog));
+  // TextEncoder types its output over ArrayBufferLike, which Bun's Response BodyInit
+  // refuses; the encoder always allocates a plain ArrayBuffer, so the assertion is exact.
+  const bytes = new TextEncoder().encode(JSON.stringify(catalog)) as Uint8Array<ArrayBuffer>;
   const codexVersion = loadPersistedCodexRuntime()?.selectedVersion ?? undefined;
   return { bytes, ...(codexVersion ? { codexVersion } : {}) };
 }
