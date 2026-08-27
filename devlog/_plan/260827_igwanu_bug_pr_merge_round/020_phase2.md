@@ -22,9 +22,17 @@ green.
 ## #2764 — fix(moonshot): intersect nested schema bounds
 
 Lane **L1, gated on wp2**. Head `30247541f`, draft, 0 behind, merge CLEAN, tsc OK.
-Currently red on `ci`/`gates`/`macos`/`test 3/4` — **all four from the shared
-version-line failure**, `1 fail` in the whole matrix, and that one fail is
-`release version line`. Its own suite passes.
+Currently red on `ci`/`gates`/`macos`/`test 3/4` — **all four from the two shared
+repository-wide defects, none from its own code**, split precisely:
+
+- `test 3/4` and `macos`: `1 fail` each, and that one fail is
+  `release version line`.
+- `gates`: `privacy:scan` on the release-runbook SSH literal.
+- `ci`: the fan-in over test / gates / platform-macos, so it reports no failure
+  of its own.
+
+Its own suite passes. #2766 repairs both defects, which is why one keystone clears
+all four jobs.
 
 Touches `src/adapters/openai-chat.ts`, `structure/04_transports-and-sidecars.md`,
 `tests/moonshot-tool-schema.test.ts`. `openai-chat.ts` is touched by no other
@@ -38,7 +46,9 @@ tickable. Then mark ready and merge.
 ## #2767 — fix(openai): strip unsupported forward cache options
 
 Lane **L1, gated on wp2**. Head `33586cdf7`, draft, 0 behind, merge CLEAN, tsc OK.
-Identical CI situation to #2764: `1 fail`, and it is `release version line`.
+Identical CI situation to #2764, job for job: `test 3/4` and `macos` each fail
+once on `release version line`, `gates` fails on the `privacy:scan` runbook
+literal, and `ci` is the fan-in.
 
 Touches `src/adapters/openai-responses.ts`, `src/compatibility/openai-responses.ts`,
 `structure/08_openai-provider-tiers.md`,
