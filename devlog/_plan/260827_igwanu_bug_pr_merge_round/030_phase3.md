@@ -10,7 +10,14 @@ Touches `src/cli/usage-report.ts` (+15/-2) and `tests/cli-usage-report.test.ts`
 control-character injection fix. No overlap with any in-scope PR.
 
 Cleanest merge in the round: approved, clean, green, with its own regression.
-**Merge as-is.**
+
+Test oracle verified load-bearing by mutation: tests kept, production fix reverted
+-> 12 pass / 1 fail at `tests/cli-usage-report.test.ts:78` (raw ESC survives into
+output). With the fix, 13 pass / 0 fail. No fixture involved.
+
+**Merge as-is** — this one already carries a non-author `APPROVED` decision, so
+the `MAINTAINERS.md` approval requirement is satisfied on the record rather than
+by assertion.
 
 ## #2726 — fix(xai): normalize web search on the Grok CLI proxy
 
@@ -19,7 +26,20 @@ Lane **L1**. Head `790a581cf`, ready, **MERGEABLE/CLEAN**, **APPROVED**,
 
 Touches `src/adapters/xai-web-search.ts` (+24/-...),
 `tests/responses-routed-web-search-fields.test.ts`,
-`tests/xai-web-search-compat.test.ts` (+44). No overlap. **Merge as-is.**
+`tests/xai-web-search-compat.test.ts` (+44). No overlap.
+
+Test oracle verified load-bearing by mutation: tests kept, production fix reverted
+-> 14 pass / 2 fail at `tests/responses-routed-web-search-fields.test.ts:235` and
+`tests/xai-web-search-compat.test.ts:148`. With the fix, 16 pass / 0 fail.
+
+The diff replaces an `api.x.ai`-only host check with `isXaiResponsesDestination`,
+widening normalization to the Grok CLI proxy (the OAuth lane). The PR documents a
+2026-08-27 re-probe of `cli-chat-proxy.grok.com` showing the same dialect. Treat
+that probe as the author's claim, not as verified fact — the previous round was
+burned by exactly this kind of cited-but-unverified provenance. The live smoke
+below is what actually settles it.
+
+**Merge as-is** — carries a non-author `APPROVED` decision.
 
 Note: `xai` is this operator's default provider (`defaultProvider: xai`), so this
 one is worth a live smoke after landing rather than test-only evidence.
