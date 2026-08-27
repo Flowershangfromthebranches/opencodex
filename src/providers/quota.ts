@@ -2275,28 +2275,81 @@ async function maybeFetchProviderQuota(
  * because `previous` here is bound only when `cache.key === key` and the key digest at
  * cacheKeyWithAggregationState includes quota values and updatedAt — so it is empty exactly
  * when a reset happened.
+ *
+ * Account identity is resolved SYNCHRONOUSLY, before any await. Two reasons, both observed:
+ * pool failover rewrites `activeAccountId` during request routing
+ * (promoteAnthropicActiveAccount -> setActiveAccount), so a 429 between this commit and a
+ * later async read would attribute this report to a different account and overwrite that
+ * account's baseline with these numbers. fetchAnthropicQuota already captures
+ * `probedAccountId` before awaiting for exactly this reason; the observer must not be
+ * sloppier than the cache it observes.
+ *
+ * Observations are serialized through a module-level promise chain for the same reason as
+ * the codex seam: Bun does not resolve concurrent import() calls in call order, and an
+ * out-of-order baseline swap manufactures false resets that then burn the durable
+ * idempotence key.
  */
-function notifyProviderQuotaSnapshot(reports: ReadonlyArray<ProviderQuotaReport>): void {
+let pendingProviderObservation: Promise<void> = Promise.resolve();
+
+/**
+ * Stable per-account observation key for one provider report.
+ *
+ * OAuth providers key by active account id. Key-auth providers have NO account set, so
+ * every key in `apiKeyPool` would collapse onto "default" and rotating from a spent key to
+ * a fresh one would read as a reset (measured: 97% -> 12% fired a false surprise). The
+ * cache key already discriminates these at cacheKey() via apiKeyPoolEntryId, so this
+ * mirrors that discriminator instead of inventing a second notion of identity.
+ */
+function providerObservationAccountKey(provider: string, config: OcxConfig): string {
+  const oauthAccountId = getAccountSet(provider)?.activeAccountId;
+  if (oauthAccountId !== undefined) return `${provider}\u0000${oauthAccountId}`;
+  const providerConfig = config.providers[provider];
+  const resolvedKey = typeof providerConfig?.apiKey === "string"
+    ? resolveEnvValue(providerConfig.apiKey)?.trim()
+    : undefined;
+  const keyId = resolvedKey ? apiKeyPoolEntryId(resolvedKey) : "default";
+  return `${provider}\u0000key:${keyId}`;
+}
+
+/** Test-only view of the observation account key. */
+export function providerObservationAccountKeyForTests(provider: string, config: OcxConfig): string {
+  return providerObservationAccountKey(provider, config);
+}
+
+function notifyProviderQuotaSnapshot(
+  reports: ReadonlyArray<ProviderQuotaReport>,
+  config: OcxConfig,
+): void {
   if (reports.length === 0) return;
-  void import("../quota/reset-observer")
-    .then(async observer => {
+  // Resolved here, synchronously, while the identity is still the one that produced these
+  // reports.
+  const observations = reports.map(report => ({
+    scope: report.provider,
+    accountKey: providerObservationAccountKey(report.provider, config),
+    quota: report.quota,
+  }));
+  pendingProviderObservation = pendingProviderObservation
+    .then(async () => {
+      const observer = await import("../quota/reset-observer");
       if (!observer.hasQuotaResetSink()) return;
       const { providerWindowObservations } = await import("../quota/window-mapping");
-      for (const report of reports) {
-        // Key by active account, not by provider alone: a provider report follows whichever
-        // account is active, so an account switch would otherwise inherit the previous
-        // account's history and read as a reset.
-        const accountId = getAccountSet(report.provider)?.activeAccountId ?? "default";
+      for (const observation of observations) {
         observer.observeQuotaSnapshot({
-          scope: report.provider,
-          accountKey: `${report.provider}\u0000${accountId}`,
-          windows: providerWindowObservations(report.quota),
+          scope: observation.scope,
+          accountKey: observation.accountKey,
+          windows: providerWindowObservations(observation.quota),
         });
       }
     })
     .catch(() => {
-      // Detection is best-effort: a quota refresh must never fail because of it.
+      // Detection is best-effort: a quota refresh must never fail because of it. Swallowing
+      // here also keeps the chain alive — a rejected link would poison every later one.
     });
+}
+
+/** Await the observation chain. Tests only: production never needs to join it. */
+export function flushProviderQuotaObservationsForTests(): Promise<void> {
+  return pendingProviderObservation;
 }
 
 export async function fetchProviderQuotaReports(config: OcxConfig, forceRefresh = false): Promise<ProviderQuotaResponse> {
@@ -2376,7 +2429,7 @@ export async function fetchProviderQuotaReports(config: OcxConfig, forceRefresh 
     ) {
       const reports = response.reports.filter(item => mayCommitProviderQuotaKey(item.provider, writerGeneration));
       cache = { key, ts: Date.now(), response: { ...response, reports } };
-      notifyProviderQuotaSnapshot(reports);
+      notifyProviderQuotaSnapshot(reports, config);
     }
     return response;
   })();

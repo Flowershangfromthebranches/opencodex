@@ -354,21 +354,49 @@ export function setAccountQuotaFromParsed(
  * function skipped the call when the in-map `existing` was undefined; that left the observer
  * with no baseline to compare against, so the write AFTER a rollover was silently treated as
  * the first observation and no reset ever fired.
+ *
+ * The snapshot is COPIED synchronously, before the import resolves. `next` is the live map
+ * value and the next write mutates it, so an observation that read it after awaiting could
+ * see a later snapshot than the one it was called for.
+ *
+ * Observations are SERIALIZED through a module-level promise chain, because the baseline
+ * swap must happen in call order. An earlier version awaited two imports and then swapped,
+ * and Bun does not resolve concurrent import() calls in call order: a burst of 21
+ * rising-usage writes (10% -> 90%, no reset at all) arrived reordered and fired a false
+ * "surprise" reset on every run. Worse, the false event CLAIMED the durable idempotence
+ * key, so the genuine reset on that window was then permanently suppressed.
+ *
+ * `pendingObservation` is reassigned SYNCHRONOUSLY here, so each link is queued in call
+ * order and only starts once the previous one has committed its baseline. A FIFO queue
+ * entered after the await would not have fixed it — the enqueue itself would race.
  */
+let pendingObservation: Promise<void> = Promise.resolve();
+
 function notifyCodexQuotaSnapshot(accountId: string, next: StoredAccountQuota): void {
-  void import("../quota/reset-observer")
-    .then(async observer => {
+  // Copy before the boundary: `next` is the live map value and the following write mutates
+  // it, so an observation that read it after awaiting could see a later snapshot than the
+  // one it was called for.
+  const snapshot = { ...next };
+  pendingObservation = pendingObservation
+    .then(async () => {
+      const observer = await import("../quota/reset-observer");
       if (!observer.hasQuotaResetSink()) return;
       const { codexWindowObservations } = await import("../quota/window-mapping");
       observer.observeQuotaSnapshot({
         scope: "codex",
         accountKey: accountId,
-        windows: codexWindowObservations(next),
+        windows: codexWindowObservations(snapshot),
       });
     })
     .catch(() => {
-      // Detection is best-effort: a quota write must never fail because of it.
+      // Detection is best-effort: a quota write must never fail because of it. Swallowing
+      // here also keeps the chain alive — a rejected link would poison every later one.
     });
+}
+
+/** Await the observation chain. Tests only: production never needs to join it. */
+export function flushQuotaObservationsForTests(): Promise<void> {
+  return pendingObservation;
 }
 
 export function parseUpstreamQuotaHeaders(headers: Headers): Omit<StoredAccountQuota, "updatedAt"> | null {
@@ -551,13 +579,37 @@ export function listAccountQuotas(): IterableIterator<[string, StoredAccountQuot
   return accountQuota.entries();
 }
 
+/**
+ * Tell the observer to drop the baseline for a row that was deliberately cleared.
+ *
+ * Queued on the same chain as observations so it cannot overtake an in-flight one and be
+ * immediately re-established by it. Without this, reauth of a used account left the observer
+ * holding the pre-clear percentages and the first fresh write fired a false surprise reset
+ * (measured 91% -> 0%).
+ */
+function forgetCodexQuotaBaseline(accountId?: string): void {
+  pendingObservation = pendingObservation
+    .then(async () => {
+      const observer = await import("../quota/reset-observer");
+      observer.forgetQuotaBaseline({
+        scope: "codex",
+        ...(accountId !== undefined ? { accountKey: accountId } : {}),
+      });
+    })
+    .catch(() => {
+      // Best-effort; a failure can only cost a re-baseline.
+    });
+}
+
 export function clearAccountQuota(accountId?: string): void {
   if (accountId) {
     accountQuota.delete(accountId);
     schedulePersistAccountQuotas();
+    forgetCodexQuotaBaseline(accountId);
     return;
   }
   accountQuota.clear();
+  forgetCodexQuotaBaseline();
   diskHydrated = false;
   if (persistTimer) {
     clearTimeout(persistTimer);

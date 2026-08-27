@@ -268,17 +268,53 @@ export function swapLastObservedWindows(
   hydrate();
   const key = observedKey(scope, accountTag);
   const previous = observed.get(key);
+  // Delete before set so the row moves to the END of the insertion order, making this a
+  // true LRU. Re-setting an existing key does NOT move it in a Map, so without the delete
+  // the eviction below removed the EARLIEST-INSERTED row — which on a real install is the
+  // long-lived codex account observed on every response, while 63 transient rows survived.
+  // Measured: the hottest scope was evicted and its next genuine scheduled reset was
+  // silently missed, because a re-baselined row has no previous value to diff against.
+  observed.delete(key);
   observed.set(key, windows.map(window => ({ ...window })));
   if (observed.size > MAX_OBSERVED_SCOPES) {
-    // Oldest insertion first: Map preserves insertion order, and re-setting an existing key
-    // does not move it, so a steadily observed scope keeps its original position and an
-    // abandoned one drifts to the front. Evicting only costs a re-baseline, never a
-    // duplicate notification, because the claim ledger is separate.
+    // Least-recently-observed first. Evicting only costs a re-baseline, never a duplicate
+    // notification, because the claim ledger is separate — but a re-baseline DOES cost the
+    // next reset on that row, which is why picking the genuinely abandoned row matters.
     const oldest = observed.keys().next();
     if (!oldest.done && oldest.value !== key) observed.delete(oldest.value);
   }
   schedulePersist();
   return previous;
+}
+
+/**
+ * Forget the baseline for one (scope, accountTag), or for every scope when no tag is given.
+ *
+ * Called when a quota row is deliberately cleared — reauth, sign-out, account removal. The
+ * quota row and this baseline live in different files, so clearing only the former left the
+ * observer holding the pre-clear percentages: the first fresh write after a reauth of a used
+ * account then read as a surprise reset (measured 91% -> 0%). The existing regression test
+ * missed it because it also called resetQuotaResetStoreForTests(), which real reauth does
+ * not do — the test simulated something that never happens.
+ *
+ * Deliberately does NOT touch the claim ledger. A cleared row must not re-notify a reset it
+ * already reported, and claims are what prevent that.
+ */
+export function forgetLastObservedWindows(scope: string, accountTag?: string): void {
+  hydrate();
+  if (accountTag !== undefined) {
+    if (!observed.delete(observedKey(scope, accountTag))) return;
+    schedulePersist();
+    return;
+  }
+  // No tag: the caller cleared everything for this scope. The account tag is a salted hash,
+  // so it cannot be reversed — matching on the scope prefix is the only available form.
+  const prefix = `${scope}\u0000`;
+  let removed = false;
+  for (const key of [...observed.keys()]) {
+    if (key.startsWith(prefix)) removed = observed.delete(key) || removed;
+  }
+  if (removed) schedulePersist();
 }
 
 /** Test-only: forget in-memory state so the next call re-reads OPENCODEX_HOME. */

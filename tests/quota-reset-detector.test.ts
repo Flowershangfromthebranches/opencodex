@@ -229,3 +229,98 @@ describe("quota reset detection", () => {
     expect(detect({ percent: 90, resetAt: NOW - 1_000 }, { percent: 1 })?.kind).toBe("scheduled");
   });
 });
+
+describe("a rolling window's natural creep is not a reset", () => {
+  const base = { scope: "codex", accountTag: "tag00000" } as const;
+
+  test("an hour into a 5h window, a 27-point decay fires nothing", () => {
+    // Measured false positive. A rolling window (Anthropic five_hour, Codex burst) has no
+    // rollover instant: usage ages out continuously, so its percent falls and its deadline
+    // slides forward by about the elapsed time. MIN_SURPRISE_DROP_PERCENT only screens integer
+    // rounding, so 88% -> 61% read as a surprise reset on the most common window in the system.
+    const now = Date.now();
+    expect(detectQuotaReset({
+      ...base,
+      previous: {
+        window: "5h",
+        percent: 88,
+        resetAt: now + 4 * HOUR,
+        windowSeconds: 5 * 3600,
+        observedAt: now - HOUR,
+      },
+      next: { window: "5h", percent: 61, resetAt: now + 5 * HOUR, windowSeconds: 5 * 3600 },
+      now,
+    })).toBeNull();
+  });
+
+  test("a deadline that jumps a whole window is still a surprise reset", () => {
+    // The discriminator is deadline MOVEMENT against elapsed time, not drop magnitude: decay
+    // magnitude cannot be bounded from elapsed time, since an hour of idling can retire a large
+    // burst that all landed in one minute. Two minutes elapsed, deadline forward two hours —
+    // that is a new window, not creep.
+    const now = Date.now();
+    expect(detectQuotaReset({
+      ...base,
+      previous: {
+        window: "5h",
+        percent: 95,
+        resetAt: now + 3 * HOUR,
+        windowSeconds: 5 * 3600,
+        observedAt: now - 120_000,
+      },
+      next: { window: "5h", percent: 3, resetAt: now + 5 * HOUR, windowSeconds: 5 * 3600 },
+      now,
+    })?.kind).toBe("surprise");
+  });
+
+  test("a standing-still deadline with falling usage is the clearest surprise signature", () => {
+    const now = Date.now();
+    const deadline = now + 3 * HOUR;
+    expect(detectQuotaReset({
+      ...base,
+      previous: {
+        window: "5h",
+        percent: 90,
+        resetAt: deadline,
+        windowSeconds: 5 * 3600,
+        observedAt: now - 60_000,
+      },
+      next: { window: "5h", percent: 4, resetAt: deadline, windowSeconds: 5 * 3600 },
+      now,
+    })?.kind).toBe("surprise");
+  });
+
+  test("a baseline written before observedAt existed fails OPEN", () => {
+    // Absent evidence must not suppress a real reset. Old state files have no observedAt.
+    const now = Date.now();
+    expect(detectQuotaReset({
+      ...base,
+      previous: { window: "5h", percent: 95, resetAt: now + 3 * HOUR, windowSeconds: 5 * 3600 },
+      next: { window: "5h", percent: 3, resetAt: now + 5 * HOUR, windowSeconds: 5 * 3600 },
+      now,
+    })?.kind).toBe("surprise");
+  });
+
+  test("the creep rule does not touch the scheduled branch", () => {
+    // A scheduled rollover is proven by its own expired deadline, so it needs no magnitude or
+    // movement test — and a weekly window issuing a week-long deadline must not read as creep.
+    const now = Date.now();
+    expect(detectQuotaReset({
+      ...base,
+      previous: {
+        window: "weekly",
+        percent: 90,
+        resetAt: now - 1_000,
+        windowSeconds: 7 * 24 * 3600,
+        observedAt: now - HOUR,
+      },
+      next: {
+        window: "weekly",
+        percent: 0,
+        resetAt: now + 7 * 24 * HOUR,
+        windowSeconds: 7 * 24 * 3600,
+      },
+      now,
+    })?.kind).toBe("scheduled");
+  });
+});

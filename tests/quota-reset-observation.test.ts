@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { clearAccountQuota, setAccountQuotaFromParsed } from "../src/codex/quota";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  clearAccountQuota,
+  flushQuotaObservationsForTests,
+  setAccountQuotaFromParsed,
+} from "../src/codex/quota";
 import type { QuotaResetEvent } from "../src/quota/reset-detector";
 import {
   hasQuotaResetSink,
@@ -92,9 +99,12 @@ describe("codex quota seam", () => {
     await settle();
     captured = [];
 
-    // Reauth and account purge both do this deliberately.
+    // Reauth and account purge both do this deliberately — and they clear ONLY the quota row.
+    // This test used to call resetQuotaResetStoreForTests() here too, which no production path
+    // does: it wiped the observer's separate baseline file and so simulated a state that never
+    // occurs. With that line removed the test failed (surprise, 91% -> 0%), which is what
+    // clearAccountQuota now forgetting its baseline fixes.
     clearAccountQuota(ACCOUNT);
-    resetQuotaResetStoreForTests();
     setAccountQuotaFromParsed(ACCOUNT, { weeklyPercent: 0, weeklyResetAt: Date.now() + 7 * 24 * HOUR });
     await settle();
     expect(captured).toEqual([]);
@@ -180,5 +190,57 @@ describe("idle poller", () => {
     );
     await runQuotaResetPollerTickForTests();
     expect(quotaResetPollerTickCountForTests()).toBe(0);
+  });
+});
+
+describe("observation ordering under a burst", () => {
+  test("a rising-usage burst in a COLD process fires nothing", async () => {
+    // The regression this pins: the seam awaited two import() calls before swapping the
+    // baseline, and Bun does not resolve concurrent dynamic imports in call order. A burst of
+    // monotonically RISING usage — no reset anywhere in it — arrived reordered and produced a
+    // false "surprise" event on every run. The false event also claimed the durable
+    // idempotence key, so the genuine reset on that window was then suppressed permanently.
+    //
+    // Runs in a CHILD PROCESS deliberately. An in-process version of this test passed against
+    // the unfixed seam, because earlier tests in this file leave the observer module cached and
+    // a cached import resolves in call order. Only a cold module registry reproduces it. Driven
+    // red before the fix: 3/3 child runs reported a false surprise (82->58, 26->10, 42->22);
+    // after the fix, 3/3 report none.
+    const child = new URL("./helpers/quota-reset-burst-child.ts", import.meta.url).pathname;
+    const proc = Bun.spawn(["bun", child], {
+      // A private OPENCODEX_HOME: the baseline is persisted, so a shared home would let one
+      // run seed the next and turn this into a test of leftover state.
+      env: { ...process.env, OPENCODEX_HOME: mkdtempSync(join(tmpdir(), "ocx-burst-")) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = await new Response(proc.stdout).text();
+    await proc.exited;
+
+    expect(proc.exitCode).toBe(0);
+    expect(JSON.parse(out.trim())).toEqual([]);
+  });
+
+  test("a real rollover at the end of a burst still fires exactly once", async () => {
+    // The ordering fix must not buy its silence by dropping observations. Usage climbs, then
+    // the weekly window genuinely rolls over on the final write.
+    const expired = Date.now() - 60_000;
+    for (let percent = 60; percent <= 96; percent += 4) {
+      setAccountQuotaFromParsed(ACCOUNT, { weeklyPercent: percent, weeklyResetAt: expired });
+    }
+    await flushQuotaObservationsForTests();
+    await settle();
+    captured = [];
+
+    setAccountQuotaFromParsed(ACCOUNT, {
+      weeklyPercent: 1,
+      weeklyResetAt: Date.now() + 7 * 24 * HOUR,
+    });
+    await flushQuotaObservationsForTests();
+    await settle();
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.kind).toBe("scheduled");
+    expect(captured[0]?.window).toBe("weekly");
   });
 });

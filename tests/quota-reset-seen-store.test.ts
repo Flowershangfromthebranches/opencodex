@@ -6,10 +6,12 @@ import type { QuotaResetEvent } from "../src/quota/reset-detector";
 import {
   claimCountForTests,
   claimQuotaReset,
+  forgetLastObservedWindows,
   hasSeenQuotaReset,
   listRecentQuotaResetEvents,
   recordQuotaResetEvent,
   resetQuotaResetStoreForTests,
+  swapLastObservedWindows,
 } from "../src/quota/reset-seen-store";
 
 const DAY = 24 * 60 * 60_000;
@@ -127,5 +129,70 @@ describe("quota reset claim store", () => {
     expect(recent).toHaveLength(100);
     expect(recent[0]?.key).toBe("k119");
     expect(listRecentQuotaResetEvents(5)).toHaveLength(5);
+  });
+});
+
+describe("the observed-window map evicts the least recently observed row", () => {
+  test("a continuously observed scope survives 64 newcomers", () => {
+    // The bound is 64 rows. Re-setting an existing key does NOT move it in a Map, so before
+    // the delete-then-set fix the EARLIEST-INSERTED row was evicted — which on a real install
+    // is the long-lived codex account observed on every response, while 63 transient rows
+    // survived. The cost is not a duplicate notification (claims are separate) but a MISSED
+    // one: a re-baselined row has no previous value to diff against.
+    const hot = { window: "weekly", percent: 50, resetAt: NOW + DAY } as const;
+    swapLastObservedWindows("codex", "hottag00", [hot]);
+
+    for (let index = 0; index < 64; index += 1) {
+      // Keep re-observing the hot row, exactly as a busy install would.
+      swapLastObservedWindows("codex", "hottag00", [hot]);
+      swapLastObservedWindows(`provider-${index}`, "tag00000", [hot]);
+    }
+
+    // Still present means the next transition on it can still be detected.
+    expect(swapLastObservedWindows("codex", "hottag00", [hot])).toBeDefined();
+  });
+
+  test("an abandoned row is the one that goes", () => {
+    const windows = [{ window: "weekly", percent: 10, resetAt: NOW + DAY }];
+    swapLastObservedWindows("abandoned", "tag00000", windows);
+    for (let index = 0; index < 64; index += 1) {
+      swapLastObservedWindows(`live-${index}`, "tag00000", windows);
+    }
+    // Never observed again, so it is genuinely the least recently used: it re-baselines.
+    expect(swapLastObservedWindows("abandoned", "tag00000", windows)).toBeUndefined();
+  });
+});
+
+describe("a cleared quota row forgets its baseline", () => {
+  test("forgetting one tag leaves the others intact", () => {
+    const windows = [{ window: "weekly", percent: 77, resetAt: NOW + DAY }];
+    swapLastObservedWindows("codex", "tagaaaaa", windows);
+    swapLastObservedWindows("codex", "tagbbbbb", windows);
+
+    forgetLastObservedWindows("codex", "tagaaaaa");
+
+    expect(swapLastObservedWindows("codex", "tagaaaaa", windows)).toBeUndefined();
+    expect(swapLastObservedWindows("codex", "tagbbbbb", windows)).toBeDefined();
+  });
+
+  test("forgetting a whole scope leaves other scopes intact", () => {
+    const windows = [{ window: "weekly", percent: 77, resetAt: NOW + DAY }];
+    swapLastObservedWindows("codex", "tagaaaaa", windows);
+    swapLastObservedWindows("codex", "tagbbbbb", windows);
+    swapLastObservedWindows("anthropic", "tagaaaaa", windows);
+
+    forgetLastObservedWindows("codex");
+
+    expect(swapLastObservedWindows("codex", "tagaaaaa", windows)).toBeUndefined();
+    expect(swapLastObservedWindows("codex", "tagbbbbb", windows)).toBeUndefined();
+    expect(swapLastObservedWindows("anthropic", "tagaaaaa", windows)).toBeDefined();
+  });
+
+  test("forgetting a baseline does NOT release the claim ledger", () => {
+    // A cleared row must not re-notify a reset it already reported, and claims are the only
+    // thing preventing that.
+    expect(claimQuotaReset("codex|tagaaaaa|weekly|1", NOW, NOW + DAY)).toBe(true);
+    forgetLastObservedWindows("codex", "tagaaaaa");
+    expect(claimQuotaReset("codex|tagaaaaa|weekly|1", NOW, NOW + DAY)).toBe(false);
   });
 });

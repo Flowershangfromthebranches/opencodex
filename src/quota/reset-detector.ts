@@ -18,6 +18,23 @@ export type QuotaWindowObservation = {
   readonly percent?: number;
   /** Epoch ms. Absent when upstream declares no clock, or declared a sentinel. */
   readonly resetAt?: number;
+  /**
+   * Window length in seconds, when upstream states it.
+   *
+   * Used only to bound natural decay in a rolling window (see the surprise branch). Absent
+   * for providers that never declare a length; the label table then supplies a conservative
+   * default.
+   */
+  readonly windowSeconds?: number;
+  /**
+   * When this observation was taken, stamped by the observer as it stores the baseline.
+   *
+   * Needed because a rolling window's percent decays with WALL TIME, so distinguishing decay
+   * from a reset requires knowing how much time separates the two observations. Absent in
+   * baselines written before this field existed, and the decay bound is then skipped rather
+   * than guessed.
+   */
+  readonly observedAt?: number;
 };
 
 export type QuotaResetKind = "scheduled" | "surprise";
@@ -201,6 +218,12 @@ export function detectQuotaReset(input: {
     previousResetAt !== undefined
     && percentBefore !== undefined
     && percentBefore - percentAfter >= MIN_SURPRISE_DROP_PERCENT
+    && !isRollingWindowCreep({
+      previousResetAt,
+      resetAt,
+      previousObservedAt: previous.observedAt,
+      now,
+    })
   ) {
     return build("surprise");
   }
@@ -211,6 +234,51 @@ export function detectQuotaReset(input: {
   // it would make the channel noise; the honest answer is that those providers expose no
   // window semantics to detect.
   return null;
+}
+
+/**
+ * True when the deadline merely CREPT forward with the clock, which is what a rolling window
+ * does while nothing resets.
+ *
+ * A rolling window (Anthropic five_hour, Codex burst) has no rollover instant: usage ages out
+ * continuously, so its percent falls on its own and its deadline slides forward by roughly the
+ * elapsed time on every poll. MIN_SURPRISE_DROP_PERCENT only screens integer rounding, so a
+ * healthy rolling window fired false "surprise" events — measured: 88% -> 61% one hour into a
+ * 5h window, a 27-point drop with no reset involved.
+ *
+ * The discriminator is deadline MOVEMENT against elapsed time, not drop magnitude. Decay
+ * magnitude cannot be bounded from elapsed time alone, because the percent that ages out
+ * depends on WHEN the usage happened: an hour of idling can retire a large burst that all
+ * landed in one minute. Deadline movement behaves differently — while a window is merely
+ * rolling, its deadline advances by about the elapsed time, whereas a genuine out-of-band
+ * reset issues a deadline a FULL window into the future, jumping far beyond the elapsed gap.
+ *
+ * Fails OPEN (returns false, letting the event through) whenever the evidence is missing: no
+ * baseline timestamp, no deadline on either side, or a deadline that moved backwards. A
+ * missed reset is an inconvenience; a suppressed one on an unproven guess is a defect.
+ */
+function isRollingWindowCreep(input: {
+  readonly previousResetAt: number | undefined;
+  readonly resetAt: number | undefined;
+  readonly previousObservedAt: number | undefined;
+  readonly now: number;
+}): boolean {
+  const observedAt = finiteResetAt(input.previousObservedAt);
+  const previousResetAt = input.previousResetAt;
+  const resetAt = input.resetAt;
+  if (observedAt === undefined || previousResetAt === undefined || resetAt === undefined) {
+    return false;
+  }
+  const elapsedMs = input.now - observedAt;
+  if (elapsedMs <= 0) return false;
+  const deadlineShiftMs = resetAt - previousResetAt;
+  // A deadline that stood still or moved backwards is not creep. Standing still while usage
+  // fell is the clearest possible surprise-reset signature, so it must reach the operator.
+  if (deadlineShiftMs <= 0) return false;
+  // Creep tracks the clock. The 2x tolerance absorbs polling jitter and upstream rounding to
+  // whole minutes without approaching a real reset, which shifts the deadline by a whole
+  // window — hours, against a gap that is minutes on the observation paths that exist here.
+  return deadlineShiftMs <= elapsedMs * 2;
 }
 
 /** Pair two window lists by identity and yield every detected reset. */
