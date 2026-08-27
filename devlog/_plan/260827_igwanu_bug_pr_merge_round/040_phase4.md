@@ -70,8 +70,8 @@ pull requests).
 
 ## TESTS
 
-- #2745: `tests/generic-oauth-failover.test.ts` — replace source-text assertions
-  with an executable failover regression; add the negative A/B legacy-origin case.
+- #2745: `tests/generic-oauth-failover.test.ts` — the required test work is
+  recorded with the rest of the pre-disclosure triage in scratch, not here.
 - #2729: `tests/claude-outbound.test.ts` — add the status-less
   `upstream_server_error` case asserting a transient 5xx tail.
 
