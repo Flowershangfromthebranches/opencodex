@@ -2854,6 +2854,17 @@ async function handleResponsesInner(
     // got it right by hand. A fourth site would have to remember too. Here it cannot forget.
     if (isOAuth401ReplayProvider) sentOAuthSnapshot = snapshot;
     replayOAuthCredentialSnapshot = { accountId: snapshot.accountId, generation: snapshot.generation };
+    // A Cursor conversation and identity scope are credential-scoped in the same way. runTurn
+    // cleared them by hand and the other two sites did not, so the same rotation that swapped the
+    // bearer could carry the previous account's conversation forward - and for image turns
+    // src/images/loop.ts copies that id back onto the outer request, which is how it outlives the
+    // rotation. Clearing here means a rotated adapter always derives its own.
+    parsed._cursorIdentityScope = undefined;
+    parsed._cursorConversationId = undefined;
+    if (parsed._providerContinuation?.cursor) {
+      const { cursor: _discardedCursor, ...otherProviderState } = parsed._providerContinuation;
+      parsed._providerContinuation = otherProviderState;
+    }
     return true;
   };
   const anthropicSessionKey = route.providerName === "anthropic" && route.provider.authMode === "oauth"
@@ -4647,15 +4658,6 @@ async function handleResponsesInner(
         genericFailoverAccountId = nextAccountId;
         genericFailovers += 1;
         if (!applyFailoverSnapshot(snapshot)) return false;
-        // A Cursor conversation/checkpoint is credential-scoped. The failed attempt emitted no
-        // client-visible bytes, so replay is safe, but carrying its account identity into the next
-        // account would not be. Let the rotated adapter derive a fresh identity and conversation.
-        parsed._cursorIdentityScope = undefined;
-        parsed._cursorConversationId = undefined;
-        if (parsed._providerContinuation?.cursor) {
-          const { cursor: _discardedCursor, ...otherProviderState } = parsed._providerContinuation;
-          parsed._providerContinuation = otherProviderState;
-        }
         const rotatedProvider = resolveWireProtocolOverride(
           route.providerName,
           route.modelId,
