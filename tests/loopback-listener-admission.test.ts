@@ -191,7 +191,22 @@ describe("hub management ingress configuration", () => {
 
   test("enabled ingress requires the hub role", () => {
     for (const runtimeRole of [undefined, "standalone", "client"] as const) {
-      const result = validateConfigCandidate(candidate({ runtimeRole }));
+      const result = validateConfigCandidate(candidate({
+        runtimeRole,
+        ...(runtimeRole === "client" ? {
+          client: {
+            serverUrl: "https://hub.example.test",
+            managementUrl: "https://hub.example.test",
+            managementTransport: "direct",
+            selectedClients: ["codex"],
+            tokenEnv: "OPENCODEX_API_AUTH_TOKEN",
+            apiKeyId: "client-key-1",
+            tokenFingerprint: "a".repeat(64),
+            protocolVersion: 1,
+            connectedAt: "2026-08-28T00:00:00.000Z",
+          },
+        } : {}),
+      }));
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain("requires runtimeRole hub");
     }
