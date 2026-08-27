@@ -406,7 +406,13 @@ export async function downloadClientCatalog(
       throw new HubClientError("catalog_304_without_lkg", "Hub returned 304 without a validated local catalog", 304);
     }
   }
-  if (response.status === 304) return { kind: "not-modified" };
+  if (response.status === 304) {
+    const responseEtag = response.headers.get("etag")?.trim();
+    if (responseEtag && responseEtag !== options.etag) {
+      throw new HubClientError("catalog_etag_mismatch", "Hub returned a mismatched catalog validator", 304);
+    }
+    return { kind: "not-modified" };
+  }
   if (!response.ok) {
     const code = response.status === 401 ? "catalog_unauthorized" : `catalog_http_${response.status}`;
     throw new HubClientError(code, `Hub catalog request failed (${response.status})`, response.status);

@@ -83,5 +83,9 @@ describe("remote catalog adversarial consumer", () => {
     await expect(downloadClientCatalog("https://hub.example.test", "ocx_data_test", {
       fetchImpl: async () => new Response('{"models":[]}', { headers: { "Content-Type": "text/html" } }),
     })).rejects.toMatchObject({ code: "catalog_content_type_invalid" });
+    await expect(downloadClientCatalog("https://hub.example.test", "ocx_data_test", {
+      etag: '"expected"',
+      fetchImpl: async () => new Response(null, { status: 304, headers: { ETag: '"other"' } }),
+    })).rejects.toMatchObject({ code: "catalog_etag_mismatch" });
   });
 });
