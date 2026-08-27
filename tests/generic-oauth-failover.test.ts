@@ -275,6 +275,16 @@ describe("sidecar on429 wiring", () => {
     expect(body).toContain("sentOAuthSnapshot = snapshot");
     expect(body).toContain("accountId: snapshot.accountId");
     expect(body).toContain("generation: snapshot.generation");
+
+    // A Cursor conversation and identity scope are credential-scoped the same way, and were also
+    // cleared at only one of the three sites. For image turns src/images/loop.ts copies the
+    // conversation id back onto the outer request, which is how it survives a rotation.
+    expect(body).toContain("parsed._cursorIdentityScope = undefined");
+    expect(body).toContain("parsed._cursorConversationId = undefined");
+
+    // And the clear must exist ONLY in the helper: a per-site copy is how these drifted apart.
+    const scopeClears = coreSource.match(/parsed\._cursorIdentityScope = undefined/g) ?? [];
+    expect(scopeClears.length).toBe(1);
   });
 
   test("every generic-OAuth rotation site re-scopes reasoning replay to the rotated account", () => {
