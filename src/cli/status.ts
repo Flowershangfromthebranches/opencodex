@@ -13,6 +13,7 @@ import { displayCodexRuntimePath, effortClampAppliesToRuntime, loadLastEffortCla
 import { redactSecretString, redactUserPath } from "../lib/redact";
 import { collectOrcaCodexHomeDiagnostic, type OrcaCodexHomeDiagnostic } from "../codex/home";
 import { grokFenceEndpointDrift, readGrokStatus } from "../grok/status";
+import { collectClientConnectionStatus } from "./connect";
 
 type HealthCheck = {
   ok: boolean;
@@ -53,6 +54,18 @@ export type CliStatusJson = {
   config: {
     source: "default" | "file" | "fallback";
     error: string | null;
+  };
+  connection: {
+    state: "disconnected" | "connected" | "invalid" | "mismatched";
+    reason?: string;
+    serverUrl?: string;
+    managementUrl?: string;
+    protocolVersion?: number;
+    apiKeyId?: string;
+    selectedClients?: string[];
+    catalog?: "present" | "missing" | "unsafe";
+    catalogAgeSeconds?: number;
+    credentialFile: "owned" | "missing" | "changed" | "unsafe";
   };
   service: { summary: string };
   codexShim: { summary: string };
@@ -171,6 +184,7 @@ async function checkProxyHealth(target: ListenTarget): Promise<HealthCheck> {
 export async function collectStatus(): Promise<CliStatusView> {
   const configDiagnostics = readConfigDiagnostics();
   const config = configDiagnostics.config;
+  const clientConnection = collectClientConnectionStatus();
   // Prefer identity-verified liveness (runtime-port + /healthz) over ocx.pid alone (#618).
   // Pass the already-resolved diagnostics config so findLiveProxy does not re-load and
   // warn on malformed config.json (status --json must stay stderr-clean).
@@ -341,6 +355,18 @@ export async function collectStatus(): Promise<CliStatusView> {
       config: {
         source: configDiagnostics.source,
         error: configDiagnostics.error,
+      },
+      connection: {
+        state: clientConnection.state,
+        ...(clientConnection.reason ? { reason: clientConnection.reason } : {}),
+        ...(clientConnection.serverUrl ? { serverUrl: clientConnection.serverUrl } : {}),
+        ...(clientConnection.managementUrl ? { managementUrl: clientConnection.managementUrl } : {}),
+        ...(clientConnection.protocolVersion ? { protocolVersion: clientConnection.protocolVersion } : {}),
+        ...(clientConnection.apiKeyId ? { apiKeyId: clientConnection.apiKeyId } : {}),
+        ...(clientConnection.selectedClients ? { selectedClients: [...clientConnection.selectedClients] } : {}),
+        catalog: clientConnection.catalog,
+        ...(clientConnection.catalogAgeSeconds !== undefined ? { catalogAgeSeconds: clientConnection.catalogAgeSeconds } : {}),
+        credentialFile: clientConnection.token,
       },
       service: { summary: serviceSummary },
       codexShim: { summary: codexShimSummary },
