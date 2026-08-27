@@ -136,6 +136,7 @@ export interface UsageSummary {
 export interface UsageFilterEcho {
   provider: string | null;
   model: string | null;
+  apiKeyId: string | null;
   matched: boolean;
   /**
    * True when a retained row came from a combo attribution. Cost partitions
@@ -846,6 +847,11 @@ function normalizeFilterValue(input: string | null | undefined): string | null {
   return trimmed === "" ? null : trimmed.toLowerCase();
 }
 
+function normalizeExactFilterValue(input: string | null | undefined): string | null {
+  const trimmed = typeof input === "string" ? input.trim() : "";
+  return trimmed === "" ? null : trimmed;
+}
+
 /**
  * Narrow an already-summarised window to one provider and/or model.
  *
@@ -869,12 +875,13 @@ function normalizeFilterValue(input: string | null | undefined): string | null {
  */
 export function projectUsageSummary<T extends UsageSummary>(
   summary: T,
-  filter: { provider?: string | null; model?: string | null },
+  filter: { provider?: string | null; model?: string | null; apiKeyId?: string | null },
   entries?: PersistedUsageEntry[],
 ): T & { filter?: UsageFilterEcho } {
   const provider = normalizeFilterValue(filter.provider);
   const model = normalizeFilterValue(filter.model);
-  if (provider === null && model === null) return summary;
+  const apiKeyId = normalizeExactFilterValue(filter.apiKeyId);
+  if (provider === null && model === null && apiKeyId === null) return summary;
 
   // Re-summarise from the entries the summary was built from, rather than
   // projecting over its rows.
@@ -904,7 +911,9 @@ export function projectUsageSummary<T extends UsageSummary>(
   // combo filtered to its cheap model reported the expensive model's spend
   // too. Rewriting the entry down to its matching attempts is what makes the
   // filtered numbers mean what the flag says.
-  const source = entries ?? [];
+  const source = apiKeyId === null
+    ? entries ?? []
+    : (entries ?? []).filter(entry => entry.apiKeyId === apiKeyId);
   let comboOverlap = false;
   const filtered: PersistedUsageEntry[] = [];
   for (const entry of source) {
@@ -940,7 +949,7 @@ export function projectUsageSummary<T extends UsageSummary>(
     // Account rows are not provider-partitioned in a way this projection could
     // honestly re-derive, and unfiltered account totals sitting beside filtered
     // model totals would invite exactly the wrong reading.
-    accounts: [],
-    filter: { provider, model, matched, comboOverlap },
+    accounts: provider === null && model === null ? projected.accounts : [],
+    filter: { provider, model, apiKeyId, matched, comboOverlap },
   };
 }
