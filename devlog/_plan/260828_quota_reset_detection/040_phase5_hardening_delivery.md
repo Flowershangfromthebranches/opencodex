@@ -20,11 +20,27 @@ either fixed or proven pre-existing by re-running it on the merge-base — a rem
 
 ## Boundary audit
 
-`tests/core-lab-boundary.test.ts` guards three entrypoints against `src/lab/` only. Our
-subsystem must not become the second passenger it was written about, so verify by hand that
-`rg -n "quota/reset-" src/router.ts src/server/lifecycle.ts src/server/responses/core.ts`
-returns nothing, and that the only edges into `src/quota/` from `src/codex/quota.ts` and
-`src/providers/quota.ts` are the lazy `import()` calls from wp3. A static import there would
+`tests/core-lab-boundary.test.ts` hardcodes `src/lab/` (`:63`,
+`next.includes("/src/lab/")`) across four protected entrypoints — `src/router.ts`,
+`src/server/lifecycle.ts`, `src/server/responses/core.ts`, `src/server/management-api.ts`.
+It says nothing about `src/quota/`.
+
+So a hand-run `rg` would be the only thing behind our boundary claim, which is the
+situation AGENTS.md calls out: "this paragraph was the only thing holding the guarantee."
+wp5 therefore ADDS a real guard, `tests/quota-reset-core-boundary.test.ts`, reusing the same
+walker shape:
+
+- no static/side-effect/re-export edge from any of the four protected entrypoints reaches
+  `src/quota/reset-`
+- `src/codex/quota.ts` and `src/providers/quota.ts` name the observer ONLY through
+  `import(` — a static import in either is a failure, since both are reachable from
+  `src/server/responses/core.ts`
+- driven red once before landing, by temporarily adding a static import, so it is not
+  vacuous
+
+The walker does not propagate through `import()` by design
+(`tests/core-lab-boundary.test.ts:76`: "a deferred edge, not a load-time one"), which is why
+the wp3 lazy imports are the sanctioned remedy and not an evasion. A static import would
 load the sink registry into every install — the exact failure AGENTS.md documents for Lab,
 where a six-hop chain pulled ~69 modules onto the core path and no single file looked wrong.
 
@@ -58,6 +74,7 @@ Every conditional path this unit adds needs a fired-path artifact, recorded in
 | sink failure isolation | throwing webhook | `ok: false` + command sink still ran |
 | blocked destination | private URL, flag off | `"blocked-destination"` |
 | poller idempotence | double start | one timer |
+| boundary guard | temporary static import | the new guard fails, then passes once reverted |
 
 A green suite with no test driving a trigger does not satisfy any row.
 

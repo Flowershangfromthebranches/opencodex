@@ -37,9 +37,11 @@ wp4, which reads config and is cheap); otherwise pair windows by identity, call
 `try/catch` at the top level, matching the fail-safe posture of
 `src/server/memory-watchdog.ts:127`.
 
-Order matters: mark-seen happens BEFORE dispatch. A sink that fails must not cause a
-re-notification storm on the next poll; delivery failure is recorded on the event
-(wp4) rather than retried by re-detecting.
+Order matters: the key is CLAIMED before dispatch, via the single synchronous
+`claimQuotaReset` from wp2. A sink that fails must not cause a re-notification storm on the
+next poll; delivery failure is recorded on the event (wp4) rather than retried by
+re-detecting. Claiming atomically also closes the concurrency window where a poller tick and
+a live pooled response observe the same transition in the same second.
 
 ## MODIFY `src/codex/quota.ts`
 

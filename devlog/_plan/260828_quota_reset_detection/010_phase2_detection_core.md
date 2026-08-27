@@ -85,9 +85,17 @@ base36, truncated to 8 chars. Not a secret and not reversible to an email.
 ## NEW `src/quota/reset-seen-store.ts`
 
 ```ts
-/** Bounded, persisted record of already-notified reset keys. */
+/**
+ * Atomically claim a reset key. Returns true for the FIRST caller only.
+ *
+ * One synchronous check-and-set, not a separate has/mark pair: a poller tick and a live
+ * pooled response can observe the same transition concurrently, and two callers that both
+ * read "unseen" would both notify. Synchronous because Bun runs one JS turn at a time, so
+ * a function with no await inside is indivisible with respect to other observers.
+ */
+export function claimQuotaReset(key: string, at: number): boolean;
+/** Read-only probe for tests and the operator surface. Never used to gate a notification. */
 export function hasSeenQuotaReset(key: string): boolean;
-export function markQuotaResetSeen(key: string, at: number): void;
 /** Ring of recent events for the operator surface (wp4). Newest last. */
 export function recordQuotaResetEvent(event: QuotaResetEvent): void;
 export function listRecentQuotaResetEvents(limit?: number): QuotaResetEvent[];
@@ -102,8 +110,15 @@ file. Hydration is lazy-once, mirroring `src/codex/quota.ts:473`, and a corrupt 
 version-mismatched file is discarded rather than throwing — a broken cache must never break
 quota refresh.
 
-Bounds: 512 seen keys and 100 ring events, both FIFO. Seen keys are pruned by age (30 days)
-before count, so a long-lived install cannot evict a live weekly key.
+Bounds: 512 seen keys and 100 ring events, both FIFO. Pruning is age-based (90 days) and
+skips any key whose `resetAt` is still in the future. A monthly window's key can
+legitimately be older than a month while remaining current, so pruning on age alone would
+drop a live key and let the same reset notify twice — which is the one thing this store
+exists to prevent. The stored value is therefore `{ at, resetAt }`, not a bare timestamp.
+
+When the 512-key bound is hit, eviction takes the oldest key whose `resetAt` has passed;
+if every key is live the store refuses to grow and logs nothing. Silently evicting a live
+key to honour a bound would trade a memory limit for a correctness bug.
 
 ## NEW `tests/quota-reset-detector.test.ts`
 
@@ -122,12 +137,14 @@ Drives the detector directly with fixture snapshots and a fixed `now`:
 
 ## NEW `tests/quota-reset-seen-store.test.ts`
 
-- `markQuotaResetSeen` then `hasSeenQuotaReset` is true; an unknown key is false
+- `claimQuotaReset` returns true once and false on every repeat for the same key
+- two claims interleaved without an await between them yield exactly one true
 - a fresh hydration (store reset + reload from the same `OPENCODEX_HOME`) still reports
   the key seen — the restart proof for criterion c-4
 - a corrupt file hydrates to empty without throwing
 - ring keeps the newest 100 and drops the oldest
-- seen keys older than 30 days are pruned
+- a key older than 90 days whose `resetAt` has passed is pruned
+- a key older than 90 days whose `resetAt` is still in the future is KEPT
 
 ## Accept criteria
 

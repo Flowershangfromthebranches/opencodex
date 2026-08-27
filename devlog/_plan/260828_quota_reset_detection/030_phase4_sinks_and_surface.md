@@ -143,7 +143,14 @@ Closed-union labels and numbers only. No email, no account id, no token, no path
 
 `GET /api/quota-resets` in a new `src/server/management/quota-reset-routes.ts`, prefix-guarded
 like `request-history-routes.ts:47`, chained into `src/server/management-api.ts:220` with a
-lazy import mirroring `handleLabRoutesOnDemand` (`:121`) so a default install never loads it.
+lazy import mirroring `handleLabRoutesOnDemand` (`:121`).
+
+The lazy import is mandatory, not stylistic. `src/server/management-api.ts` is the FOURTH
+entry in the protected set at `tests/core-lab-boundary.test.ts:25`, added precisely because
+eagerly importing handlers there put ~70 modules on every dashboard request. A static import
+would make this subsystem the next instance of that bug, and the boundary walker
+deliberately does not follow `import()` edges (`tests/core-lab-boundary.test.ts:76`), so
+lazy loading is the sanctioned remedy rather than a way around the guard.
 Returns `{ enabled, events: QuotaResetEvent[] }` via `jsonResponse`. Auth is inherited from
 `requireManagementAuth` at `src/server/index.ts:1016` — a GET route adds no auth code of
 its own, and this one spends no user identity.
