@@ -64,6 +64,8 @@ export type {
   OcxConfigRebaseProvenance,
   OcxHubConfig,
   OcxRemoteGuiConfig,
+  OcxConnectedClientId,
+  OcxClientConnectionConfig,
   OcxConfig,
   OcxAccountPoolRotationStrategy,
   OcxComboStrategy,
