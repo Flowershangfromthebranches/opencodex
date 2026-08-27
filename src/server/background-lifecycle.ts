@@ -63,6 +63,15 @@ function startProcessLoops(applyPolicy: PolicyApply): ProcessLoops {
     // Opt-in: the tick itself is a no-op unless config.quotaResetNotify is enabled with a
     // sink, and the interval is unref'd, so a default install pays one dormant timer.
     startQuotaResetPoller();
+    // Install the delivery sink now rather than waiting out the first poll interval, which is 15
+    // minutes by default. Without this, an enabled install would observe nothing for its first
+    // quarter hour — including the live request path, which is gated on the sink existing.
+    // Fire-and-forget: startup must not await an optional subsystem.
+    void import("../quota/reset-activation")
+      .then(activation => activation.syncQuotaResetActivation())
+      .catch(() => {
+        // The next poll tick retries.
+      });
     return { memoryWatchdog, stateStoreSweeper };
   } catch (error) {
     memoryWatchdog?.stop();

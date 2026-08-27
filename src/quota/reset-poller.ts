@@ -30,6 +30,12 @@ async function tick(): Promise<void> {
     const { isQuotaResetNotificationEnabled, resolveQuotaResetPollMs } = await import(
       "./reset-notify-config"
     );
+    // Re-sync the sink on every tick, before the enable check bails out. This is what makes
+    // enabling or disabling notifications take effect without a restart: an install that starts
+    // with the section absent has no sink, and the seams therefore skip all work, so something
+    // has to notice the operator turned it on. Cheap — the resolver is mtime-cached.
+    const { syncQuotaResetActivation } = await import("./reset-activation");
+    await syncQuotaResetActivation();
     if (!isQuotaResetNotificationEnabled()) return;
     if (resolveQuotaResetPollMs() === 0) return;
     tickCount += 1;

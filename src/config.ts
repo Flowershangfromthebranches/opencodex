@@ -847,6 +847,27 @@ const agentTaskRecoverySchema = z.object({
   cacheEntries: z.number().int().min(1).max(512).optional(),
 }).strict();
 
+/**
+ * Quota-reset notification section.
+ *
+ * `.strict()` like its neighbour: a typo in an optional feature section should surface as a
+ * rejected write rather than a silently ignored key that leaves the operator believing they
+ * enabled something.
+ *
+ * `pollSeconds` admits 0 (passive-only, no timer) and the resolver clamps anything between 1
+ * and the 60-second floor. Bounds live in the resolver rather than here so a hand-edited value
+ * degrades to a sane one instead of discarding the whole section.
+ */
+const quotaResetNotifySchema = z.object({
+  enabled: z.boolean().optional(),
+  kinds: z.array(z.enum(["scheduled", "surprise"])).optional(),
+  pollSeconds: z.number().int().min(0).optional(),
+  webhookUrl: z.string().url().optional(),
+  allowPrivateNetwork: z.boolean().optional(),
+  timeoutMs: z.number().int().positive().optional(),
+  command: z.array(z.string()).optional(),
+}).strict();
+
 const configSchema = z.object({
   port: z.number().int().min(0).max(65535).default(10100),
   managementUsageMaxReadBytes: z.number().int().positive().default(64 * 1024 * 1024),
@@ -896,6 +917,8 @@ const configSchema = z.object({
   multiAgentGuidanceEnabled: z.boolean().optional(),
   // Invalid optional recovery config must not discard unrelated provider/account state.
   agentTaskRecovery: agentTaskRecoverySchema.optional().catch(undefined),
+  // Same rationale: a bad notify section must not cost the operator their providers.
+  quotaResetNotify: quotaResetNotifySchema.optional().catch(undefined),
   // These selections pre-date schema validation and used to pass through as
   // unknown fields. Invalid hand edits must disable only the optional
   // delegation/native-default feature, not reject the whole config and hide
@@ -1677,6 +1700,27 @@ function warnDegradedAgentTaskRecovery(rawParsed: unknown): void {
   if (warning) console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
 }
 
+function malformedQuotaResetNotifyWarning(rawParsed: unknown): string | null {
+  const raw = rawConfigRecord(rawParsed);
+  if (!raw || !Object.hasOwn(raw, "quotaResetNotify")) return null;
+  const result = quotaResetNotifySchema.safeParse(raw.quotaResetNotify);
+  if (result.success) return null;
+  const field = result.error.issues[0]?.path.join(".");
+  return `quotaResetNotify${field ? `.${field}` : ""} ignored: invalid quota-reset notification configuration`;
+}
+
+/**
+ * Warn once per load that the section was dropped.
+ *
+ * This matters more than a usual degradation notice: the failure is SILENT in the direction
+ * that hurts. A dropped section means notifications are off, so the operator sees nothing —
+ * which is exactly what they would see if the feature were working and no reset had happened.
+ */
+function warnDegradedQuotaResetNotify(rawParsed: unknown): void {
+  const warning = malformedQuotaResetNotifyWarning(rawParsed);
+  if (warning) console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
+}
+
 type NativeSubagentPersistedField = "injectionModel" | "injectionEffort" | "syncCodexSubagentDefaults";
 
 function rawConfigRecord(rawParsed: unknown): Record<string, unknown> | null {
@@ -1830,6 +1874,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedCodexAccountPicker(parsed);
       warnDegradedUpstreamHostCircuitThreshold(parsed);
       warnDegradedAgentTaskRecovery(parsed);
+      warnDegradedQuotaResetNotify(parsed);
       return withRefreshedCostOverlays(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed));
     }
     // Schema validation failed — merge defaults into the raw object instead of
@@ -1854,6 +1899,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedCodexAccountPicker(parsed);
       warnDegradedUpstreamHostCircuitThreshold(parsed);
       warnDegradedAgentTaskRecovery(parsed);
+      warnDegradedQuotaResetNotify(parsed);
       return withRefreshedCostOverlays(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed));
     }
     // Still failing, but if every complaint is about one or more named entries
@@ -1874,6 +1920,7 @@ export function loadConfig(): OcxConfig {
         warnDegradedCodexAccountPicker(parsed);
         warnDegradedUpstreamHostCircuitThreshold(parsed);
         warnDegradedAgentTaskRecovery(parsed);
+        warnDegradedQuotaResetNotify(parsed);
         return withRefreshedCostOverlays(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed));
       }
     }
@@ -1974,6 +2021,8 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): Conf
   if (hostCircuitWarning) warnings.push(hostCircuitWarning);
   const recoveryWarning = malformedAgentTaskRecoveryWarning(rawParsed);
   if (recoveryWarning) warnings.push(recoveryWarning);
+  const notifyWarning = malformedQuotaResetNotifyWarning(rawParsed);
+  if (notifyWarning) warnings.push(notifyWarning);
   if (syncDisabledReason) {
     warnings.push(`syncCodexSubagentDefaults ignored: ${syncDisabledReason}`);
   }
@@ -2063,6 +2112,16 @@ function agentTaskRecoveryError(value: unknown): string | null {
   const issue = result.error.issues[0];
   const field = issue?.path.join(".");
   return `schema_invalid: agentTaskRecovery${field ? `.${field}` : ""}: ${issue?.message ?? "invalid configuration"}`;
+}
+
+function quotaResetNotifyError(value: unknown): string | null {
+  const raw = rawConfigRecord(value);
+  if (!raw || !Object.hasOwn(raw, "quotaResetNotify") || raw.quotaResetNotify === undefined) return null;
+  const result = quotaResetNotifySchema.safeParse(raw.quotaResetNotify);
+  if (result.success) return null;
+  const issue = result.error.issues[0];
+  const field = issue?.path.join(".");
+  return `schema_invalid: quotaResetNotify${field ? `.${field}` : ""}: ${issue?.message ?? "invalid configuration"}`;
 }
 
 /**
@@ -2177,6 +2236,7 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
     ?? appOwnedMemoryBudgetError(value)
     ?? upstreamHostCircuitThresholdError(value)
     ?? agentTaskRecoveryError(value)
+    ?? quotaResetNotifyError(value)
     ?? googleAntigravityStaticCatalogVersionError(value)
     ?? codexAccountPrioritiesError(value)
     ?? codexAccountPickerEnabledError(value)
