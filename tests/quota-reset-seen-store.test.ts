@@ -1,19 +1,26 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir } from "../src/config";
 import type { QuotaResetEvent } from "../src/quota/reset-detector";
 import {
+  claimCountForTests,
   claimQuotaReset,
-  flushQuotaResetStoreForTests,
   hasSeenQuotaReset,
   listRecentQuotaResetEvents,
   recordQuotaResetEvent,
   resetQuotaResetStoreForTests,
 } from "../src/quota/reset-seen-store";
 
-const NOW = 1_772_000_000_000;
 const DAY = 24 * 60 * 60_000;
+/**
+ * Real wall clock, not a fixed constant.
+ *
+ * prune() reads Date.now() for age comparisons on purpose (a backdated claim must not change
+ * unrelated keys' retention), so a hardcoded epoch would look decades stale and be pruned the
+ * moment it was written.
+ */
+const NOW = Date.now();
 
 function event(key: string): QuotaResetEvent {
   return {
@@ -44,13 +51,52 @@ describe("quota reset claim store", () => {
     expect(results.filter(Boolean)).toHaveLength(1);
   });
 
-  test("a claim survives a process restart", () => {
+  test("a claim is on disk the moment it is made, with no flush", () => {
+    // No test-only flush: the claim path writes synchronously, because an unref'd 250 ms
+    // debounce loses the claim when the process exits right after detecting — the exact case a
+    // restart guarantee has to cover.
     expect(claimQuotaReset("persisted", NOW, NOW + DAY)).toBe(true);
-    flushQuotaResetStoreForTests();
-    // Forget in-memory state; the next call must re-read the same OPENCODEX_HOME.
+    const raw = readFileSync(join(getConfigDir(), "quota-reset-state.json"), "utf8");
+    expect(JSON.parse(raw).claims.persisted).toBeDefined();
+
     resetQuotaResetStoreForTests();
     expect(hasSeenQuotaReset("persisted")).toBe(true);
     expect(claimQuotaReset("persisted", NOW + 60_000)).toBe(false);
+  });
+
+  test("a claim survives a real second process", async () => {
+    const script = join(getConfigDir(), "claim-probe.ts");
+    const storeUrl = new URL("../src/quota/reset-seen-store.ts", import.meta.url).pathname;
+    writeFileSync(script, [
+      `const store = await import(${JSON.stringify(storeUrl)});`,
+      `console.log(String(store.claimQuotaReset("cross-process", Date.now(), Date.now() + 86400000)));`,
+    ].join("\n"));
+
+    const run = async (): Promise<string> => {
+      const proc = Bun.spawn(["bun", script], {
+        env: { ...process.env, OPENCODEX_HOME: getConfigDir() },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const out = await new Response(proc.stdout).text();
+      await proc.exited;
+      return out.trim();
+    };
+
+    expect(await run()).toBe("true");
+    // A second OS process must see the first one's claim. A debounced write failed this
+    // silently: the timer is unref'd, so the first process exited before persisting.
+    expect(await run()).toBe("false");
+  });
+
+  test("the hard ceiling bounds the map even when every claim is live", () => {
+    const future = NOW + 365 * DAY;
+    for (let index = 0; index < 2_000; index += 1) {
+      claimQuotaReset(`live-${index}`, NOW, future + index);
+    }
+    // 512 is the soft budget, honoured by evicting settled claims. With none settled, the hard
+    // ceiling at 1024 is what stops unbounded growth of the map and the JSON beside it.
+    expect(claimCountForTests()).toBeLessThanOrEqual(1_024);
   });
 
   test("a corrupt state file hydrates to empty without throwing", () => {

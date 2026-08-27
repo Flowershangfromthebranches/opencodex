@@ -11,8 +11,13 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { atomicWriteFile, getConfigDir } from "../config";
-import type { QuotaResetEvent } from "./reset-detector";
+// Imported from the definition sites, NOT the ../config barrel. The barrel pulls 154 modules
+// (~430 KB) including combos, account-store, pool-rotation and cursor discovery; these two
+// cost 8. This store is reached from the once-per-pooled-response observation path, so the
+// barrel would work directly against the boundary guard wp5 adds.
+import { atomicWriteFile } from "../config/atomic-write";
+import { getConfigDir } from "../config/paths";
+import type { QuotaResetEvent, QuotaWindowObservation } from "./reset-detector";
 
 const STATE_FILENAME = "quota-reset-state.json";
 const PERSIST_DEBOUNCE_MS = 250;
@@ -25,7 +30,18 @@ const PERSIST_DEBOUNCE_MS = 250;
  */
 const CLAIM_MAX_AGE_MS = 90 * 24 * 60 * 60_000;
 const MAX_CLAIMS = 512;
+/**
+ * Hard ceiling for the claim map.
+ *
+ * MAX_CLAIMS is the soft budget, honoured by evicting settled claims. When every claim is
+ * still live there is nothing safe to evict, so without a hard stop the map — and the JSON
+ * rewritten beside it — grows without limit. At this ceiling we evict the furthest-future
+ * deadline and accept one theoretical duplicate, which is strictly better than unbounded growth.
+ */
+const HARD_MAX_CLAIMS = 2 * MAX_CLAIMS;
 const MAX_RING_EVENTS = 100;
+/** One row per (scope, accountTag). A large pool plus several providers stays well inside this. */
+const MAX_OBSERVED_SCOPES = 64;
 
 type ClaimRecord = {
   /** When the claim was made. */
@@ -38,12 +54,18 @@ type StateFile = {
   version: 1;
   claims: Record<string, ClaimRecord>;
   events: QuotaResetEvent[];
+  /** Last observed windows per "scope\u0000accountTag". Absent in files written before this field. */
+  observed?: Record<string, QuotaWindowObservation[]>;
+  /** Per-install salt for account tagging. Created once, then stable. */
+  accountSalt?: string;
 };
 
 const claims = new Map<string, ClaimRecord>();
 let ring: QuotaResetEvent[] = [];
+const observed = new Map<string, QuotaWindowObservation[]>();
 let hydrated = false;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let accountSalt: string | null = null;
 
 function statePath(): string {
   return join(getConfigDir(), STATE_FILENAME);
@@ -67,11 +89,66 @@ function hydrate(): void {
       }
     }
     if (Array.isArray(parsed.events)) ring = parsed.events.slice(-MAX_RING_EVENTS);
+    if (parsed.observed && typeof parsed.observed === "object") {
+      for (const [key, windows] of Object.entries(parsed.observed)) {
+        if (Array.isArray(windows)) observed.set(key, windows);
+      }
+    }
+    if (typeof parsed.accountSalt === "string" && parsed.accountSalt.length >= 16) {
+      accountSalt = parsed.accountSalt;
+    }
   } catch {
     // A corrupt or partially written cache must never break a quota refresh. Starting empty
     // risks one duplicate notification; throwing here would break the write that triggered us.
     claims.clear();
     ring = [];
+    observed.clear();
+  }
+}
+
+/**
+ * Per-install salt, created on first use and persisted.
+ *
+ * Without it an account tag is a bare unkeyed hash of an email — brute-forceable in tens of
+ * guesses, which turns the webhook payload into an account-identity oracle for whoever
+ * receives it. Salted, the tag stays stable for this install (so the persisted idempotence
+ * key still works across restarts) and is unlinkable to anyone without the salt.
+ */
+export function quotaResetAccountSalt(): string {
+  hydrate();
+  if (accountSalt) return accountSalt;
+  accountSalt = crypto.randomUUID().replaceAll("-", "");
+  persistNow();
+  return accountSalt;
+}
+
+function stateFileBody(): StateFile {
+  return {
+    version: 1,
+    claims: Object.fromEntries(claims),
+    events: ring,
+    observed: Object.fromEntries(observed),
+    ...(accountSalt !== null ? { accountSalt } : {}),
+  };
+}
+
+/**
+ * Write immediately, for anything whose loss breaks correctness.
+ *
+ * A claim MUST NOT ride the debounce: the timer is unref'd, so a process exiting within
+ * 250 ms of claiming — the common case when detection runs on the last pooled request before
+ * shutdown — never writes it, and the next start re-notifies. That is precisely the
+ * across-a-restart guarantee this store exists for, and a shutdown hook would not cover SIGKILL.
+ */
+function persistNow(): void {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  try {
+    atomicWriteFile(statePath(), `${JSON.stringify(stateFileBody())}\n`);
+  } catch {
+    // Best-effort persistence only.
   }
 }
 
@@ -80,12 +157,7 @@ function schedulePersist(): void {
   persistTimer = setTimeout(() => {
     persistTimer = null;
     try {
-      const body: StateFile = {
-        version: 1,
-        claims: Object.fromEntries(claims),
-        events: ring,
-      };
-      atomicWriteFile(statePath(), `${JSON.stringify(body)}\n`);
+      atomicWriteFile(statePath(), `${JSON.stringify(stateFileBody())}\n`);
     } catch {
       // Best-effort persistence, matching the codex quota cache.
     }
@@ -93,10 +165,23 @@ function schedulePersist(): void {
   persistTimer.unref?.();
 }
 
-/** Drop claims that are both old and settled. A live deadline is never pruned. */
-function prune(now: number): void {
+/**
+ * Drop claims that are both old and settled. A live deadline is never pruned.
+ *
+ * `now` comes from the wall clock, not from the caller's `at`: a backdated or clock-skewed
+ * claim must not change the retention of unrelated keys.
+ */
+function prune(now = Date.now()): void {
   for (const [key, record] of claims) {
-    if (record.resetAt !== undefined && record.resetAt > now) continue;
+    // A claim with no deadline is UNKNOWN, not settled. Clockless windows are the common case
+    // for credit-balance providers, so treating them as settled would make them the first
+    // thing evicted. They still age out below, just without that preference.
+    if (record.resetAt === undefined || record.resetAt > now) continue;
+    if (now - record.at <= CLAIM_MAX_AGE_MS) continue;
+    claims.delete(key);
+  }
+  for (const [key, record] of claims) {
+    if (record.resetAt !== undefined) continue;
     if (now - record.at <= CLAIM_MAX_AGE_MS) continue;
     claims.delete(key);
   }
@@ -108,6 +193,16 @@ function prune(now: number): void {
     .sort((left, right) => left[1].at - right[1].at);
   for (const [key] of settled) {
     if (claims.size <= MAX_CLAIMS) break;
+    claims.delete(key);
+  }
+  if (claims.size <= HARD_MAX_CLAIMS) return;
+  // Every remaining claim is live. Evict the furthest-future deadlines first: least likely to
+  // be re-observed soon, so a duplicate there is least disruptive.
+  const live = [...claims.entries()].sort(
+    (left, right) => (right[1].resetAt ?? 0) - (left[1].resetAt ?? 0),
+  );
+  for (const [key] of live) {
+    if (claims.size <= HARD_MAX_CLAIMS) break;
     claims.delete(key);
   }
 }
@@ -124,8 +219,10 @@ export function claimQuotaReset(key: string, at: number, resetAt?: number): bool
   hydrate();
   if (claims.has(key)) return false;
   claims.set(key, { at, ...(resetAt !== undefined ? { resetAt } : {}) });
-  prune(at);
-  schedulePersist();
+  prune();
+  // Synchronous: a lost claim means a duplicate notification after restart, and claims are
+  // rare (one per real reset), so the write cost is irrelevant.
+  persistNow();
   return true;
 }
 
@@ -149,11 +246,48 @@ export function listRecentQuotaResetEvents(limit = MAX_RING_EVENTS): QuotaResetE
   return [...ring].reverse().slice(0, bounded);
 }
 
+function observedKey(scope: string, accountTag: string): string {
+  return `${scope}\u0000${accountTag}`;
+}
+
+/**
+ * Store the newly observed windows for one (scope, accountTag) and return what was there
+ * before, or undefined on the first ever observation.
+ *
+ * The detector owns this map rather than borrowing a caller's previous value, because
+ * neither upstream cache can supply one reliably. The provider report cache keys itself on a
+ * digest that INCLUDES quota values and updatedAt (src/providers/quota.ts:193 via :155), so
+ * its `previous` is empty precisely when a reset happened; and it is process-memory only, so
+ * it has no answer at all after a restart. This map is keyed by identity and persisted.
+ */
+export function swapLastObservedWindows(
+  scope: string,
+  accountTag: string,
+  windows: ReadonlyArray<QuotaWindowObservation>,
+): ReadonlyArray<QuotaWindowObservation> | undefined {
+  hydrate();
+  const key = observedKey(scope, accountTag);
+  const previous = observed.get(key);
+  observed.set(key, windows.map(window => ({ ...window })));
+  if (observed.size > MAX_OBSERVED_SCOPES) {
+    // Oldest insertion first: Map preserves insertion order, and re-setting an existing key
+    // does not move it, so a steadily observed scope keeps its original position and an
+    // abandoned one drifts to the front. Evicting only costs a re-baseline, never a
+    // duplicate notification, because the claim ledger is separate.
+    const oldest = observed.keys().next();
+    if (!oldest.done && oldest.value !== key) observed.delete(oldest.value);
+  }
+  schedulePersist();
+  return previous;
+}
+
 /** Test-only: forget in-memory state so the next call re-reads OPENCODEX_HOME. */
 export function resetQuotaResetStoreForTests(): void {
   claims.clear();
   ring = [];
+  observed.clear();
   hydrated = false;
+  accountSalt = null;
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = null;
@@ -162,13 +296,11 @@ export function resetQuotaResetStoreForTests(): void {
 
 /** Test-only: flush the debounced write immediately. */
 export function flushQuotaResetStoreForTests(): void {
-  if (!persistTimer) return;
-  clearTimeout(persistTimer);
-  persistTimer = null;
-  try {
-    const body: StateFile = { version: 1, claims: Object.fromEntries(claims), events: ring };
-    atomicWriteFile(statePath(), `${JSON.stringify(body)}\n`);
-  } catch {
-    // Same best-effort contract as the debounced path.
-  }
+  persistNow();
+}
+
+/** Test-only: claim-map size, for asserting retention bounds. Exposes no keys. */
+export function claimCountForTests(): number {
+  hydrate();
+  return claims.size;
 }

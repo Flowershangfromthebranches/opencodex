@@ -10,6 +10,7 @@ import {
   startStorageCleanupScheduler,
   stopStorageCleanupScheduler,
 } from "../storage/policy-scheduler";
+import { startQuotaResetPoller, stopQuotaResetPoller } from "../quota/reset-poller";
 import {
   cancelQueuedStorageWorkerSpawns,
   drainStorageWorkers,
@@ -59,11 +60,15 @@ function startProcessLoops(applyPolicy: PolicyApply): ProcessLoops {
     stateStoreSweeper = startStateStoreSweeper();
     setLivePolicyOwner(applyPolicy);
     startStorageCleanupScheduler();
+    // Opt-in: the tick itself is a no-op unless config.quotaResetNotify is enabled with a
+    // sink, and the interval is unref'd, so a default install pays one dormant timer.
+    startQuotaResetPoller();
     return { memoryWatchdog, stateStoreSweeper };
   } catch (error) {
     memoryWatchdog?.stop();
     stateStoreSweeper?.stop();
     stopStorageCleanupScheduler();
+    stopQuotaResetPoller();
     setLivePolicyOwner(null);
     throw error;
   }
@@ -75,6 +80,7 @@ function stopProcessLoops(): void {
   loops?.memoryWatchdog.stop();
   loops?.stateStoreSweeper.stop();
   stopStorageCleanupScheduler();
+  stopQuotaResetPoller();
   setLivePolicyOwner(null);
 }
 

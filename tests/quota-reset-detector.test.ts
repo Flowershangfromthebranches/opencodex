@@ -67,12 +67,25 @@ describe("quota reset detection", () => {
     expect(event?.kind).toBe("surprise");
   });
 
-  test("a deadline that jumps forward early is a surprise reset even at a flat percent", () => {
-    const event = detect(
+  test("a deadline that jumps forward at a flat percent is NOT a reset", () => {
+    // A rolling window's deadline creeps forward on every poll by the elapsed time, so an
+    // advancing deadline is true of every healthy observation. Firing on it would notify
+    // continuously. And with usage flat, no quota came back, so there is nothing to report.
+    expect(detect(
       { percent: 40, resetAt: NOW + 2 * HOUR },
       { percent: 40, resetAt: NOW + 9 * HOUR },
-    );
-    expect(event?.kind).toBe("surprise");
+    )).toBeNull();
+  });
+
+  test("a rolling window creeping forward across many polls never fires", () => {
+    for (let poll = 1; poll <= 5; poll += 1) {
+      const event = detect(
+        { percent: 40, resetAt: NOW + 5 * HOUR + (poll - 1) * 60_000 },
+        { percent: 40 + poll, resetAt: NOW + 5 * HOUR + poll * 60_000 },
+        NOW + poll * 60_000,
+      );
+      expect(event).toBeNull();
+    }
   });
 
   test("ordinary usage increase is not a reset", () => {
@@ -123,12 +136,31 @@ describe("quota reset detection", () => {
     expect(first?.key).toBe(second?.key);
   });
 
-  test("account tags differ per account and carry no identity", () => {
-    const left = quotaAccountTag("acct-one@example.test");
-    const right = quotaAccountTag("acct-two@example.test");
+  test("account tags differ per account and are salted against brute force", () => {
+    const salt = "0123456789abcdef0123456789abcdef";
+    const left = quotaAccountTag("acct-one@example.test", salt);
+    const right = quotaAccountTag("acct-two@example.test", salt);
     expect(left).not.toBe(right);
     expect(left).not.toContain("@");
     expect(left).toHaveLength(8);
+
+    // The salt is what makes the tag unlinkable to a webhook recipient: the same account
+    // under a different install salt must not produce the same tag, or an offline dictionary
+    // attack against a guessable email space would recover the identity.
+    const otherInstall = quotaAccountTag("acct-one@example.test", "fedcba9876543210fedcba9876543210");
+    expect(otherInstall).not.toBe(left);
+
+    // Stable within an install, which is what the persisted idempotence key depends on.
+    expect(quotaAccountTag("acct-one@example.test", salt)).toBe(left);
+  });
+
+  test("a negative percent is not read as a huge drop", () => {
+    // Both upstream normalizers clamp to 0-100, but the detector re-checks its own inputs
+    // rather than trusting a caller — the same reason it re-validates resetAt.
+    expect(detect(
+      { percent: 10, resetAt: NOW + 2 * HOUR },
+      { percent: -50, resetAt: NOW + 2 * HOUR },
+    )).toBeNull();
   });
 
   test("window lists are paired by identity, and a mismatched pairing is refused", () => {

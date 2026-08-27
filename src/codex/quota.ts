@@ -335,6 +335,40 @@ export function setAccountQuotaFromParsed(
 
   accountQuota.set(accountId, next);
   schedulePersistAccountQuotas();
+  notifyCodexQuotaSnapshot(accountId, next);
+}
+
+/**
+ * Hand a committed snapshot to the optional quota-reset observer.
+ *
+ * Lazy import on purpose. This file is statically reachable from
+ * src/server/responses/core.ts (via codex/auth-context.ts), and
+ * applyAccountQuotaFromUpstreamHeaders runs it once per pooled response. A static import
+ * would load the observer, its config resolution, and its sink registry into every install,
+ * including installs that never enable the feature — the same failure mode
+ * tests/core-lab-boundary.test.ts exists to prevent for src/lab/.
+ *
+ * The previous snapshot is deliberately NOT passed. The observer keeps its own persisted
+ * baseline (see swapLastObservedWindows), so every committed write must reach it — including
+ * the first one, which is what establishes that baseline. An earlier version of this
+ * function skipped the call when the in-map `existing` was undefined; that left the observer
+ * with no baseline to compare against, so the write AFTER a rollover was silently treated as
+ * the first observation and no reset ever fired.
+ */
+function notifyCodexQuotaSnapshot(accountId: string, next: StoredAccountQuota): void {
+  void import("../quota/reset-observer")
+    .then(async observer => {
+      if (!observer.hasQuotaResetSink()) return;
+      const { codexWindowObservations } = await import("../quota/window-mapping");
+      observer.observeQuotaSnapshot({
+        scope: "codex",
+        accountKey: accountId,
+        windows: codexWindowObservations(next),
+      });
+    })
+    .catch(() => {
+      // Detection is best-effort: a quota write must never fail because of it.
+    });
 }
 
 export function parseUpstreamQuotaHeaders(headers: Headers): Omit<StoredAccountQuota, "updatedAt"> | null {

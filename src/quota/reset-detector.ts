@@ -56,17 +56,23 @@ export type QuotaResetEvent = {
 export const MIN_SURPRISE_DROP_PERCENT = 5;
 
 /**
- * Stable, non-reversible account discriminator.
+ * Account discriminator: stable for this install, unlinkable outside it.
  *
- * Events must distinguish accounts (a provider report is keyed by provider only, so an
- * account switch would otherwise inherit the previous account's history) while carrying no
- * account identity (the payload crosses a webhook boundary). A digest satisfies both.
+ * Events must distinguish accounts — a provider report is keyed by provider only, so an
+ * account switch would otherwise inherit the previous account's history — while carrying no
+ * account identity, because the payload crosses a webhook boundary to a third party.
  *
- * `Bun.hash` is stable across processes — verified by running it in two separate
- * processes — which is what lets the derived idempotence key survive a restart.
+ * The salt is what makes the second half true. An unsalted `Bun.hash` of an email is
+ * brute-forceable in tens of guesses against a small, highly guessable input space, which
+ * would let a webhook recipient confirm-or-deny any guessed account. Salted, the tag is
+ * meaningless to anyone without the install salt, and still stable across restarts because
+ * the salt is persisted — which is what the durable idempotence key depends on.
+ *
+ * Not a cryptographic commitment: it defeats an offline dictionary attack by a payload
+ * recipient, which is the threat the privacy constraint names.
  */
-export function quotaAccountTag(accountKey: string): string {
-  return Bun.hash(accountKey).toString(36).slice(0, 8).padStart(8, "0");
+export function quotaAccountTag(accountKey: string, salt: string): string {
+  return Bun.hash(`${salt}\u0000${accountKey}`).toString(36).slice(0, 8).padStart(8, "0");
 }
 
 export function quotaResetKey(input: {
@@ -86,8 +92,16 @@ export function quotaResetKey(input: {
   return [input.scope, input.accountTag, input.window, discriminator].join("|");
 }
 
+/**
+ * Percent guard applied at this boundary.
+ *
+ * Both upstream normalizers clamp to 0-100, but a value outside that range means the payload
+ * bypassed them, and admitting a negative would manufacture an enormous apparent drop. Same
+ * philosophy as the resetAt guard below: re-check rather than trust the caller.
+ */
 function finitePercent(value: number | undefined): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return value >= 0 && value <= 100 ? value : undefined;
 }
 
 /**
@@ -170,16 +184,25 @@ export function detectQuotaReset(input: {
     return build("scheduled");
   }
 
-  // Still inside the previous window, so anything that looks like a fresh window means
-  // upstream moved it out of band.
-  if (previousResetAt !== undefined) {
-    if (
-      percentBefore !== undefined
-      && percentBefore - percentAfter >= MIN_SURPRISE_DROP_PERCENT
-    ) {
-      return build("surprise");
-    }
-    if (resetAt !== undefined && resetAt > previousResetAt) return build("surprise");
+  // Still inside the previous window, so quota coming back means upstream moved the window
+  // out of band.
+  //
+  // A material percent DROP is the only accepted evidence here. An advancing deadline is
+  // deliberately NOT sufficient, even though it looks like a fresh window: a ROLLING window
+  // (Anthropic's five_hour, Codex's burst window) reports a deadline that creeps forward on
+  // every poll by exactly the elapsed time, so "the deadline advanced" is true of every
+  // healthy observation of a rolling window and would fire continuously.
+  //
+  // Nothing is lost by requiring the drop. A surprise reset is worth telling an operator
+  // about because quota came BACK; if usage did not fall, none did, and there is nothing to
+  // report. The scheduled branch above can still accept an advancing deadline as evidence,
+  // because there the previous deadline had genuinely expired.
+  if (
+    previousResetAt !== undefined
+    && percentBefore !== undefined
+    && percentBefore - percentAfter >= MIN_SURPRISE_DROP_PERCENT
+  ) {
+    return build("surprise");
   }
 
   // A window with no deadline on either side is not evaluated. Several provider parsers

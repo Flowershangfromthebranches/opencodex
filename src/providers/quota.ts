@@ -2264,6 +2264,41 @@ async function maybeFetchProviderQuota(
   }
 }
 
+/**
+ * Hand freshly committed provider reports to the optional quota-reset observer.
+ *
+ * Lazy import on purpose: this module is statically reachable from
+ * src/server/responses/core.ts (via oauth/anthropic-routing.ts), so a static edge would put
+ * the observer and its sink registry on every install's request path.
+ *
+ * No previous snapshot is passed. The observer keeps its own persisted last-seen map,
+ * because `previous` here is bound only when `cache.key === key` and the key digest at
+ * cacheKeyWithAggregationState includes quota values and updatedAt — so it is empty exactly
+ * when a reset happened.
+ */
+function notifyProviderQuotaSnapshot(reports: ReadonlyArray<ProviderQuotaReport>): void {
+  if (reports.length === 0) return;
+  void import("../quota/reset-observer")
+    .then(async observer => {
+      if (!observer.hasQuotaResetSink()) return;
+      const { providerWindowObservations } = await import("../quota/window-mapping");
+      for (const report of reports) {
+        // Key by active account, not by provider alone: a provider report follows whichever
+        // account is active, so an account switch would otherwise inherit the previous
+        // account's history and read as a reset.
+        const accountId = getAccountSet(report.provider)?.activeAccountId ?? "default";
+        observer.observeQuotaSnapshot({
+          scope: report.provider,
+          accountKey: `${report.provider}\u0000${accountId}`,
+          windows: providerWindowObservations(report.quota),
+        });
+      }
+    })
+    .catch(() => {
+      // Detection is best-effort: a quota refresh must never fail because of it.
+    });
+}
+
 export async function fetchProviderQuotaReports(config: OcxConfig, forceRefresh = false): Promise<ProviderQuotaResponse> {
   // A Pool report's cache signature and provider fetch must share one account snapshot.
   // Preserve force semantics when deciding whether that snapshot refreshes upstream data.
@@ -2341,6 +2376,7 @@ export async function fetchProviderQuotaReports(config: OcxConfig, forceRefresh 
     ) {
       const reports = response.reports.filter(item => mayCommitProviderQuotaKey(item.provider, writerGeneration));
       cache = { key, ts: Date.now(), response: { ...response, reports } };
+      notifyProviderQuotaSnapshot(reports);
     }
     return response;
   })();
