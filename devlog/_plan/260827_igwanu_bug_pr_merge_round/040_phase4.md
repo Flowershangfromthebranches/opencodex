@@ -11,31 +11,23 @@ Touches `src/server/responses/core.ts` (+55/-11) and
 `tests/generic-oauth-failover.test.ts` (+78).
 
 **This is an OAuth credential-boundary change — the exact surface `MAINTAINERS.md`
-requires security review for.** It does not land autonomously on my judgement
-alone; the two reviewer blockers below are also genuine correctness defects.
+requires explicit security review for.** It does not land on my judgement alone.
 
-Reviewer blockers, both concrete:
-
-1. **Cross-account origin bleed.** At both 401 rebuild sites,
-   `refreshed.apiBaseUrl ?? getOAuthCredentialApiBaseUrl(route.providerName)`
-   falls back to the *active* credential's origin. Generic 429 rotation does not
-   promote account B to active, so a legacy B credential with no `apiBaseUrl`
-   yields **B's bearer paired with A's origin**. `applyFailoverSnapshot` has the
-   same hole: an undefined snapshot origin leaves the previous routed base URL on
-   the provider object. Fix: resolve by `refreshed.accountId`, or fail closed to
-   the canonical origin — never consult another account's route.
-2. **The three new tests are source-text assertions.** They pass even if the
-   assignments are unreachable or the wrong snapshot reaches the request. Needs an
-   executable A -> 429 -> B regression through the HTTP recovery path asserting the
-   second dispatch's bearer/origin pair, the B account/generation replay identity,
-   and cleared Cursor continuation state.
+The PR carries a CHANGES_REQUESTED review with two open blockers: one credential
+-boundary correctness defect and one test-oracle defect. **That analysis is
+pre-disclosure material and is deliberately not reproduced here.** `devlog/` is a
+public tracked directory, the defect is unfixed, and the PR is open, so per
+`AGENTS.md` §"Security working notes" the reasoning, reproduction, and
+remediation plan live in scratch (`.tmp/2745-security-triage.md`, gitignored) and
+are readable on the PR itself via `gh pr view 2745 --json reviews`. Once the fix
+ships, the write-up belongs in `_fin/` — not before.
 
 `src/server/responses/core.ts` is also touched by #2638 and #2497 —
 `git merge-tree` pairwise before a second one lands.
 
-Disposition: fix both blockers, add the behavioral regression, then **hold for
-explicit human security sign-off** before merge. If sign-off is not available in
-this round, the honest outcome is NEEDS_HUMAN with the work banked on a branch.
+Disposition: **NEEDS_HUMAN.** Both blockers must be closed by the author, and the
+credential-boundary change then needs explicit human security sign-off plus a
+non-author maintainer approval at the exact merged head. Not landed this round.
 
 ## #2729 — fix(claude): derive response.failed status from the classified error
 
@@ -64,8 +56,17 @@ Anthropic tail stays `overloaded_error`.
 Deferred, not blockers: the dead `translation_buffer_limit` status arm; loss of
 the original error code.
 
-No auth surface. This one **can** land autonomously once the fix and regression
-are in and the merged-tree suite is green.
+No authentication decision, credential state, token, OAuth, or account-routing
+surface. It maps already-classified upstream error envelopes to HTTP status codes;
+the 401/403 arms propagate a classification rather than making an auth decision.
+That is why it sits on a different side of the line from #2745, #2638 and #2497,
+which touch OAuth snapshots, account selection, credential fencing, and bearer or
+refresh-token handling respectively.
+
+This one can be prepared autonomously once the fix and regression are in and the
+merged-tree suite is green, and then merged **after a non-author maintainer
+approval at the exact head** (`MAINTAINERS.md`: authors do not approve their own
+pull requests).
 
 ## TESTS
 

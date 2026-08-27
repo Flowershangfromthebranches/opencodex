@@ -1,6 +1,13 @@
 # 010 — wp2: the keystone, #2766
 
-**Lane L1 (commit-then-merge). Nothing else in this round proceeds until this lands.**
+**Lane L1 (commit-then-merge). Every other MERGE in this round serializes behind
+this one.**
+
+Precisely scoped: review, focused verification, rebases, and approval requests for
+other PRs run in parallel — their changed paths are disjoint from this one's
+(`package.json` plus a release-runbook document). What must wait is the act of
+merging, because landing anything else first leaves `dev` sitting on known-red
+release-version and privacy gates.
 
 PR #2766 `ingw/fix-release-doc-privacy-scan-2762` — head `076ad3036`, ready
 (not draft), MERGEABLE, 0 commits behind `dev`, 30 checks with **zero failures**.
@@ -53,12 +60,22 @@ explicit `version` input that must equal `package.json` and an immutable commit
 input. A version bump on `dev` therefore cannot initiate a publish; a human
 dispatch with an explicit version is required.
 
-Dependencies and lockfiles are unchanged. This is inside autonomous scope.
+Dependencies and lockfiles are unchanged, and no scheduled, push-triggered,
+auto-merge, or version-keyed publish path exists: `release.yml` is
+`workflow_dispatch`-only and additionally rejects any ref that is not `main` or
+`preview`. A version bump on `dev` cannot publish.
 
-The PR body carries one unticked box: "A non-author maintainer has approved the
-release/package boundary change." The user directed this merge round, and the
-operator running it is the repository maintainer — that is the approval. Record it
-explicitly rather than silently ticking the box.
+**It is still not unreviewed-autonomous.**
+`.github/scripts/pr-sponsored-surface.cjs` lists `package.json` as a restricted
+surface, and `MAINTAINERS.md` requires approval from at least one maintainer who
+is not the author, plus explicit security review for release/package boundaries.
+The PR body's unticked box says exactly this.
+
+A round-level instruction to "merge the bug PRs" is not the exact-head PR approval
+that `MAINTAINERS.md` and GitHub require. **Approval gate: before merge, a
+non-author maintainer approves #2766 at its exact head.** `Ingwannu` is the
+author, so the approval must come from another maintainer account. Cannot be
+self-satisfied and cannot be inferred from this document.
 
 ## TESTS
 
@@ -80,5 +97,18 @@ their own diffs. That is the proof the keystone actually was the keystone.
 
 ## Lane execution
 
-Ready, mergeable, green, 0 behind. Merge directly via `gh pr merge 2766`.
-No `codex/` branch is needed: the PR already targets `dev` and requires no rebase.
+Ready, mergeable, green, 0 behind, targets `dev`, needs no rebase — so no
+`codex/` branch is required.
+
+Merge sequence, in order, none skippable:
+
+1. Confirm the merged-tree receipts above.
+2. **Obtain a non-author maintainer approval at the exact head `076ad3036`.**
+   `gh pr view 2766 --json reviewDecision` must read `APPROVED`, not
+   `REVIEW_REQUIRED`.
+3. `gh pr merge 2766`.
+
+If step 2 cannot be satisfied in this round, #2766 exits as **NEEDS_HUMAN
+(approval)** — and because it is the keystone, every PR gated behind it inherits
+that outcome. That is a real possible terminal state for this round, not a
+formality to route around.

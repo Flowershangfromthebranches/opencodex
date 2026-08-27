@@ -4,6 +4,13 @@ All three are Ingwannu's, all merge-tree CLEAN, all tsc OK on the merged tree.
 Order within the phase: #2761 first (independent), then #2764 and #2767 after the
 keystone turns their matrices green.
 
+**Approval gate for all three (`MAINTAINERS.md`).** All three are authored by
+`Ingwannu` and all three currently read `REVIEW_REQUIRED` / `BLOCKED`. Authors do
+not approve their own pull requests, and a round-level instruction is not an
+exact-head approval. Each requires a non-author maintainer approval at its final
+head — after rebase, where a rebase happens — before `gh pr merge`. Preparation,
+verification, and review can proceed autonomously; the merge button cannot.
+
 ## #2761 — fix(integrations): ignore JSON object key order in ownership
 
 Lane **L1**. Head `63941b583`, ready, MERGEABLE, 2 behind, **24 checks, zero
@@ -16,8 +23,15 @@ failures** — it predates the version-line breakage. Touches:
 - `tests/integrations-state.test.ts` (+41), `tests/integrations-writer.test.ts` (+64)
 
 No file overlaps any other in-scope PR. No auth, credential, or workflow surface.
-Carries its own regressions. **Merge as-is** once the merged-tree focused suite is
-green.
+Carries its own regressions.
+
+Test oracle verified load-bearing: with the PR's tests kept and only its
+production implementation reverted, the suite fails behaviorally at
+`tests/integrations-writer.test.ts:286` and `:314` (92 pass / 0 fail with the fix).
+These are not source-text assertions and the PR changes no fixture.
+
+**Merge once** the merged-tree focused suite is green **and** a non-author
+maintainer approval is recorded at the exact head. No rebase needed (2 behind).
 
 ## #2764 — fix(moonshot): intersect nested schema bounds
 
@@ -41,7 +55,8 @@ in-scope PR this round.
 Draft checklist has one unticked box: "Exact-head required CI is green." That box
 cannot be ticked by the author — it is false for a reason outside the PR. After
 wp2 lands, rebase onto the new `dev`, re-run CI, and the box becomes truthfully
-tickable. Then mark ready and merge.
+tickable. Then mark ready, **obtain the non-author maintainer approval at that
+new head**, and merge.
 
 ## #2767 — fix(openai): strip unsupported forward cache options
 
@@ -57,7 +72,7 @@ Touches `src/adapters/openai-responses.ts`, `src/compatibility/openai-responses.
 
 Its unticked box reads "Exact-head required CI is green after the independent base
 gate repair" — the author already diagnosed the dependency correctly. Same
-treatment as #2764.
+treatment as #2764, including the non-author approval at the post-rebase head.
 
 **Fixture caution (previous round's finding):** a regenerated fixture once
 resurrected a deliberately removed model behind a count-only assertion. This PR
