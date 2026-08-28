@@ -16,7 +16,36 @@ like, not a direct push.
 | #2747 | FIX | **NEEDS_AUTHOR** (one attestation) | rebased, CI 20/0 green, approved; author owns the local-CI box |
 | #2638 | FIX | **NEEDS_HUMAN** (security) | rebased clean, full suite **15375/0**; `hygiene` correctly holds on `unsponsored_surface` |
 | #2497 | attempt | **NEEDS_AUTHOR** (semantic conflicts) | rebase attempted and aborted; 6 hunks, only 1 mechanical |
-| #2745 | — | **NEEDS_HUMAN** (security) | open blockers on an OAuth credential boundary |
+| #2745 | FIX | **NEEDS_HUMAN** (approval) | both blockers closed on `codex/oauth-failover-identity-v2` `2b3574a45`; suite 15358/0 |
+
+## #2745: the defect was one `??`
+
+`refreshed.apiBaseUrl ?? getOAuthCredentialApiBaseUrl(route.providerName)` reads
+correct until you follow the second arm: `getOAuthCredentialApiBaseUrl` is
+`validateCopilotApiBaseUrl(getCredential(provider)?.apiBaseUrl)` — the **active**
+credential, with no account scoping. A generic 429 rotation never promotes the
+account it rotated to, so for a legacy account B with no allowlisted origin, that arm
+silently reached account A. B's bearer, A's host.
+
+`copilotOriginForRefreshedCredential` now resolves from the refreshed snapshot alone
+and otherwise fails closed to the canonical origin, consulting no other account:
+
+| refreshed snapshot for B | resolved |
+|---|---|
+| own allowlisted origin | that origin |
+| legacy, no origin | canonical — never A's |
+| non-allowlisted origin | canonical |
+| empty | canonical |
+
+The test blocker was worse than "not behavioural": one assertion counted the buggy
+expression and required it to appear **twice**, so fixing the defect would have
+broken the test. Replaced with a behavioural test over all four arms, plus a topology
+guard that strips comments first — the new helper's doc comment quotes the removed
+expression to explain why it was wrong, and the first version of the guard read that
+explanation as the defect.
+
+Still open from the review and deliberately not claimed: the `applyFailoverSnapshot`
+audit, and an executable A -> 429 -> B regression through the HTTP recovery path.
 
 ## Where I was wrong, in the useful direction
 
