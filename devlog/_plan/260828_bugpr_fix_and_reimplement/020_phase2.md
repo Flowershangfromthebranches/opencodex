@@ -151,6 +151,52 @@ Result (all four confirmed):
 
 70 pass / 0 fail with every fix in place; `tsc --noEmit` exit 0.
 
+## The blast radius the focused suites did not show
+
+70/0 on `tests/google-antigravity-replay.test.ts` and exact-head CI still failed
+three shards. **Five tests in four OTHER suites** break, all with one shape: they
+assert `thoughtSignature` is `undefined`, and the sentinel now fills that slot.
+
+```
+tests/google-signature-history-roundtrip.test.ts
+  "history without a signature stays unsigned rather than borrowing one"
+  "an unknown call_id stays unsigned"
+tests/google-vertex-thought-signature.test.ts
+  "#1312: shared prompt cache keys cannot cross client-thread replay namespaces"
+tests/google-antigravity-wire.test.ts
+  "custom_tool_call item ids (ctc_...) are NOT forwarded (issue #174)"
+```
+
+This is the round's own standing gate #4 firing on me: green targeted suites are
+not health, because I chose the targets. I picked the file I was editing, and the
+consumers are where the change actually landed.
+
+### The question, stated honestly
+
+Those tests use `undefined` as a **proxy** for "no signature was borrowed from
+another call, another thread, or another namespace". #1312 is a genuine security
+boundary: thread-b must not inherit thread-a's signature under a shared prompt-cache
+key. The sentinel is a constant carrying no information from any other call, so on
+that reading the isolation property survives and the assertions should read
+`toBe(BYPASS)`.
+
+**That reading is convenient for me, which is why it is not mine to certify.** It
+is dispatched to an independent reviewer with the alternative designs named: (a)
+update the five assertions, (b) narrow the sentinel so it never applies to replayed
+client history, (c) something else.
+
+Direct evidence gathered meanwhile — thread-a records a real signature, thread-b
+replays the same call under a different session:
+
+```
+after replay   (thread-b): { functionCall: { name: "shell", args: {} } }
+after fallback (thread-b): "skip_thought_signature_validator"
+leaked thread-a's real signature? no
+```
+
+So the leak the test guards against does not occur. Whether `undefined` was
+load-bearing for a *different* reason is the reviewer's call, not mine.
+
 Differential probe required (gate 4): `applyAntigravityReplay` changes behavior, so
 enumerate the arms — cache hit / miss, signed / unsigned first call, nested / direct /
 short signature, Gemini / non-Gemini — against unpatched `dev` and record which move.
