@@ -1,7 +1,12 @@
 # 070 — round outcome
 
-`dev` advanced `50e955604` -> `29be459a3`. The mandate was "fix what can be fixed,
-reimplement what cannot, merge both", with fork pushes authorized.
+This round advanced `dev` from `50e955604` to `29be459a3`. The mandate was "fix what
+can be fixed, reimplement what cannot, merge both", with fork pushes authorized.
+
+`dev` has since moved to `5511a424c` via #2774, a squash-merge from a different
+work-stream. Both first-parent commits in the range arrived through PRs targeting
+`dev` — the squash shows as a non-merge commit, which is what a squash-merge looks
+like, not a direct push.
 
 | PR | lane | outcome | evidence |
 |---|---|---|---|
