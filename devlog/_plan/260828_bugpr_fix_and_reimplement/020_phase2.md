@@ -197,6 +197,54 @@ leaked thread-a's real signature? no
 So the leak the test guards against does not occur. Whether `undefined` was
 load-bearing for a *different* reason is the reviewer's call, not mine.
 
+### It was not just assertion drift — two real defects were hiding there
+
+Investigating the five failures found two genuine problems, both of which make the
+sentinel behave as if it were a real signature:
+
+**1. The replay cache ingested it.** `observeAntigravityReplay` stored the sentinel
+like any other signature, so a token we fabricate on the way out round-tripped back
+in and was replayed later as evidence a turn was signed:
+
+```
+observe(sentinel)  ->  {"sessions":1,"calls":1,"totalBytes":160}
+apply              ->  "skip_thought_signature_validator"
+```
+
+`extractSignature` now refuses it on both the direct and nested paths, so observing
+it leaves the cache empty (`sessions: 0`) instead of polluting it.
+
+**2. `isLikelyRealThoughtSignature` accepted it.** That predicate exists to reject
+synthetic ids — `fc_`, `ctc_`, `tsc_`, `call_` — and it is what
+`tests/google-antigravity-wire.test.ts` #174 protects. The sentinel is alphanumeric
+with underscores, so it slipped through every filter and would have been treated as
+genuine anywhere that predicate gates. Now rejected by name.
+
+Neither was visible from the focused suite. Both were found by asking why the
+*other* suites disagreed, instead of assuming they were stale.
+
+### The design verdict
+
+With both closed, the five assertions really are proxies, and the independent
+reviewer reached the same conclusion on its own reasoning:
+
+> All five are proxies for "no *real* signature was borrowed/forwarded", not a
+> requirement that the slot stay empty. [...] There is no honest "replayed history
+> vs fresh turn" bit at those call sites [...] every unsigned first `functionCall`
+> *is* history, which is the Gemini 3 400 this PR is fixing. (b) would disable the
+> feature on the path that needs it.
+
+It also independently flagged the `isLikelyRealThoughtSignature` hole as a residual
+risk — "do not let it enter the remember/observe path" — which is exactly the defect
+already closed above.
+
+Design (a) adopted: each assertion now expects the sentinel and carries a comment
+explaining why the property it protects still holds. #1312 keeps its positive
+control that thread-a still receives the real `SIGNATURE`, so a genuine
+cross-namespace leak would still fail the test.
+
+159 pass / 0 fail across all four affected suites.
+
 Differential probe required (gate 4): `applyAntigravityReplay` changes behavior, so
 enumerate the arms — cache hit / miss, signed / unsigned first call, nested / direct /
 short signature, Gemini / non-Gemini — against unpatched `dev` and record which move.
