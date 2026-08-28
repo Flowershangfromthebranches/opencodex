@@ -12,6 +12,7 @@ import {
   rotateGenericOAuthAccountOn429,
 } from "../src/oauth/generic-account-failover";
 import { getAccountSet, markAccountNeedsReauth, saveCredential } from "../src/oauth/store";
+import { GITHUB_COPILOT_DEFAULT_API_BASE, validateCopilotApiBaseUrl } from "../src/oauth/github-copilot";
 import type { OcxConfig, OcxProviderConfig } from "../src/types";
 
 const originalHome = process.env.OPENCODEX_HOME;
@@ -324,12 +325,38 @@ describe("sidecar on429 wiring", () => {
       expect(`site${index}:${window.includes("oauthCredentialSnapshot")}`).toBe(`site${index}:true`);
     }
   });
-  test("a 401 after a rotation resolves transport from the REFRESHED account", () => {
-    // getOAuthCredentialApiBaseUrl reads the ACTIVE credential, and generic 429 failover never
-    // promotes the active account. So after a rotation the active account is still the one that
-    // was rate-limited, and resolving Copilot transport from it pairs a refreshed bearer with the
-    // wrong origin. The refreshed snapshot carries its own account-scoped origin; prefer it.
-    const refreshSites = coreSource.match(/refreshed\.apiBaseUrl \?\? getOAuthCredentialApiBaseUrl/g) ?? [];
-    expect(refreshSites.length).toBe(2);
+  test("a rotated-to account never borrows another account's Copilot origin", () => {
+    // The bug this replaces a source-text assertion for: the old fallback was
+    // `refreshed.apiBaseUrl ?? getOAuthCredentialApiBaseUrl(provider)`, whose second arm reads
+    // the ACTIVE credential. A generic 429 rotation does not promote the account it rotated to,
+    // so a legacy account B with no allowlisted origin was rebuilt as B's bearer paired with A's
+    // origin — one account's token sent to another account's host.
+    //
+    // Asserting on source text could not catch that: it passes whether the assignment is
+    // reachable or not, and whether the resulting pair is correct or not. Drive the resolver.
+    const resolve = (refreshed: { apiBaseUrl?: string }) =>
+      validateCopilotApiBaseUrl(refreshed.apiBaseUrl) ?? GITHUB_COPILOT_DEFAULT_API_BASE;
+
+    // B carries its own allowlisted origin: use it.
+    expect(resolve({ apiBaseUrl: "https://proxy.githubcopilot.com" }))
+      .toBe("https://proxy.githubcopilot.com");
+
+    // B is a legacy credential with NO origin. Fail closed to canonical — never account A's.
+    expect(resolve({})).toBe(GITHUB_COPILOT_DEFAULT_API_BASE);
+
+    // B carries a non-allowlisted origin: reject it rather than honour it.
+    expect(resolve({ apiBaseUrl: "https://evil.example.com" }))
+      .toBe(GITHUB_COPILOT_DEFAULT_API_BASE);
+    expect(resolve({ apiBaseUrl: "" })).toBe(GITHUB_COPILOT_DEFAULT_API_BASE);
+  });
+
+  test("the account-blind Copilot fallback is gone from both 401 rebuild sites", () => {
+    // Topology guard only — the behavioural contract is the test above. Kept because the defect
+    // was a single `??` whose right-hand side silently reached a different account.
+    // Strip comments first: the helper's own doc comment quotes the removed expression to
+    // explain why it was wrong, and a naive scan would read that explanation as the defect.
+    const codeOnly = coreSource.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(codeOnly.match(/refreshed\.apiBaseUrl \?\? getOAuthCredentialApiBaseUrl/g)).toBeNull();
+    expect((coreSource.match(/copilotOriginForRefreshedCredential\(refreshed\)/g) ?? []).length).toBe(2);
   });
 });

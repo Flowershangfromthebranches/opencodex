@@ -338,6 +338,7 @@ import {
   type ProviderExecutedCallType,
 } from "../responses-undeclared-tool-guard";
 import { createGithubCopilotResponsesBlockRewrite } from "../github-copilot-responses-repair";
+import { GITHUB_COPILOT_DEFAULT_API_BASE, validateCopilotApiBaseUrl } from "../../oauth/github-copilot";
 import { responsesJsonToSseStream } from "../responses-json-events";
 import { guardTerminalEventStream } from "./terminal-guard";
 import {
@@ -992,6 +993,24 @@ function shouldDeferCodexResetDerivedCooldown(response: Response, enabled?: bool
   return enabled === true
     && (response.status === 429 || response.status === 402)
     && computeQuotaCooldown(codexQuotaOutcomeMeta(response)).source === "reset-derived";
+}
+
+/**
+ * Resolve the Copilot origin for a credential we just refreshed during failover.
+ *
+ * The tempting fallback — `refreshed.apiBaseUrl ?? getOAuthCredentialApiBaseUrl(provider)` —
+ * is account-blind on its second arm: `getOAuthCredentialApiBaseUrl` reads the ACTIVE
+ * credential, and a generic 429 rotation does not promote the account it rotated to. So a
+ * legacy account B carrying no allowlisted `apiBaseUrl` would be rebuilt as B's bearer paired
+ * with A's origin — one account's token sent to another account's host.
+ *
+ * Fail closed to the canonical Copilot origin instead. Never consult, and never retain, a
+ * different account's route to fill a gap in this one.
+ */
+function copilotOriginForRefreshedCredential(
+  refreshed: { apiBaseUrl?: string | undefined },
+): string | undefined {
+  return validateCopilotApiBaseUrl(refreshed.apiBaseUrl) ?? GITHUB_COPILOT_DEFAULT_API_BASE;
 }
 
 /**
@@ -3562,7 +3581,7 @@ async function handleResponsesInner(
         route.providerName,
         { ...route.provider, apiKey: refreshed.accessToken },
         parsed.options.promptCacheKey,
-        route.providerName === "github-copilot" ? (refreshed.apiBaseUrl ?? getOAuthCredentialApiBaseUrl(route.providerName)) : undefined,
+        route.providerName === "github-copilot" ? copilotOriginForRefreshedCredential(refreshed) : undefined,
       );
       route.provider = refreshedProvider;
       const refreshedAdapter = resolveAdapter(
@@ -5084,7 +5103,7 @@ async function handleResponsesInner(
           route.providerName,
           { ...route.provider, apiKey: refreshed.accessToken },
           parsed.options.promptCacheKey,
-          route.providerName === "github-copilot" ? (refreshed.apiBaseUrl ?? getOAuthCredentialApiBaseUrl(route.providerName)) : undefined,
+          route.providerName === "github-copilot" ? copilotOriginForRefreshedCredential(refreshed) : undefined,
         );
         route.provider = refreshedProvider;
         invalidateSameTargetRequest();
