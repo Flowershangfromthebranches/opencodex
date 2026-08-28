@@ -1,0 +1,77 @@
+# 070 — round outcome
+
+`dev` advanced `50e955604` -> `29be459a3`. The mandate was "fix what can be fixed,
+reimplement what cannot, merge both", with fork pushes authorized.
+
+| PR | lane | outcome | evidence |
+|---|---|---|---|
+| #2740 | FIX | **MERGED** `29be459a3` | rebased under lease, patch-id `48b653f9a33b` unchanged; author added a GUI surface; both regressions mutation-verified |
+| #2693 | REIMPLEMENT | **CLOSED-SUPERSEDED** by #2794 | three blockers closed, each mutation-bound |
+| #2794 | new | **NEEDS_HUMAN** (approval) | CI 23/0, full suite 15352/0; self-approval refused |
+| #2747 | FIX | **NEEDS_AUTHOR** (one attestation) | rebased, CI 20/0 green, approved; author owns the local-CI box |
+| #2638 | FIX | **NEEDS_HUMAN** (security) | rebased clean, full suite **15375/0**; `hygiene` correctly holds on `unsponsored_surface` |
+| #2497 | attempt | **NEEDS_AUTHOR** (semantic conflicts) | rebase attempted and aborted; 6 hunks, only 1 mechanical |
+| #2745 | — | **NEEDS_HUMAN** (security) | open blockers on an OAuth credential boundary |
+
+## Where I was wrong, in the useful direction
+
+060 predicted #2638 would need a semantic rebase and probably stay stale. It rebased
+across **195 commits with zero conflicts**, patch-ids unchanged, and the full suite
+passes 15375/0 on the rebased tree — including `tests/core-lab-boundary.test.ts`,
+which matters because the PR touches `core.ts` and `subagent-model-fallback.ts`.
+
+So the reviewer's original objection was right *and* has now been answered: textual
+mergeability proved nothing, so I measured behavior instead, and the behavior is
+clean. What remains is not staleness — it is the security decision, and `hygiene`
+holds it on `unsponsored_surface` naming `src/codex/auth-context.ts`. The
+`maintainer-sponsored` label *is* that human judgement; an agent applying it would
+be forging the gate rather than passing it.
+
+#2497 went the other way and the contrast is the point. Same "far behind" shape, 402
+commits, and it does **not** rebase: 6 conflict hunks across three credential files,
+of which exactly one is mechanical. The decisive one is delete-vs-modify on the
+entitlement path — `dev` deleted a block the PR modifies — which git cannot resolve
+and I should not. Aborted, nothing pushed, triage in `.tmp/` per `AGENTS.md`.
+
+"Too far behind" was never the real criterion. **Whether the conflicts are
+mechanical is.**
+
+## Two operational findings
+
+**A fork PR runs no product CI until a maintainer approves the workflow run.** Both
+#2740 and #2747 sat in `action_required` showing 5 green checks — and the matrix had
+never started. "5 checks passing" on a fork PR is not a weak signal, it is *no*
+signal. Approve via `gh api -X POST .../actions/runs/<id>/approve`.
+
+**A maintainer force-push resets the contributor's readiness checklist.** That is
+`enforce-target` working correctly: an attestation about the old commit cannot cover
+a new one. But it means the rebase creates work for the author. Two boxes become
+objectively true and can be evidenced; the local-CI attestation and the
+ready-for-review confirmation are theirs. Ask — do not tick them.
+
+## The finding worth keeping
+
+#2794 passed its focused suite 70/0 and still failed three CI shards. Five tests in
+four other suites asserted `thoughtSignature === undefined` and the sentinel filled
+it. The easy read was "stale assertions". Chasing *why* they disagreed found two real
+defects: the replay cache ingested the sentinel as a genuine signature, and
+`isLikelyRealThoughtSignature` — the predicate that exists to reject fabricated ids —
+accepted it.
+
+**When a change breaks another suite, the question is not whether that test is stale.
+It is what that test knew that you did not.** Twice here, the answer was a defect.
+
+## Standing gates, updated
+
+1. Compile and test evidence from the MERGED tree, never the PR head.
+2. Pairwise `git merge-tree` before two PRs sharing a file both land.
+3. Green checks are not health unless `ci` / `test N/4` / `macos` are present — and
+   on a fork PR, confirm the matrix actually **started**.
+4. Green targeted suites are not health either; you chose the targets.
+5. A rebase is verified by `patch-id` and `range-diff`, never by `git diff OLD NEW`,
+   which reports the whole intervening range.
+6. Force-push to a fork only with `--force-with-lease` pinned to the author's OID,
+   to the author's remote, announced on the PR.
+7. `gh run rerun` replays the same commit; only a rebase moves the base.
+8. A gate that asks for human judgement (`maintainer-sponsored`) is not an obstacle
+   to route around.
