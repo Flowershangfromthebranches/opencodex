@@ -12,7 +12,7 @@ like, not a direct push.
 |---|---|---|---|
 | #2740 | FIX | **MERGED** `29be459a3` | rebased under lease, patch-id `48b653f9a33b` unchanged; author added a GUI surface; both regressions mutation-verified |
 | #2693 | REIMPLEMENT | **CLOSED-SUPERSEDED** by #2794 | three blockers closed, each mutation-bound |
-| #2794 | new | **NEEDS_HUMAN** (approval) | CI 23/0, full suite 15352/0; self-approval refused |
+| #2794 | new | **NEEDS_HUMAN** (re-review) | `eebd1913e`; a reviewer blocker found and fixed after the first green matrix |
 | #2747 | FIX | **NEEDS_AUTHOR** (one attestation) | rebased, CI 20/0 green, approved; author owns the local-CI box |
 | #2638 | FIX | **NEEDS_HUMAN** (security) | rebased clean, full suite **15375/0**; `hygiene` correctly holds on `unsponsored_surface` |
 | #2497 | attempt | **NEEDS_AUTHOR** (semantic conflicts) | rebase attempted and aborted; 6 hunks, only 1 mechanical |
@@ -109,3 +109,28 @@ It is what that test knew that you did not.** Twice here, the answer was a defec
 7. `gh run rerun` replays the same commit; only a rebase moves the base.
 8. A gate that asks for human judgement (`maintainer-sponsored`) is not an obstacle
    to route around.
+
+## Postscript: the review caught what green CI could not
+
+#2794 had 23 green checks, a 15352/0 full suite, and four mutation-verified fixes.
+Ingwannu then found that `antigravitySupportsThoughtSignatureSentinel` scanned the
+**entire raw replay identity** rather than the model component. The Vertex key is
+`vertex:<project>:<location>:<modelId>` and the project id is operator-chosen, so:
+
+```
+vertex:gemini-prod:global:gpt-oss-120b   -> true   (Gemini-only sentinel injected)
+vertex:gemini-team:us:claude-fable-5     -> true
+```
+
+That is the same defect class the predicate exists to prevent — a Gemini-only token
+reaching a non-Gemini model — reintroduced one layer up, in the fix for it.
+
+**My tests could not have caught it.** Every Vertex case I wrote used a neutral
+project name, so the positive control was doing double duty as the negative one. A
+test suite written by the person who wrote the bug shares its blind spot; that is
+what the review is for, and it is the third time in this campaign a reviewer found
+something no amount of my own green output would have surfaced.
+
+Fixed by reducing to the model component (last `:` segment, then last `/` segment,
+anchored) rather than widening or blacklisting. Mutation-verified: the whole-string
+scan fails exactly the new regression.
