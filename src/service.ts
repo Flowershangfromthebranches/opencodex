@@ -2676,6 +2676,25 @@ type ServiceInstallCleanupOps = {
   stop: () => void;
 };
 
+/**
+ * Query whether systemd already knows the user service before install cleanup.
+ *
+ * Keep the property name in the output instead of using `systemctl --value`:
+ * CentOS 7's systemd 219 supports `-p LoadState` but not the later `--value`
+ * switch (#2866). Requiring the explicit `LoadState=` key also preserves the
+ * fail-closed boundary — empty, truncated, or unrelated output must not be
+ * mistaken for a confirmed absent unit.
+ */
+export function systemdInstallCleanupStatus(
+  deps: { show?: () => string } = {},
+): string | null {
+  const output = (deps.show ?? (() => sh(`systemctl --user show ${TASK} -p LoadState`)))();
+  const match = /^LoadState=(.*)$/m.exec(output.replace(/\r/g, ""));
+  const loadState = match?.[1]?.trim().toLowerCase() ?? "";
+  if (!loadState) throw new Error("systemd service status could not be verified.");
+  return loadState === "not-found" ? null : loadState;
+}
+
 function platformOps(backend: ServiceBackend = "scheduler"): ServiceOps | null {
   if (process.platform === "darwin")
     return { install: installLaunchd, start: startLaunchd, stop: stopLaunchd, status: statusLaunchd, uninstall: uninstallLaunchd };
@@ -2745,17 +2764,12 @@ function platformServiceInstallCleanupOps(backend: ServiceBackend): ServiceInsta
   }
   if (process.platform === "linux") {
     return {
-      status: () => {
-        // `list-unit-files <name>` exits non-zero when the unit has never been
-        // installed, which made a clean first install look like an unknown manager
-        // failure. `show LoadState` gives us the tri-state we actually need: a
-        // healthy user manager returns `not-found` for a missing unit, while an
-        // unreachable/permission-denied manager still makes `sh()` throw and the
-        // caller therefore fails closed.
-        const loadState = sh(`systemctl --user show ${TASK} --property=LoadState --value`).trim().toLowerCase();
-        if (!loadState) throw new Error("systemd service status could not be verified.");
-        return loadState === "not-found" ? null : loadState;
-      },
+      // `list-unit-files <name>` exits non-zero when the unit has never been
+      // installed, which made a clean first install look like an unknown manager
+      // failure. `show LoadState` gives us the tri-state we actually need; the helper
+      // also keeps this compatible with systemd 219 without weakening fail-closed
+      // manager errors (#2866).
+      status: systemdInstallCleanupStatus,
       stop: () => { sh(`systemctl --user stop ${TASK}`); },
     };
   }
