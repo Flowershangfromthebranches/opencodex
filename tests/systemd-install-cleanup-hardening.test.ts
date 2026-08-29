@@ -14,17 +14,26 @@ describe("systemd install cleanup status hardening", () => {
   });
 
   test("uses the key/value output supported by systemd 219", () => {
-    const helper = source.slice(
-      source.indexOf("export function systemdInstallCleanupStatus"),
-      source.indexOf("function platformOps"),
-    );
+    const start = source.indexOf("export function systemdInstallCleanupStatus");
+    const end = source.indexOf("function platformOps", start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const helper = source.slice(start, end);
 
     expect(helper).toContain("systemctl --user show ${TASK} -p LoadState");
     expect(helper).not.toContain("--value");
   });
 
   test("fails closed on missing, empty, or legacy bare-value output", () => {
-    for (const output of ["", "LoadState=\n", "not-found\n", "ActiveState=inactive\n"]) {
+    for (const output of [
+      "",
+      "LoadState=\n",
+      "not-found\n",
+      "ActiveState=inactive\n",
+      "ActiveState=inactive\nLoadState=loaded\n",
+      "LoadState=loaded\nunexpected\n",
+      "LoadState=loaded\n\n",
+    ]) {
       expect(() => systemdInstallCleanupStatus({ show: () => output }))
         .toThrow("systemd service status could not be verified");
     }

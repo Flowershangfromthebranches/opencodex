@@ -2689,7 +2689,11 @@ export function systemdInstallCleanupStatus(
   deps: { show?: () => string } = {},
 ): string | null {
   const output = (deps.show ?? (() => sh(`systemctl --user show ${TASK} -p LoadState`)))();
-  const match = /^LoadState=(.*)$/m.exec(output.replace(/\r/g, ""));
+  const lines = output.replace(/\r/g, "").split("\n");
+  if (lines[lines.length - 1] === "") lines.pop();
+  const match = lines.length === 1
+    ? /^LoadState=(.+)$/.exec(lines[0] ?? "")
+    : null;
   const loadState = match?.[1]?.trim().toLowerCase() ?? "";
   if (!loadState) throw new Error("systemd service status could not be verified.");
   return loadState === "not-found" ? null : loadState;
