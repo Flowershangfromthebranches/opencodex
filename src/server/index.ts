@@ -31,6 +31,10 @@ import {
   type NativeCodexOwnership,
   type OwnershipInspection,
 } from "../integrations/native/ownership-preflight";
+import {
+  createServiceProbeStartupCache,
+  type ServiceProbeStartupCache,
+} from "../service-manager-probe";
 import { registerCodexCooldownRecoveryProbeWorker } from "../codex/auth-api";
 import {
   reconcileLiveStateStores,
@@ -499,6 +503,7 @@ function inspectStartupOwnership(
   deps: StartServerDeps,
   currentHomes: ReturnType<typeof currentServiceHomes> | null,
   statePaths: readonly string[] | null,
+  startupCache?: ServiceProbeStartupCache,
 ): OwnershipInspection {
   try {
     if (currentHomes === null || statePaths === null) {
@@ -510,7 +515,7 @@ function inspectStartupOwnership(
     if (deps.inspectNativeCodexOwnership) {
       return deps.inspectNativeCodexOwnership({ currentHomes, statePaths });
     }
-    return inspectNativeCodexOwnership({ currentHomes, statePaths });
+    return inspectNativeCodexOwnership({ currentHomes, statePaths, startupCache });
   } catch {
     return {
       ownership: "unknown",
@@ -606,10 +611,21 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
     startupOwnershipHomes = homes;
     startupOwnershipStatePaths = statePaths;
   } catch { /* inspection below stays unknown */ }
+  /*
+   * One shared listing across this startup's ownership inspections (#2923).
+   *
+   * Both inspections below run the targeted scheduled-task query, so the race the
+   * second one exists to close is unaffected. What they no longer do is enumerate
+   * every task on the machine twice: on a localized host with hundreds of tasks the
+   * fallback listing is the expensive step, and paying it at both sites put up to
+   * 40s in front of `Bun.serve`.
+   */
+  const serviceProbeStartupCache = createServiceProbeStartupCache();
   const startupCacheOwnership = inspectStartupOwnership(
     deps,
     startupOwnershipHomes,
     startupOwnershipStatePaths,
+    serviceProbeStartupCache,
   );
   // Startup cache invalidation is best-effort and must never block the server from
   // serving. It now takes K so it cannot race a convergence commit. Use the home
@@ -785,7 +801,12 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
   // clients; no Codex request can use this lifecycle in that state.
   // Re-probe here instead of trusting the earlier cache decision: startup work
   // between the two sites must not widen the service-install race.
-  const nativeOwnership = inspectStartupOwnership(deps, startupOwnershipHomes, startupOwnershipStatePaths);
+  const nativeOwnership = inspectStartupOwnership(
+    deps,
+    startupOwnershipHomes,
+    startupOwnershipStatePaths,
+    serviceProbeStartupCache,
+  );
   const preparedNativeMainLifecycle = nativeOwnership.ownership !== "foreign"
     && startupOwnershipHomes !== null
     ? prepareNativeMainStartupLifecycle(

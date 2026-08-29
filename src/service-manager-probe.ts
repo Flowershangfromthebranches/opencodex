@@ -45,6 +45,36 @@ export const SERVICE_PROBE_TIMEOUT_MS = 2_000;
  */
 export const SERVICE_PROBE_LISTING_TIMEOUT_MS = 20_000;
 
+/**
+ * Caller-owned reuse of the whole-machine `schtasks` enumeration (#2923).
+ *
+ * The listing is the locale-neutral fallback, and on a host with hundreds of tasks
+ * it costs seconds. `startServer` inspects ownership twice on purpose — once
+ * before the startup cache decision, once before native lifecycle preparation — so
+ * a localized host paid the full enumeration TWICE before `Bun.serve`, up to 40s
+ * at the ceiling.
+ *
+ * The scope is deliberately the CALLER'S, not this module's. A module-level cache
+ * would leak across unrelated inspections (and, in tests, across cases), and the
+ * lifetime that is actually correct here is "one startup" — something only the
+ * caller knows. Passing an explicit object makes the sharing visible at both call
+ * sites and impossible anywhere else.
+ *
+ * What is shared is only the listing. The targeted `/query /tn` still runs on
+ * every inspection, so the race the second check exists to close is unaffected: a
+ * task that appears between the two checks is seen by the targeted query, which is
+ * what decides `present`. The listing only ever answers "our task is not among
+ * this machine's tasks", and only after the targeted query was not decisive.
+ */
+export interface ServiceProbeStartupCache {
+  /** Task names the machine reported, lowercased; absent until a listing succeeds. */
+  listedTaskNames?: ReadonlySet<string>;
+}
+
+export function createServiceProbeStartupCache(): ServiceProbeStartupCache {
+  return {};
+}
+
 export type ServiceManagerBackend = "launchd" | "systemd" | "scheduler" | "winsw";
 
 export interface ServiceManagerClaim {
@@ -139,6 +169,12 @@ export interface ProbeDeps {
   readonly winswStatus?: () => "started" | "stopped" | "nonexistent" | "unknown";
   /** Test seam for redirected Windows legacy-codepage output. */
   readonly windowsLocale?: string;
+  /**
+   * Opt-in reuse of the expensive task listing across the inspections of ONE
+   * startup. Omit it and every inspection enumerates independently, exactly as
+   * before.
+   */
+  readonly startupCache?: ServiceProbeStartupCache;
 }
 
 const LABEL = "com.opencodex.proxy";
@@ -552,6 +588,16 @@ function windowsTaskListContains(body: string, taskName: string): boolean {
   });
 }
 
+/** The same normalization {@link windowsTaskListContains} applies, kept for reuse. */
+function windowsTaskListNames(body: string): ReadonlySet<string> {
+  const names = new Set<string>();
+  for (const line of body.split(/\r?\n/)) {
+    const field = csvFirstField(line).replace(/\//g, "\\").replace(/^\\+/, "");
+    if (field.length > 0) names.add(field.toLowerCase());
+  }
+  return names;
+}
+
 /**
  * The English message: a fast path on an English host, and nothing more.
  *
@@ -579,7 +625,7 @@ const SCHTASKS_TASK_NOT_FOUND_EN = /cannot find the file specified/i;
  * fallback, and only a successful list without our task proves absence.
  */
 function probeWindowsTaskRegistration(
-  deps: Required<Pick<ProbeDeps, "runRaw">> & Pick<ProbeDeps, "windowsLocale">,
+  deps: Required<Pick<ProbeDeps, "runRaw">> & Pick<ProbeDeps, "windowsLocale" | "startupCache">,
 ): {
   registered: "present" | "absent" | "unknown";
   registeredXml: string;
@@ -606,16 +652,26 @@ function probeWindowsTaskRegistration(
     return { registered: "absent", registeredXml: "" };
   }
 
+  const shared = deps.startupCache?.listedTaskNames;
+  if (shared !== undefined) {
+    return shared.has(windowsTaskName().toLowerCase())
+      ? { registered: "unknown", registeredXml: "" }
+      : { registered: "absent", registeredXml: "" };
+  }
+
   const listed = deps.runRaw(
     schtasks,
     ["/query", "/fo", "CSV", "/nh"],
     { timeoutMs: SERVICE_PROBE_LISTING_TIMEOUT_MS },
   );
   if (listed.spawnFailed || listed.timedOut || listed.status !== 0) {
+    // Deliberately not shared: caching a stall would turn one transient failure
+    // into an unprovable ownership for the rest of the startup, which refuses writes.
     return { registered: "unknown", registeredXml: "" };
   }
   const listing = decodeWindowsTextBytes(listed.stdout, { locale: deps.windowsLocale })
     || decodeWindowsTextBytes(listed.stderr, { locale: deps.windowsLocale });
+  if (deps.startupCache) deps.startupCache.listedTaskNames = windowsTaskListNames(listing);
   return windowsTaskListContains(listing, windowsTaskName())
     ? { registered: "unknown", registeredXml: "" }
     : { registered: "absent", registeredXml: "" };
@@ -654,7 +710,7 @@ function probeWinswRegistration(
 
 function inspectWindows(
   deps: Required<Pick<ProbeDeps, "runRaw" | "home">>
-    & Pick<ProbeDeps, "configDir" | "winswStatus" | "windowsLocale">,
+    & Pick<ProbeDeps, "configDir" | "winswStatus" | "windowsLocale" | "startupCache">,
 ): ServiceManagerInstallation {
   const configDir = windowsConfigDirPath(deps);
   const taskXmlPath = join(configDir, "opencodex-service-task.xml");
@@ -934,6 +990,7 @@ export function inspectServiceManagerInstallation(deps: ProbeDeps = {}): Service
       configDir: deps.configDir,
       winswStatus: deps.winswStatus,
       windowsLocale: deps.windowsLocale,
+      startupCache: deps.startupCache,
     });
   }
   return unknown(`no service manager probe for platform ${platform}`);

@@ -5,6 +5,8 @@ import { join } from "node:path";
 
 import {
   inspectServiceManagerInstallation,
+  createServiceProbeStartupCache,
+  type ServiceManagerInstallation,
   type RawProbeRunner,
 } from "../src/service-manager-probe";
 import { inspectNativeCodexOwnership } from "../src/integrations/native/ownership-preflight";
@@ -206,6 +208,124 @@ describe("Windows ownership probe hardening regressions", () => {
 
     // A wider budget must not become an excuse to guess when it still expires.
     expect(result.kind).toBe("unknown");
+  });
+
+  /*
+   * #2923, a regression from #2914's own fix. `startServer` inspects ownership
+   * twice on purpose — before the startup cache decision and before native
+   * lifecycle preparation — so on a localized host the 20s full-machine listing
+   * was paid at BOTH sites: ~25s measured, 40s at the ceiling, all of it before
+   * `Bun.serve`.
+   *
+   * The listing is shared through a caller-owned cache. These cases pin the three
+   * things that make that safe rather than merely faster.
+   */
+  function localizedListingRunner(
+    calls: Array<{ args: readonly string[] }>,
+    listing: string,
+  ): RawProbeRunner {
+    return (file, args) => {
+      calls.push({ args });
+      if (file.toLowerCase().endsWith("sc.exe")) return raw(1, "", "1060");
+      if (args.includes("/xml")) {
+        return { status: 1, stdout: Buffer.alloc(0), stderr: GBK_TASK_NOT_FOUND, timedOut: false, spawnFailed: false };
+      }
+      if (args.includes("/fo")) return raw(0, listing);
+      return raw(1, "", "");
+    };
+  }
+
+  test("one startup enumerates the whole machine once, not once per inspection (#2923)", () => {
+    const calls: Array<{ args: readonly string[] }> = [];
+    const runRaw = localizedListingRunner(calls, '"\\SomeOtherTask","N/A","Ready"\r\n');
+    const startupCache = createServiceProbeStartupCache();
+    const probe = (): ServiceManagerInstallation => inspectServiceManagerInstallation({
+      platform: "win32",
+      home,
+      configDir,
+      windowsLocale: "zh-CN",
+      runRaw,
+      winswStatus: () => "nonexistent",
+      startupCache,
+    });
+
+    expect(probe().kind).toBe("absent");
+    expect(probe().kind).toBe("absent");
+
+    // The expensive enumeration happened once for the startup...
+    expect(calls.filter(call => call.args.includes("/fo"))).toHaveLength(1);
+    // ...while the targeted query — the race-sensitive evidence the second
+    // inspection exists for — still ran on both.
+    expect(calls.filter(call => call.args.includes("/xml")).length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("a task registered between the two inspections is not reported absent (#2923)", () => {
+    const calls: Array<{ args: readonly string[] }> = [];
+    let registered = false;
+    const runRaw: RawProbeRunner = (file, args) => {
+      calls.push({ args });
+      if (file.toLowerCase().endsWith("sc.exe")) return raw(1, "", "1060");
+      if (args.includes("/xml")) {
+        // Absent on the first inspection, registered by the second.
+        if (!registered) {
+          return { status: 1, stdout: Buffer.alloc(0), stderr: GBK_TASK_NOT_FOUND, timedOut: false, spawnFailed: false };
+        }
+        return raw(0, schedulerXml(join(configDir, "opencodex-service-launcher.vbs")));
+      }
+      if (args.includes("/fo")) return raw(0, '"\\SomeOtherTask","N/A","Ready"\r\n');
+      return raw(1, "", "");
+    };
+    const startupCache = createServiceProbeStartupCache();
+    const probe = (): ServiceManagerInstallation => inspectServiceManagerInstallation({
+      platform: "win32",
+      home,
+      configDir,
+      windowsLocale: "zh-CN",
+      runRaw,
+      winswStatus: () => "nonexistent",
+      startupCache,
+    });
+
+    expect(probe().kind).toBe("absent");
+    registered = true;
+    // A cached LISTING must not mask a newly present task: the targeted query
+    // decides `present`, and it is never cached. Reporting `absent` here is the
+    // race the second inspection exists to close.
+    expect(probe().kind).not.toBe("absent");
+  });
+
+  test("a stalled listing is not cached as evidence for the rest of the startup (#2923)", () => {
+    const calls: Array<{ args: readonly string[] }> = [];
+    let stall = true;
+    const runRaw: RawProbeRunner = (file, args) => {
+      calls.push({ args });
+      if (file.toLowerCase().endsWith("sc.exe")) return raw(1, "", "1060");
+      if (args.includes("/xml")) {
+        return { status: 1, stdout: Buffer.alloc(0), stderr: GBK_TASK_NOT_FOUND, timedOut: false, spawnFailed: false };
+      }
+      if (args.includes("/fo")) {
+        if (stall) return raw(null, "", "", { timedOut: true });
+        return raw(0, '"\\SomeOtherTask","N/A","Ready"\r\n');
+      }
+      return raw(1, "", "");
+    };
+    const startupCache = createServiceProbeStartupCache();
+    const probe = (): ServiceManagerInstallation => inspectServiceManagerInstallation({
+      platform: "win32",
+      home,
+      configDir,
+      windowsLocale: "zh-CN",
+      runRaw,
+      winswStatus: () => "nonexistent",
+      startupCache,
+    });
+
+    expect(probe().kind).toBe("unknown");
+    stall = false;
+    // A transient stall must not become a sticky refusal: the second inspection
+    // retries the listing and reaches a real answer.
+    expect(probe().kind).toBe("absent");
+    expect(calls.filter(call => call.args.includes("/fo"))).toHaveLength(2);
   });
 
   test("a scheduler registered for another OpenCodex home does not claim the current home (#2800)", () => {
