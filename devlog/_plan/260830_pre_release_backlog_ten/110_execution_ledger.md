@@ -50,6 +50,16 @@ independently confirmed.
   decision, named.
 - Never mark a row done from memory. Re-read the tree or the API.
 
+## Standing status
+
+Six PRs are open and awaiting maintainer review: **#2976** (WP9), **#2978** (WP6),
+**#2979** (WP8), **#2980** (WP7), **#2981** (WP10), **#2982** (WP4). None were
+self-merged: the authorization covers landing these ten items, and every one of them
+carries a live review or a review request that belongs to a maintainer.
+
+WP2 (#2818) stays `BLOCKED` on a review its author dismissed and has not restored.
+WP3 (#2498) and WP5 (#2083) remain open merge phases.
+
 ## WP2 — why it is BLOCKED rather than merged
 
 The plan called this the one PR needing no code change and no rebase. Re-measuring at
