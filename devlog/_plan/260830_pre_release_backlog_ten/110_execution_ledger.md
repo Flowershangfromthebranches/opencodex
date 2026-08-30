@@ -32,9 +32,9 @@ independently confirmed.
 | WP | Item | Landing | Evidence | Outcome |
 |---|---|---|---|---|
 | WP2 | PR #2818 | not landed | exact-head CI green (23 pass) but `BLOCKED`/`REVIEW_REQUIRED`; see below | `BLOCKED` |
-| WP3 | PR #2498 | | | pending |
+| WP3 | PR #2498 → **PR #2985** | carry `codex/carry-2498-grok-multi-agent` | 4 commits cherry-picked w/ author credit; typecheck 0, 72 pass + 330 pass, 0 fail | PR open |
 | WP4 | PR #2560 → **PR #2982** | carry `codex/carry-2560-anthropic-quota-window` | 19 commits cherry-picked w/ author credit; security review FAIL → fixed; typecheck 0, 83 pass/0 fail, privacy green | PR open |
-| WP5 | PR #2083 | | | pending |
+| WP5 | PR #2083 → **PR #2986** | carry `codex/carry-2083-xai-imagine` | 8 commits cherry-picked w/ author credit; security review PASS WITH NOTES; typecheck 0, 104 pass/0 fail, privacy green | PR open |
 | WP6 | PR #2350 → **PR #2978** | carry `codex/carry-2350-empty-tool-output` | 10 commits cherry-picked w/ author credit + POST fix; regression driven red; review fixes → 110 pass/0 fail | PR open, review folded |
 | WP7 | docs/locale parity → **PR #2980** | `codex/wp7-docs-locale-parity` | typecheck 0; cli-account 102 pass/0 fail; docs build 401 pages; per-locale greps verified | PR open |
 | WP8 | issue #809 → **PR #2979** | `codex/wp8-least-privilege-catalog` | typecheck 0; route suite 6 pass/0 fail; 157 pass/0 fail auth+boundary; privacy green; docs 401 pages | PR open, review folded |
@@ -52,13 +52,38 @@ independently confirmed.
 
 ## Standing status
 
-Six PRs are open and awaiting maintainer review: **#2976** (WP9), **#2978** (WP6),
-**#2979** (WP8), **#2980** (WP7), **#2981** (WP10), **#2982** (WP4). None were
-self-merged: the authorization covers landing these ten items, and every one of them
-carries a live review or a review request that belongs to a maintainer.
+**Eight PRs are open and awaiting maintainer review:** #2976 (WP9), #2978 (WP6),
+#2979 (WP8), #2980 (WP7), #2981 (WP10), #2982 (WP4), #2985 (WP3), #2986 (WP5).
 
-WP2 (#2818) stays `BLOCKED` on a review its author dismissed and has not restored.
-WP3 (#2498) and WP5 (#2083) remain open merge phases.
+None were self-merged. The authorization covers landing these ten items, but every one
+carries a live review or an open review request that belongs to a maintainer, and
+merging past that is a different act from landing the work.
+
+WP2 (#2818) stays `BLOCKED`: its author dismissed their own approval and wrote that
+green CI "is not a merge signal" while the owner review request remains open.
+WP11 is a verified `NOOP`.
+
+### Contributor attribution
+
+Four phases are carries of contributor work, cherry-picked with authorship preserved so
+`git log` credits the original author rather than the maintainer:
+`harryzhou2000` (#2978), `Yoonkeee` (#2982), `olddonkey` (#2985),
+`zhou-zhichao` (#2986). Each original PR should close with `landed-via-maintainer`
+once its carry lands. `TooSpace`'s design is credited in the #2981 commit message,
+which is a re-implementation rather than a cherry-pick.
+
+### Security reviews performed
+
+Two phases touched credential surfaces and got independent reviews, drafted in `.tmp/`
+with only sanitized outcomes committed:
+
+- **WP4 (#2982): FAIL → fixed.** Known-before-unknown ranking applied to operators who
+  never opted in, changing the five-hour default path. Fixed and pinned by regression.
+  A second finding — the shared quota cache trusting stale evidence — is pre-existing
+  and was disclosed in the PR body rather than silently widened.
+- **WP5 (#2986): PASS WITH NOTES.** Credentials pinned to `api.x.ai`, redirects fail
+  closed, opt-in verified to fail closed on missing OAuth. The note is that artifact
+  authorization is proxy-wide rather than per-user.
 
 ## WP2 — why it is BLOCKED rather than merged
 
