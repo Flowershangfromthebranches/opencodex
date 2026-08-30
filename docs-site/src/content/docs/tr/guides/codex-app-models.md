@@ -224,7 +224,7 @@ Gerçek merdiveni `xhigh` ile duran daha eski yerel modeller için
 eşler (örneğin GPT-5.5). Sol, Terra ve Luna gerçek bir `max` basamağına
 sahiptir.
 
-## Hızlı katman kuralları
+## Fast ve Ultrafast katman kuralları
 
 Codex hızlı modu şu şekilde saklar:
 
@@ -236,13 +236,22 @@ fast_mode = true
 ```
 
 Ancak model kataloğu ve çalışma zamanı istek katmanı kimliği `priority`
-kullanır. opencodex bu ayrımı korur. Yerel OpenAI doğrudan geçiş modelleri hızlı
-desteği korur; yönlendirilen sağlayıcılar yetenek geçişlidir — `service_tier`
+kullanır. opencodex bu ayrımı korur. Güncel Codex katalogları erişim denetimli
+Ultrafast katmanını da `service_tier = "ultrafast"` olarak sunar. Yerleşik fallback
+bunu yalnızca `gpt-5.6-sol` için bildirir; yetkili bir `gpt-daybreak-blue-latest`
+satırı Sol yeteneklerini devralır. Terra ve Luna Fast'i korur ancak Ultrafast almaz.
+Sabitlenmiş Codex kaynağı `additional_speed_tiers` alanını bilinçli olarak `["fast"]`
+değerinde tutar; Ultrafast yalnızca `service_tiers` içinde yer alır. Modelin seçtiği
+`ultrafast` değerini korumak için opencodex genel Fast ayarını Auto'da bırakın; Fast'i
+zorlamak bunun yerine `priority` seçer.
+
+Yerel OpenAI doğrudan geçiş modelleri bildirdikleri hız katmanlarını korur;
+yönlendirilen sağlayıcılar yetenek geçişlidir — `service_tier`
 yalnızca sağlayıcı `supportsServiceTier: false` bildirdiğinde kaldırılır (kayıt
 defteri kurallı OpenAI'yi `true`, DeepSeek ve Volcengine Ark'ı `false` olarak
 sınıflandırır), sınıflandırılmamış özel ağ geçitleri ise arayan tarafından
 sağlanan değerleri dokunulmadan korur ve asla bir enjeksiyon almaz. Hızlı
-seçenek yerine getirilemediği yerlerde asla tanıtılmaz ve özel ağ geçitleri
+hız seçeneği yerine getirilemediği yerlerde asla tanıtılmaz ve özel ağ geçitleri
 `true` ile açıkça dahil olabilir.
 
 ## Alt ajan seçimi
@@ -314,4 +323,3 @@ ocx sync
 opencodex, katalog görünürlüğü, önceliği veya meta verileri her değiştiğinde
 `models_cache.json` dosyasını kasıtlı olarak eski bir önbellek sarmalayıcısıyla
 yeniden yazar, böylece bir sonraki Codex model yenilemesi yeni kataloğu okur.
-

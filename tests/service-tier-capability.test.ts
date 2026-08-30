@@ -419,10 +419,18 @@ describe("the gate fires on the live handleResponses path", () => {
     expect("service_tier" in off).toBe(false);
   });
 
-  test("canonical OpenAI preserves a caller value when fastMode is unset", async () => {
-    const body = await drive("openai-apikey", openAiKeyProvider(), "gpt-5.5", { service_tier: "flex" });
-    expect(body.service_tier).toBe("flex");
-  });
+  test.each(["flex", "ultrafast"])(
+    "canonical OpenAI preserves caller service_tier=%s when fastMode is unset",
+    async serviceTier => {
+      const body = await drive(
+        "openai-apikey",
+        openAiKeyProvider(),
+        "gpt-5.6-sol",
+        { service_tier: serviceTier },
+      );
+      expect(body.service_tier).toBe(serviceTier);
+    },
+  );
 
   test("xAI API-key runtime injects priority while OAuth does not", async () => {
     const keyBody = await drive("xai", xaiKeyProvider(), "grok-4.6", {}, true);

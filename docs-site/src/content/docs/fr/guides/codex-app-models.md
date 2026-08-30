@@ -187,7 +187,7 @@ Sur le réseau, les adaptateurs routés convertissent ou plafonnent les niveaux 
 anciens modèles natifs dont l'échelle réelle s'arrête à `xhigh`, `nativeEffortClamp` convertit une sélection
 directe `max` ou `ultra` en `xhigh` (GPT-5.5, par exemple). Sol, Terra et Luna possèdent un véritable niveau `max`.
 
-## Règles du niveau rapide
+## Règles des niveaux Fast et Ultrafast
 
 Codex enregistre le mode rapide ainsi :
 
@@ -199,8 +199,16 @@ fast_mode = true
 ```
 
 Toutefois, le catalogue de modèles et l'identifiant du niveau employé dans la requête d'exécution utilisent
-`priority`. opencodex préserve cette distinction. Les modèles OpenAI natifs transférés conservent la prise en
-charge du mode rapide ; les fournisseurs routés sont conditionnés par leurs capacités. `service_tier` n'est
+`priority`. opencodex préserve cette distinction. Les catalogues Codex actuels exposent aussi le niveau
+Ultrafast contrôlé par accès sous la forme `service_tier = "ultrafast"`. Le fallback intégré ne l'annonce que
+pour `gpt-5.6-sol` ; une ligne `gpt-daybreak-blue-latest` autorisée hérite des capacités de Sol. Terra et Luna
+conservent Fast sans recevoir Ultrafast. La source Codex épinglée conserve intentionnellement
+`additional_speed_tiers` à `["fast"]` : Ultrafast appartient à `service_tiers`. Laissez le réglage Fast
+global d'opencodex sur Auto pour préserver un `ultrafast` choisi par le modèle ; forcer Fast sélectionne
+`priority` à la place.
+
+Les modèles OpenAI natifs transférés conservent leurs niveaux de vitesse déclarés ; les fournisseurs routés
+sont conditionnés par leurs capacités. `service_tier` n'est
 retiré que si le fournisseur déclare `supportsServiceTier: false` (le registre classe OpenAI canonique comme
 `true`, et DeepSeek ainsi que Volcengine Ark comme `false`). Les passerelles personnalisées non classées
 conservent intactes les valeurs transmises par l'appelant et ne reçoivent jamais d'injection. Une passerelle
@@ -208,7 +216,7 @@ personnalisée peut l’activer globalement avec `supportsServiceTier: true`, ou
 modèles avec `modelSupportsServiceTier: { "verified-model": true }`. Une valeur exacte `false` restreint une
 valeur globale `true`, tandis que `supportsServiceTier: false` reste fermé par défaut. La décision finale de
 l’adaptateur et du modèle régit à la fois les métadonnées du catalogue et l’injection à l’exécution ;
-l’option rapide n’est donc jamais annoncée lorsqu’elle ne peut être respectée. Une destination
+une option de vitesse n’est donc jamais annoncée lorsqu’elle ne peut être respectée. Une destination
 `openai-chat` peut autoriser tous les modèles autrement admissibles avec `chatServiceTier: true`, ou
 uniquement des modèles précis avec `modelSupportsServiceTier` ; les routes Responses n’ont pas besoin de
 cette autorisation supplémentaire sur le protocole Chat.

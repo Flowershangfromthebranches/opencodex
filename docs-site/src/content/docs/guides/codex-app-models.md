@@ -225,9 +225,9 @@ On the wire, routed adapters map or clamp unsupported tiers. For older native mo
 ladder stops at `xhigh`, `nativeEffortClamp` maps a direct `max` or an `ultra` selection to `xhigh`
 (for example, GPT-5.5). Sol, Terra, and Luna have a real `max` rung.
 
-## Fast tier rules
+## Fast and Ultrafast tier rules
 
-Codex stores fast mode as:
+Codex stores Fast mode as:
 
 ```toml
 service_tier = "fast"
@@ -236,15 +236,22 @@ service_tier = "fast"
 fast_mode = true
 ```
 
-But the model catalog and runtime request tier id use `priority`. opencodex preserves that split.
-Native OpenAI passthrough models keep fast support; routed providers are capability-gated —
+The model catalog and runtime request tier id use `priority`, and opencodex preserves that split.
+Current Codex catalogs also expose access-controlled Ultrafast as model-owned
+`service_tier = "ultrafast"`. The pinned fallback advertises it only on `gpt-5.6-sol`; an entitled
+`gpt-daybreak-blue-latest` row inherits Sol's capability metadata. Terra and Luna retain Fast but do
+not gain Ultrafast. The pinned Codex source intentionally leaves `additional_speed_tiers` at
+`["fast"]`: Ultrafast lives in `service_tiers`. Leave opencodex's global Fast setting on Auto to
+preserve a model-selected `ultrafast`; forcing Fast explicitly selects `priority` instead.
+
+Native OpenAI passthrough models keep their declared speed tiers; routed providers are capability-gated —
 `service_tier` is stripped only when the provider declares `supportsServiceTier: false` (the registry
 classifies canonical OpenAI as `true`, DeepSeek and Volcengine Ark as `false`), while unclassified
 custom gateways keep caller-supplied values untouched and never get an injection. A custom gateway
 can opt in globally with `supportsServiceTier: true`, or narrowly with
 `modelSupportsServiceTier: { "verified-model": true }`; an exact `false` narrows a provider
 default of `true`, while provider-level `false` remains fail-closed. The same final adapter/model
-decision controls both catalog metadata and runtime injection, so the fast option is never
+decision controls both catalog metadata and runtime injection, so a speed option is never
 advertised where it cannot be honored. An `openai-chat` destination can authorize every otherwise
 eligible model with `chatServiceTier: true`, or authorize only exact models with
 `modelSupportsServiceTier`; Responses routes do not need that extra Chat wire authorization.

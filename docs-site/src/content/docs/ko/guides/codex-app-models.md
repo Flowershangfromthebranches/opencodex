@@ -156,7 +156,7 @@ wire에서는 라우팅 어댑터가 지원하지 않는 tier를 매핑하거나
 이전 네이티브 모델에서는 `nativeEffortClamp`가 직접 지정한 `max` 또는 `ultra` 선택을 `xhigh`로 바꿉니다.
 예를 들면 GPT-5.5가 그렇습니다. Sol, Terra, Luna에는 실제 `max` 단계가 있습니다.
 
-## Fast tier 규칙
+## Fast 및 Ultrafast tier 규칙
 
 Codex는 fast 모드를 다음처럼 저장합니다.
 
@@ -168,10 +168,18 @@ fast_mode = true
 ```
 
 하지만 모델 카탈로그와 런타임 요청 tier id는 `priority`를 씁니다. opencodex는 이 분리를 그대로
-유지합니다. 네이티브 OpenAI passthrough 모델은 fast 지원을 유지하고, 라우팅된 프로바이더는
+유지합니다. 최신 Codex 카탈로그는 접근 권한이 필요한 Ultrafast도
+`service_tier = "ultrafast"`로 노출합니다. 내장 fallback은 `gpt-5.6-sol`에만 이를 광고하며,
+권한이 확인된 `gpt-daybreak-blue-latest` 행은 Sol의 케이퍼빌리티를 상속합니다. Terra와 Luna는
+Fast만 유지하고 Ultrafast를 추가하지 않습니다. 고정된 Codex 원본은 `additional_speed_tiers`를
+의도적으로 `["fast"]`로 유지하며, Ultrafast는 `service_tiers`에만 표시합니다. 모델에서 고른
+`ultrafast`를 보존하려면 opencodex의 전역 Fast 설정을 Auto로 두어야 합니다. Fast를 강제로
+켜면 대신 `priority`가 선택됩니다.
+
+네이티브 OpenAI passthrough 모델은 선언된 속도 tier를 유지하고, 라우팅된 프로바이더는
 케이퍼빌리티로 게이트되어 프로바이더가 `supportsServiceTier: false`를 선언한 경우에만
 `service_tier`가 제거됩니다(레지스트리가 정식 OpenAI를 `true`, DeepSeek과 Volcengine Ark를 `false`로 분류). 미분류 커스텀 게이트웨이는 호출자가 준 값을 그대로 보존하고 주입도 받지 않습니다. 따라서
-처리 불가능한 곳에 fast 옵션이 노출되지 않으며, 커스텀 게이트웨이는 `true`로 명시적으로 옵트인할 수 있습니다.
+처리 불가능한 곳에 속도 옵션이 노출되지 않으며, 커스텀 게이트웨이는 `true`로 명시적으로 옵트인할 수 있습니다.
 
 ## 서브에이전트 선택
 

@@ -89,7 +89,7 @@ exact selector 行が表示されず、切り替えることもできません�
 
 回線上では、ルーティングされたアダプターがサポートされていない層をマップまたはクランプします。実際のラダーが `xhigh` で停止する古いネイティブ モデルの場合、`nativeEffortClamp` は直接 `max` または `ultra` 選択を `xhigh` にマップします (GPT-5.5 など)。ソル、テラ、ルナは本物の `max` ラングを持っています。
 
-## 高速層のルール
+## Fast / Ultrafast 層のルール
 
 Codex は高速モードを次のように保存します。
 
@@ -100,7 +100,9 @@ service_tier = "fast"
 fast_mode = true
 ```
 
-ただし、モデル カタログとランタイム リクエスト層 ID は `priority` を使用します。opencodex はその分割を保持します。ネイティブ OpenAI パススルー モデルは高速サポートを維持します。ルーティングされたプロバイダーはケイパビリティでゲートされ、`supportsServiceTier: false` と宣言された場合のみ `service_tier` が削除されます (レジストリは正規 OpenAI を `true`、DeepSeek と Volcengine Ark を `false` に分類します)。未分類のカスタム ゲートウェイは呼び出し元の値をそのまま保持し、注入もされません。そのため、受け入れられない場所で高速オプションがアドバタイズされることはなく、カスタム ゲートウェイは `true` で明示的にオプトインできます。
+ただし、モデル カタログとランタイム リクエスト層 ID は `priority` を使用します。opencodex はその分割を保持します。現在の Codex カタログは、アクセス制御された Ultrafast も `service_tier = "ultrafast"` として公開します。組み込み fallback がこれを公開するのは `gpt-5.6-sol` だけで、利用資格のある `gpt-daybreak-blue-latest` 行は Sol の能力を継承します。Terra と Luna は Fast のみを維持し、Ultrafast は追加されません。固定した Codex ソースでは `additional_speed_tiers` を意図的に `["fast"]` のままにし、Ultrafast は `service_tiers` だけで表します。モデルで選んだ `ultrafast` を維持するには opencodex のグローバル Fast 設定を Auto のままにしてください。Fast を強制すると、代わりに `priority` が選択されます。
+
+ネイティブ OpenAI パススルー モデルは宣言済みの速度層を維持します。ルーティングされたプロバイダーはケイパビリティでゲートされ、`supportsServiceTier: false` と宣言された場合のみ `service_tier` が削除されます (レジストリは正規 OpenAI を `true`、DeepSeek と Volcengine Ark を `false` に分類します)。未分類のカスタム ゲートウェイは呼び出し元の値をそのまま保持し、注入もされません。そのため、受け入れられない場所で速度オプションがアドバタイズされることはなく、カスタム ゲートウェイは `true` で明示的にオプトインできます。
 
 ## サブエージェントの選択
 

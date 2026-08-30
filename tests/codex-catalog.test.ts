@@ -2729,6 +2729,23 @@ describe("Codex catalog routed normalization", () => {
     expect(sol?.description).toBe("Latest frontier agentic coding model.");
     expect(sol?.availability_nux).toBeDefined();
 
+    // Codex 0.151 exposes model-owned service tiers. Ultrafast is currently Sol-only;
+    // Terra and Luna keep the existing Fast row and must not inherit the new tier.
+    expect(sol?.service_tiers).toEqual([
+      { id: "priority", name: "Fast", description: "1.5x speed, increased usage" },
+      {
+        id: "ultrafast",
+        name: "Ultrafast",
+        description: "The fastest available responses for latency-sensitive work.",
+      },
+    ]);
+    expect(terra?.service_tiers).toEqual([
+      { id: "priority", name: "Fast", description: "1.5x speed, increased usage" },
+    ]);
+    expect(luna?.service_tiers).toEqual([
+      { id: "priority", name: "Fast", description: "1.5x speed, increased usage" },
+    ]);
+
     // Per-slug multi-agent generation: sol/terra v2, luna v1.
     expect(sol?.multi_agent_version).toBe("v2");
     expect(terra?.multi_agent_version).toBe("v2");
@@ -2913,6 +2930,12 @@ describe("Codex catalog routed normalization", () => {
       supports_parallel_tool_calls: true,
       supports_search_tool: true,
       multi_agent_version: "v2",
+    });
+    expect(source?.service_tiers).toEqual(upstreamNativeEntry("gpt-5.6-sol")?.service_tiers);
+    expect(source?.service_tiers).toContainEqual({
+      id: "ultrafast",
+      name: "Ultrafast",
+      description: "The fastest available responses for latency-sensitive work.",
     });
     expect(source).not.toHaveProperty("availability_nux");
     expect(source?.base_instructions).toContain("powered by the gpt-daybreak-blue-latest");

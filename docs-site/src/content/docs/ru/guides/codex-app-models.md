@@ -137,7 +137,7 @@ routed provider-id `provider/model`. Account-qualified id `<selector>/<native-op
 `nativeEffortClamp` переводит прямой выбор `max` или `ultra` в `xhigh` (например, у GPT-5.5). У
 Sol, Terra и Luna есть настоящая ступень `max`.
 
-## Правила fast-tier
+## Правила Fast- и Ultrafast-tier
 
 Codex хранит fast-mode так:
 
@@ -149,9 +149,17 @@ fast_mode = true
 ```
 
 Но каталог моделей и id tier'а во время выполнения используют `priority`. opencodex сохраняет это
-разделение. Нативные passthrough-модели OpenAI сохраняют поддержку fast; routed-провайдеры ограничены
+разделение. Современные каталоги Codex также публикуют доступный по разрешению Ultrafast как
+`service_tier = "ultrafast"`. Встроенный fallback объявляет его только для `gpt-5.6-sol`, а доступная
+учётной записи строка `gpt-daybreak-blue-latest` наследует возможности Sol. Terra и Luna сохраняют Fast,
+но не получают Ultrafast. Закреплённый источник Codex намеренно оставляет
+`additional_speed_tiers` равным `["fast"]`: Ultrafast задаётся через `service_tiers`. Чтобы сохранить
+выбранный моделью `ultrafast`, оставьте глобальную настройку Fast в opencodex в режиме Auto; явное
+включение Fast вместо этого выбирает `priority`.
+
+Нативные passthrough-модели OpenAI сохраняют объявленные speed-tier; routed-провайдеры ограничены
 capability-гейтом — `service_tier` удаляется только когда провайдер объявил `supportsServiceTier: false` (registry классифицирует canonical OpenAI как `true`, DeepSeek и Volcengine Ark как `false`); неклассифицированные custom gateway'и сохраняют значения вызывающего без изменений и не получают подстановку.
-Так что опция fast не рекламируется там, где её нельзя выполнить, а custom gateway'и могут включить её явно через `true`.
+Так что speed-опция не рекламируется там, где её нельзя выполнить, а custom gateway'и могут включить её явно через `true`.
 
 ## Выбор подагентов
 

@@ -119,17 +119,23 @@ The recognized Codex effort ladder is `low < medium < high < xhigh < max < ultra
 
 ## Fast tier handling
 
-Codex uses a split between config spelling and runtime/catalog spelling:
+Codex uses model-owned service-tier metadata. Fast keeps a split between its config spelling and
+runtime/catalog id, while Ultrafast uses the same id on both surfaces:
 
 | Surface | Value |
 |---|---|
-| `config.toml` persistence | `service_tier = "fast"` |
-| catalog/request tier id | `priority` |
-| feature gate | `[features].fast_mode = true` |
+| `config.toml` persistence | Fast: `service_tier = "fast"`; Ultrafast: `service_tier = "ultrafast"` |
+| catalog/request tier id | Fast: `priority`; Ultrafast: `ultrafast` |
+| feature gate | Fast only: `[features].fast_mode = true`; Ultrafast is access-controlled model metadata |
 | provider/account gate | `requires_openai_auth = true` |
 
-Native OpenAI passthrough models can keep fast metadata. Routed non-OpenAI models must not inherit
-that metadata from the native template:
+The pinned fallback advertises Ultrafast only for `gpt-5.6-sol`; the entitlement-gated
+`gpt-daybreak-blue-latest` capability alias inherits the same Sol tier set. Terra and Luna retain
+Fast without Ultrafast. The pinned Codex source intentionally keeps `additional_speed_tiers` at
+`["fast"]`; Ultrafast is represented by `service_tiers`, not that legacy field. An explicit global
+Fast override still selects `priority`, while Auto/passthrough preserves a caller-selected
+`ultrafast`. Native OpenAI passthrough models can keep their declared tier metadata.
+Routed non-OpenAI models must not inherit that metadata from the native template:
 
 ```text
 delete additional_speed_tiers
@@ -138,8 +144,8 @@ delete service_tiers
 delete default_service_tier
 ```
 
-This prevents fast from appearing for providers where Codex/OpenAI priority processing is not a valid
-request option.
+This prevents OpenAI speed tiers from appearing for providers where the corresponding processing
+mode is not a valid request option.
 
 ## Cache invalidation
 

@@ -102,7 +102,7 @@ Models 页面上的 v1/base/v2 控件会改变每个选择器条目使用的 Cod
 
 在传输层面，路由 adapter 会映射或钳制不受支持的档位。对于真实阶梯止于 `xhigh` 的较老原生模型，`nativeEffortClamp` 会把直接的 `max` 或 `ultra` 选择映射到 `xhigh`，例如 GPT-5.5。Sol、Terra 和 Luna 都有真实的 `max` 档位。
 
-## Fast tier 规则
+## Fast 与 Ultrafast tier 规则
 
 Codex 会把 fast 模式保存为：
 
@@ -113,7 +113,9 @@ service_tier = "fast"
 fast_mode = true
 ```
 
-但模型目录和运行时请求里的 tier id 使用的是 `priority`。opencodex 保留了这个拆分。原生 OpenAI 透传模型保留 fast 支持；路由的提供商会按能力门控——只有当提供商声明 `supportsServiceTier: false` 时才会剥离 `service_tier`（注册表已将官方 OpenAI 分类为 `true`，DeepSeek 和 Volcengine Ark 分类为 `false`）；未分类的自定义网关会原样保留调用方提供的值且绝不注入，因此无法兑现的 fast 选项不会被展示，自定义网关也可以用 `true` 显式启用。
+但模型目录和运行时请求里的 tier id 使用的是 `priority`。opencodex 保留了这个拆分。当前 Codex 目录还会把受访问控制的 Ultrafast 暴露为 `service_tier = "ultrafast"`。内置 fallback 只为 `gpt-5.6-sol` 宣告该档位；已获权限的 `gpt-daybreak-blue-latest` 条目会继承 Sol 的能力。Terra 和 Luna 继续保留 Fast，但不会新增 Ultrafast。固定的 Codex 源会有意把 `additional_speed_tiers` 保持为 `["fast"]`，Ultrafast 只存在于 `service_tiers` 中。要保留模型选择的 `ultrafast`，请把 opencodex 的全局 Fast 设置留在 Auto；强制启用 Fast 会改为选择 `priority`。
+
+原生 OpenAI 透传模型保留其声明的速度档位；路由的提供商会按能力门控——只有当提供商声明 `supportsServiceTier: false` 时才会剥离 `service_tier`（注册表已将官方 OpenAI 分类为 `true`，DeepSeek 和 Volcengine Ark 分类为 `false`）；未分类的自定义网关会原样保留调用方提供的值且绝不注入，因此无法兑现的速度选项不会被展示，自定义网关也可以用 `true` 显式启用。
 
 ## 子代理选择
 
