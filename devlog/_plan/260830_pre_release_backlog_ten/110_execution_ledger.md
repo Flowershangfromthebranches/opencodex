@@ -39,7 +39,7 @@ independently confirmed.
 | WP7 | docs/locale parity → **PR #2980** | `codex/wp7-docs-locale-parity` | typecheck 0; cli-account 102 pass/0 fail; docs build 401 pages; per-locale greps verified | PR open |
 | WP8 | issue #809 → **PR #2979** | `codex/wp8-least-privilege-catalog` | typecheck 0; route suite 6 pass/0 fail; 157 pass/0 fail auth+boundary; privacy green; docs 401 pages | PR open, review folded |
 | WP9 | issue #1168 → **PR #2976** | `codex/wp9-glm-coding-plan-quota` | typecheck 0; 110 pass/0 fail; 25 pass related; privacy green | PR open, review folded |
-| WP10 | issue #2643 | | | pending |
+| WP10 | issue #2643 → **PR #2981** | `codex/wp10-transient-5xx-retry` | typecheck 0; 13 pass/0 fail resolver+budget; 93 pass/0 fail incl. core-lab-boundary | PR open |
 | WP11 | PR #2952 | already merged | `dca16949b` on `dev`; `gh pr view 2952` → `MERGED` | `NOOP` |
 
 ## Rules for filling this in
