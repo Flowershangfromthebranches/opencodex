@@ -168,13 +168,3 @@ none were rebutted. Each was a real defect the local suites did not cover.
 The pattern across all three: the change was locally correct and the failure was in how it
 interacted with an existing subsystem — cache preservation, canonical seed comparison, and a
 route that merely shared a helper.
-
-<!-- goalplan close: wp7 — PR #2980 docs/locale parity -->
-
-<!-- goalplan close: wp8 — PR #2979 least-privilege /v1/catalog -->
-
-<!-- goalplan close: wp9 — PR #2976 GLM Coding Plan quota -->
-
-<!-- goalplan close: wp10 — PR #2981 transient-5xx retry + budget fix -->
-
-<!-- goalplan close: wp11 — PR #2952 verified merged as dca16949b -->
