@@ -85,6 +85,24 @@ with only sanitized outcomes committed:
   closed, opt-in verified to fail closed on missing OAuth. The note is that artifact
   authorization is proxy-wide rather than per-user.
 
+## What the loop actually produced
+
+Ten backlog items, eight PRs, and three defects found that nobody had filed:
+
+1. **A spent web-search budget read as exhausted model capacity** (WP9). `headroomOf`
+   takes the MAX across quota windows, so mapping the MCP call allowance to
+   `monthlyPercent` demoted healthy GLM accounts in quota-aware ranking.
+2. **An operator's explicit `false` was silently resurrected** (WP6). A provider POST
+   that merely rotated an API key reinstated the DeepSeek registry default, because
+   enrichment cannot tell "client omitted" from "registry supplied" after it runs.
+3. **A retry budget that multiplied instead of bounding** (WP10). `attempts: 3` could
+   emit nine upstream requests. The helper's own comment had flagged the hazard as inert
+   "because no caller passes it today" — and this cycle's feature was that first caller.
+
+Three review rounds on the plan and two independent security reviews caught four more
+problems before they shipped, including a 32 MiB ceiling that would have rejected a
+valid 2,000-model catalog and regressed an existing route to 507.
+
 ## WP2 — why it is BLOCKED rather than merged
 
 The plan called this the one PR needing no code change and no rebase. Re-measuring at
@@ -150,3 +168,13 @@ none were rebutted. Each was a real defect the local suites did not cover.
 The pattern across all three: the change was locally correct and the failure was in how it
 interacted with an existing subsystem — cache preservation, canonical seed comparison, and a
 route that merely shared a helper.
+
+<!-- goalplan close: wp7 — PR #2980 docs/locale parity -->
+
+<!-- goalplan close: wp8 — PR #2979 least-privilege /v1/catalog -->
+
+<!-- goalplan close: wp9 — PR #2976 GLM Coding Plan quota -->
+
+<!-- goalplan close: wp10 — PR #2981 transient-5xx retry + budget fix -->
+
+<!-- goalplan close: wp11 — PR #2952 verified merged as dca16949b -->
