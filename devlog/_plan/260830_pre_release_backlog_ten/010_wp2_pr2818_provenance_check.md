@@ -16,13 +16,18 @@ for a read-only CLI verb.
 ## Execution
 
 1. Re-read live state; `behind_by` must still be small and `mergeStateStatus`
-   must not be `DIRTY`.
+   must not be `DIRTY`. Measured at 6 behind during the audit (still inside the
+   10-commit boundary — the only phase that is).
 2. Authorize the `action_required` Cross-platform CI run for the **exact current
    head**. Workflow approval is not review approval — this is only starting CI.
 3. Require a `success` conclusion on that head. A green run on an older head does
    not transfer.
-4. Squash merge to `dev`.
-5. Close #2811 manually — PRs target `dev`, and GitHub only auto-closes on merge
+4. **Windows specifically.** Standard PR CI skips the Windows leg, so a green
+   aggregate does not prove this verb works there — and this verb inspects the
+   installed Codex CLI, which is exactly the platform-sensitive case. Trigger a
+   dedicated-branch `workflow_dispatch` Windows run before merging.
+5. Squash merge to `dev`.
+6. Close #2811 manually — PRs target `dev`, and GitHub only auto-closes on merge
    into the default branch `main`.
 
 ## Risk
@@ -34,5 +39,7 @@ failure, that is a real signal and not flake.
 
 ## Done
 
-Merged into `dev`; exact-head Cross-platform CI conclusion `success`
-(criterion c-2).
+Merged into `dev` with **both**: exact-head Cross-platform CI conclusion
+`success`, and a successful dedicated-branch `workflow_dispatch` Windows run for
+that same head. The aggregate alone does not prove Windows, and this verb reads the
+installed CLI (criterion c-2, c-15).

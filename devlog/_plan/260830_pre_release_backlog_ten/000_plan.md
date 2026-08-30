@@ -24,9 +24,22 @@ is sequenced the way it is:
    1 commit behind and approved becomes a conflict if it waits behind three
    implementation cycles. So the merge phases (WP2-WP6) run before the
    implementation phases (WP8-WP10), even though WP10 carries the highest owner
-   score (70).
+   score *within this unit* (70).
 
 That is the whole ordering rationale. It is not effort bucketing.
+
+**This decay is not hypothetical and it already outran the plan.** Between writing
+this document and finishing its audit, `dev` went `13ba8f11f` → `c2b64dbc3` and
+every merge candidate drifted: #2498 and #2560 from 1 commit behind to 15, #2083
+from 18 to 32, #2350 to 30, #2655 to 75. Only #2818 is still inside the
+repository's 10-commit freshness boundary. Consequence: **every candidate beyond
+the 10-commit boundary is rebase-first** — that is WP3, WP4, WP5, WP6, and WP10.
+WP2 (#2818) is the one exception: it is still inside the boundary, so it is
+refresh-and-verify, not rebase. Where the branch is a fork the maintainer uses a carry branch
+(`codex/carry-<pr>-<slug>`) that re-applies the author's commits onto current
+`dev` with author credit in the trailer, then closes the original with
+`landed-via-maintainer`. Every `behind_by` in `010`-`050` is a historical
+snapshot; re-measure before acting. Full drift table: `001_audit_response.md`.
 
 ## Verification constraints (user-imposed, binding)
 
@@ -38,6 +51,22 @@ That is the whole ordering rationale. It is not effort bucketing.
 - Merges to `dev` are pre-approved **for these ten items only**.
 - Landing strategy per item is the agent's choice among squash merge, cherry-pick,
   commit stacking, or re-implementation.
+- **New implementation work lands as a `codex/` PR into `dev`** with the full
+  `.github/PULL_REQUEST_TEMPLATE.md` completed and exact-head CI — not as a direct
+  push. Merge authorization for these ten items is not authorization to bypass the
+  PR path.
+- **Per-phase verification floor.** WP7-WP10 touch shared server/config/routing
+  surfaces, so focused tests alone are insufficient (AGENTS.md): they require
+  remote `typecheck` **plus** the full suite on the SSH host or exact-head hosted
+  full CI. `privacy:scan` is required on every credential-adjacent phase (WP4,
+  WP5, WP8, WP9); `docs-site` build on WP7.
+- **Windows is not covered by a green PR aggregate.** Standard PR CI skips the
+  Windows leg, so "Cross-platform CI green" overstates it. Platform-sensitive work
+  — WP2 above all, since it inspects the installed CLI — additionally requires a
+  dedicated-branch `workflow_dispatch` Windows run.
+- **Security reviews are drafted in `.tmp/`, never in this unit.** `devlog/` is
+  public and tracked; only a sanitized outcome is committed. This binds the
+  maintainer exactly as it binds contributors.
 
 ## Work-phase map (dependency-ordered)
 
@@ -68,8 +97,9 @@ Out of scope, explicitly:
 
 - `scripts/release.ts` and `.github/workflows/*` — release automation is a
   security-review surface and cutting the release is not this unit's job.
-- Promoting `dev` to `main`, tagging, or publishing. **The 2.36.0 version-line
-  decision is NEEDS_HUMAN** and stays with the owner.
+- Promoting `dev` to `main`, tagging, or publishing. **The 2.36.0
+  release-cut/promotion timing is NEEDS_HUMAN** and stays with the owner; see the
+  closing section for why the version line itself is already settled.
 - Any `src/lab/` import reachable from `src/router.ts`,
   `src/server/lifecycle.ts`, or `src/server/responses/core.ts`
   (`tests/core-lab-boundary.test.ts` enforces this).
@@ -99,6 +129,23 @@ the prerequisite for issue #2275 (53).
 **Issue #1820 usage cost/cache metrics, score 56.** Already landed on `dev` via
 PR #2365. It ships with the release; it is a release-note line, not work.
 
+**Issue #1107 opt-in authless Codex Desktop routing, score 71 — the
+highest-scoring open item, excluded.** Bounded work (config plus
+`codex/inject.ts`, desired-state and service paths), and the owner already
+accepted it as an explicit opt-in preserving Design B by default. It is excluded on
+**sequencing, not merit**: it introduces a routing mode that relaxes
+authentication, and this cycle already carries two credential-surface merges (WP4,
+WP5) and a new authenticated endpoint (WP8). Stacking an authless path on top of
+that days before a release cut is how a boundary regression ships. **First
+candidate for the next cycle.**
+
+**Issue #695 generic OAuth account-pool failover, score 69 — excluded,
+architectural.** Generalizing the 594-line Anthropic failover engine into a
+reusable affinity/quota selection layer with provider classification and
+observability hooks is multi-PR work, and the owner's note keeps import, provider
+UI, and generic 403 handling as separate concerns. WP4 (#2560) lands the
+Anthropic-specific slice of this area, so the release still gets the concrete half.
+
 ## Terminal outcome vocabulary
 
 Per `cxc-loop`: `DONE` verified success, `NOOP` no change needed, `BLOCKED`
@@ -106,3 +153,10 @@ external dependency, `UNSAFE` needs an owner risk decision, `NEEDS_HUMAN`
 owner judgment required, `BUDGET_EXHAUSTED` against a stated bound. A merge
 claim requires an exact-head green CI conclusion; an implementation claim requires
 the SSH command tail plus exit code.
+
+## Release-cut/promotion timing (owner decision, out of scope)
+
+Earlier framing called this a "version-line decision". That was imprecise: `dev`
+already declares 2.36.0 and a 2.36.0 preview exists, so the version line is
+settled. What remains is **when to cut and promote**, which is the owner's call and
+deliberately outside this unit.

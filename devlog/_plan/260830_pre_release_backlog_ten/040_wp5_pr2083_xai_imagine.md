@@ -15,17 +15,22 @@ the green CI is real but no longer describes what would land.
 
 1. Rebase onto current `dev`. Expect the conflict surface to be image/tool
    normalization in the adapters.
+   Drift has grown from 18 to **32 commits** since the snapshot; re-measure again
+   before starting, and use a `codex/carry-2083-xai-imagine` carry branch with
+   author credit since the source is a fork branch.
 2. Re-run exact-head CI on the rebased head; require `success`. The pre-rebase
    green run does not carry over.
-3. Security review — this relays user prompts to an external image endpoint using
-   **Grok OAuth credentials or an API key**:
+3. Security review — drafted in `.tmp/`, never in this tracked public unit; only a
+   sanitized outcome is committed. This relays user prompts to an external image
+   endpoint using **Grok OAuth credentials or an API key**:
    - the credential must reach only the intended xAI origin, never a
      caller-influenced host;
    - redirects must not be followed into a credential leak (SSRF boundary);
    - no prompt bodies, credentials, or account identifiers in logs;
    - the relay must stay behind its opt-in and not activate for operators who
      never configured image relay.
-4. Merge after both the green rebased CI and the recorded review.
+4. Merge after both the green rebased CI and the sanitized review outcome (full
+   review drafted in `.tmp/`).
 
 ## Note on prior review state
 
@@ -35,5 +40,5 @@ the natural point to obtain it, since the head changes anyway.
 
 ## Done
 
-Rebased, exact-head CI `success`, OAuth image-egress review recorded, merged
-(criterion c-5).
+Rebased, exact-head CI `success`, sanitized OAuth image-egress review outcome
+committed (draft in `.tmp/`), merged (criterion c-5). `privacy:scan` green.

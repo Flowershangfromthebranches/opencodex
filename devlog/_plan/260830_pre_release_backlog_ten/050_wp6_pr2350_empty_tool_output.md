@@ -5,8 +5,15 @@ Owner score 52. Author `harryzhou2000`. Adds the provider option
 
 ## State
 
-`MERGEABLE` but `CHANGES_REQUESTED`; ~18 commits behind `dev`. 13 files,
-+624/−9, including a new 324-line test suite.
+`MERGEABLE` but `CHANGES_REQUESTED`; measured at **30 commits behind `dev`** at
+audit time (the earlier ~18 figure is a stale snapshot — re-measure before acting).
+13 files, +624/−9, including a new 324-line test suite.
+
+Past the 10-commit boundary, so this is rebase-first. The source is a fork branch
+and the change needs a maintainer-authored fix anyway, so land it on a
+`codex/carry-2350-empty-tool-output` carry branch that re-applies
+`harryzhou2000`'s commits onto current `dev` with author credit in the trailer,
+adds the fix below, and closes #2350 with `landed-via-maintainer`.
 
 ## The one real open blocker
 

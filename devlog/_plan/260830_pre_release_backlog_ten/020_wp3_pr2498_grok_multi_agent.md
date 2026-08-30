@@ -28,7 +28,10 @@ Do not merge while `CHANGES_REQUESTED` is live.
 
 ## Execution
 
-1. Refresh live state and re-read every review thread.
+1. Refresh live state and re-read every review thread. Measured at **15 behind**
+   during the audit — past the freshness boundary, so this now needs a rebase or a
+   `codex/carry-2498-grok-multi-agent` carry branch with author credit, not the
+   straight merge the snapshot implied.
 2. Resolve the stale review per the choice above.
 3. Authorize exact-head Cross-platform CI; require `success`.
 4. Squash merge to `dev`.

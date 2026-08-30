@@ -27,17 +27,28 @@ explicit security-review class. The review must answer, on the exact head:
 3. Are account identifiers kept out of logs? `privacy:scan` must stay green.
 4. Does the default path change for an operator who does not opt in? It must not.
 
-A green CI run does not answer any of these. Record the answers.
+A green CI run does not answer any of these.
+
+**Where the review is written.** Draft it in `.tmp/` (gitignored), not in this
+unit. `devlog/` is public and tracked, and AGENTS.md forbids pre-disclosure
+security material there — explicitly including maintainer-authored triage. Only a
+sanitized outcome ("reviewed, no finding", or a finding already fixed and public)
+is committed here.
 
 ## Execution
 
-1. Refresh live state.
-2. Run the security review above; record it in this unit.
+1. Refresh live state. As of the audit this is **15 commits behind**, past the
+   10-commit freshness boundary, so a rebase is required — the "1 behind" figure
+   above is a stale snapshot. On a fork branch, use a
+   `codex/carry-2560-anthropic-quota-window` carry branch with author credit.
+2. Run the security review above, drafting it in `.tmp/`; commit only a sanitized
+   outcome here.
 3. Resolve the stale `CHANGES_REQUESTED` (superseded by the rebase, or still live).
 4. Authorize exact-head CI; require `success`.
 5. Squash merge; close #2539 manually.
 
 ## Done
 
-Merged with exact-head CI `success` **and** the recorded OAuth/account-routing
-review (criterion c-4).
+Merged with exact-head CI `success` **and** a sanitized OAuth/account-routing
+review outcome committed here, the full review having been drafted in `.tmp/`
+(criterion c-4). `privacy:scan` green.

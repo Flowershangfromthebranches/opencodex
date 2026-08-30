@@ -112,11 +112,31 @@ Authority: `src/types/config.ts:451-457`; `src/router.ts:509-528`.
 
 ## Verification
 
-No full suite. `git grep` for every stale phrase and every new literal, then
-`cd docs-site && bun install --frozen-lockfile && bun run build` on the SSH host.
-If the CLI note is fixed here, `tests/cli-account.test.ts` runs focused.
+No local suite (user constraint); verification runs on the SSH host. `git grep`
+for every stale phrase and every new literal, then
+`cd docs-site && bun install --frozen-lockfile && bun run build`.
+
+Because this phase also edits `src/cli/account.ts` and its test, it is not
+docs-only: run `typecheck` plus focused `tests/cli-account.test.ts` on the SSH
+host. Per `000_plan.md`, a CLI/source change of this shape does not require the
+full suite, but the docs build and the focused CLI test are both mandatory.
 
 ## Done
 
-English and all seven locales state the real Kiro behavior and all five combo
-strategies, and both config keys are documented (criterion c-7).
+Criterion c-7 covers **every** deliverable above, not just sections A-C. All of
+the following must be true:
+
+1. English and all seven locales state the real Kiro multi-account behavior.
+2. The stale single-slot note is removed from `src/cli/account.ts` and
+   `tests/cli-account.test.ts` asserts its **absence** — otherwise the shipped CLI
+   contradicts the corrected docs.
+3. All seven locales document all five combo strategies, with weight and
+   `stickyLimit` applicability corrected.
+4. `xaiResponsesXSearch` and `blockedModelRedirects` documented in English plus
+   seven locales.
+5. Section D is complete too: `x-opencodex-request-id`, `cacheHitRate`, and
+   `vercelGatewayRouting` parity. These were previously in the body but not the
+   gate, which would have let them be skipped silently.
+
+Verification: `git grep` for every stale phrase and every new literal, the
+`docs-site` build, and focused `tests/cli-account.test.ts` on the SSH host.

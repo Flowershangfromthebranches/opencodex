@@ -1,7 +1,8 @@
 # 070 — WP8: issue #809 least-privilege `GET /v1/catalog`
 
-Owner score **66** — the highest-scoring item with no implementation anywhere.
-`maintainer-sponsored`.
+Owner score **66** — the highest-scoring unimplemented item *in this unit*.
+Issue #1107 (71) also has no implementation but is deliberately deferred
+(`000_plan.md`, `001_audit_response.md`). `maintainer-sponsored`.
 
 ## Problem
 
@@ -57,14 +58,34 @@ rejects `x-api-key`. `AUTH_MATRIX` is `:399-408`. `/v1/models` at
 2. Repoint `model-routes.ts:335-346` at the shared serializer. **Both routes must
    emit the same bytes** — that is what keeps them from drifting.
 3. Register `/v1/catalog` after the `/api/*` block and before `/v1/models`:
-   `GET`/`HEAD` only, `resolveResponsesApiAuth`, `isAllowedRequestOrigin`,
-   `withCors`.
-4. Add the `AUTH_MATRIX` row with `/v1/responses` dispositions.
+   `GET`/`HEAD` only, **`resolveApiAuth`**, `isAllowedRequestOrigin`, `withCors`.
+   See the admission note below — this is deliberately **not**
+   `resolveResponsesApiAuth`.
+4. Add the `AUTH_MATRIX` row with `/v1/models` dispositions.
 5. Let unsupported methods and `/v1/catalog/` fall through to the existing 404.
 6. `HEAD` returns identical status/headers, no body.
 7. Leave `/api/*`, `requireManagementAuth`, and the management route registry
    untouched.
 8. Do **not** broaden the `unauthenticatedLoopbackListener` allowlist.
+
+## Which admission function — and why the obvious one is wrong
+
+A first pass specified `resolveResponsesApiAuth`. That is wrong, and the
+difference is user-visible. Verified on `origin/dev`:
+
+- `resolveApiAuth` (`src/server/auth-cors.ts:448`) accepts
+  `x-opencodex-api-key`, a recognized bearer, **and `x-api-key`**
+  (`:456-457`) — the last for Anthropic-SDK clients such as Claude Code with
+  `ANTHROPIC_API_KEY`.
+- `resolveResponsesApiAuth` (`:475`) deliberately rejects `x-api-key`
+  (`:487`) because that transport has a credential-collision problem.
+- `/v1/models` — the true peer of a read-only catalog read — uses the general
+  path (`src/server/index.ts:1072`, allowlisted at `:711`).
+
+A catalog read never forwards a caller credential upstream, so the
+Responses-specific restriction buys no safety here; it would only 401 a client
+holding a valid data credential. Use `resolveApiAuth` and write `AUTH_MATRIX`
+and the request tests against it.
 
 ## Reuse from PR #2772, and why not the commits
 
@@ -75,9 +96,11 @@ cap, shared serialization, SHA-256 ETag, conditional 304,
 
 Do not take the commits: it is 217 behind, targets `codex/remote-hub-design`
 rather than `dev`, bundles unrelated runtime-role work, and has six concrete
-defects — GET without HEAD, omits `x-opencodex-codex-version` on the data plane,
-adds an unrequested `x-opencodex-key-id`, broadens the unauthenticated loopback
-allowlist, and adds no `/api/*` denial coverage.
+defects — (1) GET without HEAD, (2) omits `x-opencodex-codex-version` on the data
+plane, (3) adds an unrequested `x-opencodex-key-id`, (4) broadens the
+unauthenticated loopback allowlist, (5) adds no `/api/*` denial coverage, and
+(6) authenticates with `resolveResponsesApiAuth`, which rejects a valid
+`x-api-key` data credential.
 
 ## Tests
 
@@ -96,9 +119,19 @@ allowlist, and adds no `/api/*` denial coverage.
 ## Docs
 
 `structure/05_gui-and-management-api.md:58-83` (credential boundary);
-`docs-site/src/content/docs/reference/configuration/server.md:68-83` (row);
-`docs-site/src/content/docs/guides/codex-integration.md:268-282` — replace the
-admin-token `/api/catalog` workflow with the data-token `/v1/catalog` one.
+`reference/configuration/server.md:68-83` (row);
+`guides/codex-integration.md:268-282` — replace the admin-token `/api/catalog`
+workflow with the data-token `/v1/catalog` one.
+
+Both docs pages exist in **all seven locales** (`fr`, `ko`, `zh-cn`, `zh-tw`,
+`ru`, `ja`, `tr`), so that is eight files per page, not one. Shipping only the
+English change would recreate exactly the parity defect WP7 exists to fix.
+
+## Verification floor
+
+Shared server/routing surface: remote `typecheck` **plus** the full suite on the
+SSH host or exact-head hosted full CI, not focused tests alone. `privacy:scan`
+required. Lands as a `codex/` PR into `dev` with the template completed.
 
 ## Security note
 
