@@ -52,6 +52,47 @@ independently confirmed.
 
 ## Standing status
 
+### FINAL — all seven merged to `dev`
+
+| PR | Item | Merge commit |
+|---|---|---|
+| #2976 | WP9 GLM Coding Plan quota | `015fedb63` |
+| #2985 | WP3 grok-4.20-multi-agent (carry of #2498) | `8b8197dbe` |
+| #2978 | WP6 empty tool-output annotation (carry of #2350) | `8fba9d1b8` |
+| #2979 | WP8 least-privilege `/v1/catalog` (#809) | `f6367639c` |
+| #2981 | WP10 transient-5xx retry (#2643) | `607042b02` |
+| #2982 | WP4 Anthropic quota-window pool (carry of #2560) | `46c3383e1` |
+| #2980 | WP7 docs and locale parity | `9cd4e4b8e` |
+
+Merged under admin authority the owner granted explicitly. Every PR carried a
+`CHANGES_REQUESTED` review that was resolved by fixing its substance — no review was
+dismissed. Issues #809, #1168, #2539, #2643 closed; PRs #2350, #2560, #2655 closed
+`landed-via-maintainer` with attribution. **#2818 was not merged**: it is another
+author's PR whose approval they dismissed themselves, and admin authority is not a
+licence to override that.
+
+### Second review round — what the reviewer caught after the first merge attempt
+
+One genuine runtime defect and four contract inaccuracies:
+
+1. **The retry policy was bypassed on Responses recovery (#2981).** After an initial 429,
+   `rebuildAndRefetch` called `fetchWithHeaderTimeout` directly, so an opted-in provider got
+   retries on the initial send and on native chat but none when a 429 recovered into a
+   retryable 503. Every send now routes through one **request-scoped** budget: the helper
+   reports consumed sends via `onSendsConsumed` (in a `finally`, since it returns from five
+   places and throws from one) and each later leg receives only the remainder.
+2. **#2982 UI claimed a setting was inert when it was not.** `autoSwitchThreshold: 0`
+   disables *proactive* switching only; new-session selection and 429 recovery still consult
+   the window. The selector is now disabled only under `round-robin`.
+3. **#2978, #2981** shipped user-facing options documented only in English.
+4. **#2979** left two locale guides contradicting themselves about the credential — the
+   French sentence said "ordinary data-plane key" and then called it the same `/api/*`
+   admission credential in the same clause.
+5. **#2980** carried three functional inaccuracies: an unconditional Kiro rotation claim that
+   ignored the `oauthAccountFailover.enabled: false` opt-out, four locale signatures missing
+   the shipped `[--quota [--refresh]]` flags, and Turkish/Russian text saying *all* or
+   *repeated* failures where the contract is *retryable* failures.
+
 **Eight PRs are open and awaiting maintainer review:** #2976 (WP9), #2978 (WP6),
 #2979 (WP8), #2980 (WP7), #2981 (WP10), #2982 (WP4), #2985 (WP3), #2986 (WP5).
 
