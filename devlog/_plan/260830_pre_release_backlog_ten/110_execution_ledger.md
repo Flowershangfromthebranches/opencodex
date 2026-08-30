@@ -35,10 +35,10 @@ independently confirmed.
 | WP3 | PR #2498 | | | pending |
 | WP4 | PR #2560 | | | pending |
 | WP5 | PR #2083 | | | pending |
-| WP6 | PR #2350 → **PR #2978** | carry branch `codex/carry-2350-empty-tool-output` | 10 commits cherry-picked w/ author credit + POST fix; typecheck 0, 109 pass/0 fail, regression driven red | PR open, CI green |
-| WP7 | docs/locale parity | | | pending |
-| WP8 | issue #809 → **PR #2979** | `codex/wp8-least-privilege-catalog` | typecheck 0; 5 pass route suite; 157 pass/0 fail auth+boundary; privacy green; docs build 401 pages | PR open, CI running |
-| WP9 | issue #1168 → **PR #2976** | `codex/wp9-glm-coding-plan-quota` | typecheck 0; 109 pass/0 fail; 25 pass related; privacy green; CI 21 pass/0 fail | PR open, CI green |
+| WP6 | PR #2350 → **PR #2978** | carry `codex/carry-2350-empty-tool-output` | 10 commits cherry-picked w/ author credit + POST fix; regression driven red; review fixes → 110 pass/0 fail | PR open, review folded |
+| WP7 | docs/locale parity → **PR #2980** | `codex/wp7-docs-locale-parity` | typecheck 0; cli-account 102 pass/0 fail; docs build 401 pages; per-locale greps verified | PR open |
+| WP8 | issue #809 → **PR #2979** | `codex/wp8-least-privilege-catalog` | typecheck 0; route suite 6 pass/0 fail; 157 pass/0 fail auth+boundary; privacy green; docs 401 pages | PR open, review folded |
+| WP9 | issue #1168 → **PR #2976** | `codex/wp9-glm-coding-plan-quota` | typecheck 0; 110 pass/0 fail; 25 pass related; privacy green | PR open, review folded |
 | WP10 | issue #2643 | | | pending |
 | WP11 | PR #2952 | already merged | `dca16949b` on `dev`; `gh pr view 2952` → `MERGED` | `NOOP` |
 
@@ -86,3 +86,32 @@ Three defects were found while implementing, none of which were in the plan:
 3. **`AUTH_MATRIX` could not see a new read-only row.** Its `isGet` check named only
    `/v1/models`, so `/v1/catalog` would have been POSTed into a 405. The missing-catalog
    404 is now pinned to code `catalog_not_found` so a deleted route cannot pass vacuously.
+
+## Reviewer findings folded (round 1)
+
+`Ingwannu` requested changes on all three implementation PRs. Every finding was accepted;
+none were rebutted. Each was a real defect the local suites did not cover.
+
+1. **#2976 preserved stale quota (the sharpest one).** After the `TIME_LIMIT` exclusion, a
+   *successful* `limits[]` response carrying only MCP rows returned `null` — and
+   `fetchProviderQuotaReports` reads `null` as a transient probe failure, preserving the
+   last-good report for up to 30 minutes. So the dashboard and quota-aware routing kept using
+   model-token windows the provider had already superseded. Fixed with an
+   `AUTHORITATIVE_EMPTY_QUOTA` sentinel beside the existing `TERMINAL_QUOTA_FAILURE`,
+   routed through the same suppression path. The distinction is the whole point: `null` means
+   "told us nothing, keep the row"; the sentinel means "answered, and the answer is none."
+   Regression runs two sequential forced refreshes and asserts the cache clears.
+2. **#2978 canonical OpenAI could never set the field.** Validation admitted
+   `annotateEmptyToolOutputs` and the canonical seed comparison then rejected the same
+   request. Fixed by stripping it from the comparison candidate exactly as `contextWindow`
+   and `modelAutoCompactTokenLimits` already are, with set/clear/persist regressions. The
+   option is now documented too.
+3. **#2979's ceiling rejected a valid catalog.** The 32 MiB cap lived in the shared
+   serializer, so it applied to `/api/catalog` as well. The repo supports 2,000 discovered
+   models and a 2,000-row catalog serializes to ~92 MB — the cap rejected a supported catalog
+   *and* regressed the pre-existing management route to 507. Size policy now belongs to the
+   remote route alone at 256 MiB; the management route is uncapped as before.
+
+The pattern across all three: the change was locally correct and the failure was in how it
+interacted with an existing subsystem — cache preservation, canonical seed comparison, and a
+route that merely shared a helper.
