@@ -48,8 +48,9 @@ This is exactly the decay `000_plan.md` predicted, arriving faster than the plan
 could be audited. Consequences folded in:
 
 1. #2498 and #2560 have crossed the 10-commit freshness boundary and now need
-   rebase handling too, so **every** merge phase is rebase-first. Only #2818
-   remains inside the boundary.
+   rebase handling too, so **every candidate past that boundary** is rebase-first
+   — WP3, WP4, WP5, WP6, WP10. Only #2818 (WP2) remains inside it, and it stays
+   refresh-and-verify rather than rebase.
 2. Contributor branches cannot be pushed to by the maintainer. Where a rebase is
    required on a fork branch, use a **maintainer carry branch**
    (`codex/carry-<pr>-<slug>`) that re-applies the contributor's commits onto

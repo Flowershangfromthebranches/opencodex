@@ -55,11 +55,15 @@ snapshot; re-measure before acting. Full drift table: `001_audit_response.md`.
   `.github/PULL_REQUEST_TEMPLATE.md` completed and exact-head CI — not as a direct
   push. Merge authorization for these ten items is not authorization to bypass the
   PR path.
-- **Per-phase verification floor.** WP7-WP10 touch shared server/config/routing
-  surfaces, so focused tests alone are insufficient (AGENTS.md): they require
-  remote `typecheck` **plus** the full suite on the SSH host or exact-head hosted
-  full CI. `privacy:scan` is required on every credential-adjacent phase (WP4,
-  WP5, WP8, WP9); `docs-site` build on WP7.
+- **Per-phase verification floor.** **WP8, WP9, and WP10** touch shared
+  server/config/routing surfaces, so focused tests alone are insufficient
+  (AGENTS.md): they require remote `typecheck` **plus** the full suite on the SSH
+  host or exact-head hosted full CI.
+  **WP7 is exempt from the full suite** — it is docs plus a CLI note removal, which
+  is not a shared runtime surface — but it still requires remote `typecheck`, the
+  focused `tests/cli-account.test.ts`, and the `docs-site` build.
+  `privacy:scan` is required on every credential-adjacent phase (WP4, WP5, WP8,
+  WP9).
 - **Windows is not covered by a green PR aggregate.** Standard PR CI skips the
   Windows leg, so "Cross-platform CI green" overstates it. Platform-sensitive work
   — WP2 above all, since it inspects the installed CLI — additionally requires a
