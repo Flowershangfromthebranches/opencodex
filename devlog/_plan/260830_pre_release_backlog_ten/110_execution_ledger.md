@@ -33,7 +33,7 @@ independently confirmed.
 |---|---|---|---|---|
 | WP2 | PR #2818 | not landed | exact-head CI green (23 pass) but `BLOCKED`/`REVIEW_REQUIRED`; see below | `BLOCKED` |
 | WP3 | PR #2498 | | | pending |
-| WP4 | PR #2560 | | | pending |
+| WP4 | PR #2560 → **PR #2982** | carry `codex/carry-2560-anthropic-quota-window` | 19 commits cherry-picked w/ author credit; security review FAIL → fixed; typecheck 0, 83 pass/0 fail, privacy green | PR open |
 | WP5 | PR #2083 | | | pending |
 | WP6 | PR #2350 → **PR #2978** | carry `codex/carry-2350-empty-tool-output` | 10 commits cherry-picked w/ author credit + POST fix; regression driven red; review fixes → 110 pass/0 fail | PR open, review folded |
 | WP7 | docs/locale parity → **PR #2980** | `codex/wp7-docs-locale-parity` | typecheck 0; cli-account 102 pass/0 fail; docs build 401 pages; per-locale greps verified | PR open |
