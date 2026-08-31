@@ -91,7 +91,11 @@ describe.skipIf(!runnable)("ocx launcher graceful shutdown", () => {
         writeFileSync(codexConfig, 'model = "gpt-5.1"\n');
 
         const child = spawn("node", [BIN_OCX, "start", "--port", String(port)], {
-          stdio: "ignore",
+          // Captured rather than discarded: when this test fails in CI it fails on
+          // `expect(up).toBe(true)` with no evidence at all, which cost a full
+          // investigation cycle. The launcher's own output is the only thing that
+          // can distinguish a slow start from a refused one.
+          stdio: ["ignore", "pipe", "pipe"],
           env: {
             ...process.env,
             HOME: identity.homeDir,
@@ -102,6 +106,9 @@ describe.skipIf(!runnable)("ocx launcher graceful shutdown", () => {
           },
         });
         spawned.push(child);
+        let launcherOutput = "";
+        child.stdout?.on("data", chunk => { launcherOutput += chunk; });
+        child.stderr?.on("data", chunk => { launcherOutput += chunk; });
 
         let exited = false;
         child.on("exit", () => { exited = true; });
@@ -112,6 +119,9 @@ describe.skipIf(!runnable)("ocx launcher graceful shutdown", () => {
         // land at 20061ms and 20168ms, i.e. the budget itself, not a hang. Startup time is not
         // what any assertion here is about — the teardown behaviour after the signal is.
         const up = await waitUntil(() => healthy(port), 90_000);
+        if (!up) {
+          console.error(`launcher never became healthy on port ${port}; its output was:\n${launcherOutput || "(nothing)"}`);
+        }
         expect(up).toBe(true);
         expect(existsSync(join(home, "ocx.pid"))).toBe(true);
         const injected = readFileSync(codexConfig, "utf8");
