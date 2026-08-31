@@ -429,6 +429,26 @@ function canonicalOpenAiBudgetPatchError(
     ?? providerEmptyToolOutputConfigError("openai", applied.next);
 }
 
+/** Admit the dedicated native-context field without widening the shared auth/config validator. */
+function providerManagementConfigWithNativeContextModeError(
+  name: string,
+  provider: unknown,
+): string | null {
+  if (!isPlainRecord(provider) || !Object.hasOwn(provider, "codexNativeContextMode")) {
+    return providerManagementConfigError(name, provider);
+  }
+  const mode = provider.codexNativeContextMode;
+  if (mode !== "default" && mode !== "1m") {
+    return `provider ${name} codexNativeContextMode must be default or 1m`;
+  }
+  if (name !== "openai" || !isCanonicalOpenAiForwardProvider(provider as unknown as OcxProviderConfig)) {
+    return `provider ${name} codexNativeContextMode is valid only on the canonical built-in openai provider`;
+  }
+  const candidate = { ...provider };
+  delete candidate.codexNativeContextMode;
+  return providerManagementConfigError(name, candidate);
+}
+
 export async function handleProviderRoutes(ctx: ManagementContext): Promise<Response | null> {
   const { req, url, config, deps, principal, convergeCodexCatalog, syncClaudeAgentDefsBestEffort } = ctx;
 
@@ -504,7 +524,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       return jsonResponse({ error: "provider reload target unavailable" }, 404);
     }
     const provider = diskConfig.providers[name]!;
-    const providerError = providerManagementConfigError(name, provider)
+    const providerError = providerManagementConfigWithNativeContextModeError(name, provider)
       ?? providerEmptyToolOutputConfigError(name, provider);
     if (providerError) return jsonResponse({ error: "provider reload target invalid" }, 409);
     const namespaceCollision = codexAccountNamespaceProviderCollisionError(
@@ -564,7 +584,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     let body: { name?: unknown; provider?: unknown; setDefault?: boolean };
     try { body = await readManagementJsonBody(req); } catch (error) { rethrowManagementBodyTooLarge(error); return jsonResponse({ error: "invalid JSON body" }, 400); }
     const name = typeof body.name === "string" ? body.name.trim() : "";
-    const providerError = providerManagementConfigError(name, body.provider)
+    const providerError = providerManagementConfigWithNativeContextModeError(name, body.provider)
       ?? providerEmptyToolOutputConfigError(name, body.provider);
     if (providerError) return jsonResponse({ error: providerError }, 400);
     const serviceTierError = providerServiceTierConfigError(name, body.provider);
@@ -607,6 +627,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     const submittedModelContextWindows = Object.hasOwn(prov, "modelContextWindows");
     const submittedModelAutoCompactTokenLimits = Object.hasOwn(prov, "modelAutoCompactTokenLimits");
     const submittedRequestPacing = Object.hasOwn(prov, "requestPacing");
+    const submittedNativeContextMode = Object.hasOwn(prov, "codexNativeContextMode");
     // Same trap, one more field: DeepSeek carries a registry default of `true` for
     // annotateEmptyToolOutputs, so enrichment cannot distinguish "the client omitted it"
     // from "the registry supplied it" either. Without this sample, an unrelated edit that
@@ -634,6 +655,9 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     // absence in the request means "not carried", never "the user deleted it". Deletion goes
     // through PATCH with an explicit null (#1409).
     const existing = config.providers[name];
+    if (!submittedNativeContextMode && name === "openai" && existing?.codexNativeContextMode !== undefined) {
+      prov.codexNativeContextMode = existing.codexNativeContextMode;
+    }
     if (!submittedRequestPacing && existing?.requestPacing) {
       prov.requestPacing = structuredClone(existing.requestPacing);
     }
@@ -831,7 +855,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     if (applied.editorTouched && !pacingOnly) {
       const providerError = canonicalBudgetOnly
         ? canonicalOpenAiBudgetPatchError(next, rawBody, keys, config)
-        : providerManagementConfigError(name, next)
+        : providerManagementConfigWithNativeContextModeError(name, next)
           ?? providerEmptyToolOutputConfigError(name, next);
       if (providerError) return jsonResponse({ error: providerError }, 400);
       if (!canonicalBudgetOnly) {
@@ -865,7 +889,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       if (replay.editorTouched && !pacingOnly) {
         const syncError = canonicalBudgetOnly
           ? canonicalOpenAiBudgetPatchError(replay.next, rawBody, keys, config)
-          : providerManagementConfigError(name, replay.next)
+          : providerManagementConfigWithNativeContextModeError(name, replay.next)
             ?? providerEmptyToolOutputConfigError(name, replay.next);
         if (syncError) {
           replayError = syncError;

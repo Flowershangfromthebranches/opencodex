@@ -2991,6 +2991,26 @@ describe("provider management validation", () => {
     expect(listed.find(row => row.name === "openai")?.codexNativeContextMode).toBe("1m");
     expect(listed.find(row => row.name === "extra")).not.toHaveProperty("codexNativeContextMode");
 
+    const destinationProbe = spyOn(destinationPolicy, "providerDestinationResolvedError")
+      .mockResolvedValue(null);
+    try {
+      const overwriteRequest = new Request("http://127.0.0.1/api/providers", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "openai", provider: canonicalDirect }),
+      });
+      const overwrite = await handleManagementAPI(
+        overwriteRequest,
+        new URL(overwriteRequest.url),
+        liveConfig,
+        deps,
+      );
+      expect(overwrite?.status).toBe(200);
+      expect(liveConfig.providers.openai?.codexNativeContextMode).toBe("1m");
+    } finally {
+      destinationProbe.mockRestore();
+    }
+
     failNext = true;
     const failed = await patch("openai", "default");
     expect(failed?.status).toBe(500);
