@@ -1481,7 +1481,7 @@ export const ru: Record<TKey, string> = {
   "integrations.tabsLabel": "Разделы интеграций",
   "integrations.tab.overview": "Обзор",
   "integrations.tab.keys": "Ключи API",
-  "integrations.tab.codex": "Codex CLI",
+  "integrations.tab.codex": "Codex",
   "integrations.tab.claude": "Claude",
   "integrations.tab.grok": "Grok Build",
   "integrations.tab.opencode": "OpenCode",
