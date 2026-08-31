@@ -107,7 +107,11 @@ describe.skipIf(!runnable)("ocx launcher graceful shutdown", () => {
         child.on("exit", () => { exited = true; });
 
         // 1. Proxy comes up + injected the Codex config (Design B root override on loopback).
-        const up = await waitUntil(() => healthy(port), 20_000);
+        // Startup is a cold `node bin/ocx.mjs start` spawn, and this file runs three of them
+        // back to back. On a loaded runner the 20s ceiling was the failure: observed failures
+        // land at 20061ms and 20168ms, i.e. the budget itself, not a hang. Startup time is not
+        // what any assertion here is about — the teardown behaviour after the signal is.
+        const up = await waitUntil(() => healthy(port), 90_000);
         expect(up).toBe(true);
         expect(existsSync(join(home, "ocx.pid"))).toBe(true);
         const injected = readFileSync(codexConfig, "utf8");
@@ -131,7 +135,9 @@ describe.skipIf(!runnable)("ocx launcher graceful shutdown", () => {
         expect(existsSync(join(home, "runtime-port.json"))).toBe(false);
         expect(readFileSync(codexConfig, "utf8")).not.toContain("opencodex");
       },
-      45_000,
+      // Raised with the startup budget above: a 45s per-test ceiling could not contain a
+      // 90s wait, so the two have to move together or the wait is decorative.
+      130_000,
     );
   }
 });
