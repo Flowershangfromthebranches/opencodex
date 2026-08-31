@@ -120,7 +120,17 @@ describe.skipIf(!runnable)("ocx launcher graceful shutdown", () => {
         // what any assertion here is about — the teardown behaviour after the signal is.
         const up = await waitUntil(() => healthy(port), 90_000);
         if (!up) {
-          console.error(`launcher never became healthy on port ${port}; its output was:\n${launcherOutput || "(nothing)"}`);
+          // A launcher that produced NO output for the whole wait did not start slowly; it
+          // never got far enough to print its banner. The observed macOS case looks exactly
+          // like that, and the next case in the same file then came up in 820ms — so the
+          // machine was not busy. The remaining suspect is the port: freePort() binds :0,
+          // reads the number, then closes, so anything on the runner can take that port in
+          // the gap before the proxy binds it.
+          console.error(
+            `launcher never became healthy on port ${port} after ${Math.round(90_000 / 1000)}s`
+            + `; exited=${exited}`
+            + `; its output was:\n${launcherOutput || "(nothing)"}`,
+          );
         }
         expect(up).toBe(true);
         expect(existsSync(join(home, "ocx.pid"))).toBe(true);
