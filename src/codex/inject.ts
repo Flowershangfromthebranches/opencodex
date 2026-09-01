@@ -73,7 +73,7 @@ import {
   transformManagedSubagentDefaults,
   type ManagedSubagentDefaults,
 } from "./subagent-defaults";
-import { NATIVE_GPT56_ONE_MILLION_MODELS, transformManagedNativeContextMode } from "./native-context-mode";
+import { NATIVE_GPT56_ONE_MILLION_MODELS, removeManagedNativeContextMode } from "./native-context-mode";
 import { isCanonicalOpenAiForwardProvider } from "../providers/openai-tiers";
 import type { OcxConfig } from "../types";
 
@@ -437,9 +437,10 @@ function stripExistingModelProvider(content: string): string {
 
 /**
  * Drop ROOT-level `model_context_window` overrides (keys before the first table header). Codex
- * treats this root key as a global override that wins over the per-model catalog values, so a stale
- * `model_context_window = 1000000` makes every model (e.g. gpt-5.5) report a 1M window. User-owned
- * compaction limits do not alter the advertised context window and must survive reinjection.
+ * treats this root key as a global request before clamping it to each catalog row's maximum. A stale
+ * `model_context_window = 1000000` can therefore widen a Default model from its ordinary window to
+ * its larger maximum. User-owned compaction limits do not alter the advertised context window and
+ * must survive reinjection.
  */
 export function stripRootContextWindowOverrides(content: string): string {
   const lines = content.split("\n");
@@ -465,21 +466,6 @@ function configuredNativeOneMillionModels(config: OcxConfig | undefined): Set<st
       .map(([slug]) => slug)
       .filter(slug => NATIVE_GPT56_ONE_MILLION_MODELS.has(slug)),
   );
-}
-
-/**
- * The model Codex will run, read from the root `model` key (bare native slug or a
- * `native/`-prefixed form). The official 1M opt-in is a ROOT-level Codex setting that
- * applies to whichever model is active, so the managed root block is written only while
- * an opted-in model is active. When Codex 0.147+ clamps the root override against the
- * catalog `max_context_window`, this keeps other models at their own maxima even if a
- * stale block survives a direct in-app model switch (recorded root-level limitation).
- */
-function activeNativeContextModel(content: string): string | null {
-  const raw = rootTomlString(content, "model");
-  if (raw === null) return null;
-  const slug = raw.trim().replace(/^native\//, "");
-  return slug === "" ? null : slug;
 }
 
 function stripRootRoutedModel(content: string): string {
@@ -774,10 +760,7 @@ export async function injectCodexConfig(
         `No files were changed; inspect ${CODEX_CONFIG_PATH}.`,
     };
   }
-  const nativeContextBaseline = transformManagedNativeContextMode(
-    nativeDefaultsBaseline.content,
-    false,
-  );
+  const nativeContextBaseline = removeManagedNativeContextMode(nativeDefaultsBaseline.content);
   if (!nativeContextBaseline.ok) {
     return {
       success: false,
@@ -859,8 +842,6 @@ export async function injectCodexConfig(
   }
 
   const nativeOneMillionModels = configuredNativeOneMillionModels(config);
-  const activeModel = activeNativeContextModel(content);
-  const desiredNativeOneMillionContext = activeModel !== null && nativeOneMillionModels.has(activeModel);
   if (nativeOneMillionModels.size > 0 && (legacyMode || keptUserBaseUrl)) {
     return {
       success: false,
@@ -868,19 +849,6 @@ export async function injectCodexConfig(
         "Codex config injection refused: native GPT-5.6 1M mode requires canonical OpenAI passthrough routing with no user-owned root openai_base_url. No files were changed.",
     };
   }
-  const managedNativeContext = transformManagedNativeContextMode(
-    content,
-    desiredNativeOneMillionContext,
-  );
-  if (!managedNativeContext.ok) {
-    return {
-      success: false,
-      message:
-        `Codex config injection refused: GPT-5.6 1M settings could not be managed safely: ${managedNativeContext.error}. No files were changed.`,
-    };
-  }
-  content = managedNativeContext.content;
-
   const desiredSubagentDefaults = configuredManagedSubagentDefaults(config);
   const routingOwnershipWarning =
     keptUserBaseUrl && desiredSubagentDefaults
@@ -1308,7 +1276,7 @@ function stripOpencodexConfigResult(
   if (hadRootOcxProvider || hadInjectedBaseUrl) out = stripRootRoutedModel(out);
   const managedDefaults = transformManagedSubagentDefaults(out, null);
   if (managedDefaults.ok) out = managedDefaults.content;
-  const managedNativeContext = transformManagedNativeContextMode(out, false);
+  const managedNativeContext = removeManagedNativeContextMode(out);
   if (managedNativeContext.ok) out = managedNativeContext.content;
   out = stripOpencodexCatalogPath(out);
   return {

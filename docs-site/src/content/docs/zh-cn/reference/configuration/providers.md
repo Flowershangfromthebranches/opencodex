@@ -82,7 +82,7 @@ selector，而不是分配一个新名称。
 | `vercelGatewayRouting?` | `VercelGatewayRouting` | 默认的 Vercel AI Gateway `order`、`only` 和 `sort`（`"cost"` \| `"ttft"` \| `"tps"`）偏好；仅对使用 `openai-chat` 的规范 Vercel AI Gateway 有效。 |
 | `authMode?` | `"key" \| "forward" \| "oauth" \| "local"` | 身份验证模式（默认 `key`）。OAuth/订阅凭据存放在 `config.json` 之外；`local` 仅限注册表条目允许它的提供者。 |
 | `codexAccountMode?` | `"pool" \| "direct"` | 仅适用于规范的 `openai`；默认是 Pool。Direct 会绕过池状态。 |
-| `codexNativeModelContextModes?` | `{ "gpt-5.6-sol"?, "gpt-5.6-terra"?, "gpt-5.6-luna"?: "default" \| "1m" }` | 仅适用于使用 Codex 登录的规范 `openai`。三个 GPT-5.6 模型分别独立开启 Codex 官方 1M 模式（缺失条目或 `default` 保留该模型现有的 272k 默认行为及可选的 922k 上下文上限流程）。当被开启的模型是 Codex 当前活动模型时，同步会写入 `model_context_window = 1000000` 与 `model_auto_compact_token_limit = 900000`，且只把这些行在目录中的 `max_context_window` 提升至 1,000,000；一旦活动模型变为其他模型，该 root 块会被移除。Codex ≥0.147 会将 root 覆盖与每个模型的目录 `max_context_window` 取 min，因此其他模型不会继承 1M。路由提供商、GPT-5.5、GPT-5.4、Daybreak alias 以及 `effective_context_window_percent` 均不受影响。 |
+| `codexNativeModelContextModes?` | `{ "gpt-5.6-sol"?, "gpt-5.6-terra"?, "gpt-5.6-luna"?: "default" \| "1m" }` | 仅适用于使用 Codex 登录的规范 `openai`。三个 GPT-5.6 模型分别独立开启 Codex 官方 1M 模式。缺失条目或 `default` 保留该模型现有的 272k 默认行为及可选的 922k 上下文上限流程。对于开启 1M 的模型，同步会在该模型的目录行写入 `context_window = 1000000`、`max_context_window = 1000000` 和 `auto_compact_token_limit = 900000`。不会写入全局 root 上下文覆盖，因此在 Codex 内直接切换模型时，Default 与 1M 行仍相互独立。路由提供商、GPT-5.5、GPT-5.4、Daybreak alias 以及 `effective_context_window_percent` 均不受影响。 |
 | `refreshPolicy?` | `"proactive" \| "lazy-only" \| "disabled"` | 覆盖该 OAuth 提供者的 Token Guardian 策略。 |
 | `reasoningEfforts?` | `string[]` | 要向外暴露并发送的、提供者级 Codex 推理标签。 |
 | `modelReasoningEfforts?` | `Record<string, string[]>` | 按模型设置的标签。空列表会隐藏 effort 控件。 |

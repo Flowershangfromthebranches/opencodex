@@ -209,7 +209,7 @@ export interface NativeContextLimits {
   readonly modelWindows?: Readonly<Record<string, number>>;
   /** `providers.openai.modelAutoCompactTokenLimits` — soft, lowering-only budgets. */
   readonly modelAutoCompactTokenLimits?: Readonly<Record<string, number>>;
-  /** Exact native slugs with the official per-model 1M opt-in enabled (canonical forward provider only). */
+  /** Exact native slugs whose catalog row is promoted to the official per-model 1M mode. */
   readonly nativeOneMillionModels?: ReadonlySet<string>;
 }
 
@@ -266,8 +266,15 @@ function narrowToLimits(raw: number | undefined, slug: string, input: NativeCont
   const overlay = positiveInt(limits.modelWindows?.[slug]) ?? positiveInt(limits.providerWindow);
   const cap = positiveInt(limits.cap);
   if (NATIVE_GPT56_FAMILY.has(slug)) {
-    const ceiling = NATIVE_GPT56_MAX_INPUT_TOKENS;
-    const chosen = overlay ?? cap ?? raw;
+    const oneMillionMode = limits.nativeOneMillionModels?.has(slug)
+      && NATIVE_GPT56_ONE_MILLION_MODELS.has(slug);
+    const ceiling = oneMillionMode
+      ? NATIVE_GPT56_ONE_MILLION_CONTEXT_WINDOW
+      : NATIVE_GPT56_MAX_INPUT_TOKENS;
+    // Codex resolves `context_window` before `max_context_window`. A per-model opt-in must
+    // therefore promote the row's ordinary window itself; raising only the maximum still
+    // resolves to 272k whenever the user switches models without another OpenCodex sync.
+    const chosen = overlay ?? cap ?? (oneMillionMode ? NATIVE_GPT56_ONE_MILLION_CONTEXT_WINDOW : raw);
     const window = Math.min(chosen, ceiling);
     return overlay !== undefined && cap !== undefined ? Math.min(window, cap) : window;
   }
@@ -286,10 +293,9 @@ export function nativeOpenAiContextWindow(slug: string, limits?: NativeContextLi
 }
 
 /**
- * Catalog ceiling for a native model. The official per-model 1M opt-in raises only the exact
- * public Sol/Terra/Luna rows whose mode is enabled and deliberately leaves their ordinary
- * `context_window` alone. Existing explicit context overlays and provider caps remain
- * lowering constraints.
+ * Catalog ceiling for a native model. The official per-model 1M opt-in promotes both
+ * `context_window` and `max_context_window` on the exact opted-in row. Existing explicit
+ * context overlays and provider caps remain lowering constraints.
  */
 export function nativeOpenAiMaxContextWindow(
   slug: string,
@@ -302,12 +308,7 @@ export function nativeOpenAiMaxContextWindow(
     const contextWindow = nativeOpenAiContextWindow(slug, limits);
     return contextWindow === undefined ? configured : Math.min(configured, contextWindow);
   }
-  const overlay = positiveInt(limits.modelWindows?.[slug]) ?? positiveInt(limits.providerWindow);
-  const cap = positiveInt(limits.cap);
-  let maximum = NATIVE_GPT56_ONE_MILLION_CONTEXT_WINDOW;
-  if (overlay !== undefined) maximum = Math.min(maximum, overlay);
-  if (cap !== undefined) maximum = Math.min(maximum, cap);
-  return maximum;
+  return nativeOpenAiContextWindow(slug, limits) ?? configured;
 }
 
 /**

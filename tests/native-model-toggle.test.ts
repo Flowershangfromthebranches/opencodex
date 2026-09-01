@@ -47,6 +47,34 @@ function makeConfig(overrides: Partial<OcxConfig> = {}): OcxConfig {
   return { port: 10100, providers: {}, defaultProvider: "openai", ...overrides } as OcxConfig;
 }
 
+type CodexContextRow = {
+  context_window?: number;
+  max_context_window?: number;
+  auto_compact_token_limit?: number;
+  effective_context_window_percent?: number;
+};
+
+/** Mirrors codex-rs 0.147.0 ModelInfo resolution (openai/codex be6e8eac). */
+function resolveCodexContext(
+  row: CodexContextRow,
+  rootContextWindow?: number,
+  rootAutoCompactTokenLimit?: number,
+): { raw: number; effective: number; autoCompact: number } {
+  const raw = rootContextWindow === undefined
+    ? (row.context_window ?? row.max_context_window)
+    : Math.min(rootContextWindow, row.max_context_window ?? rootContextWindow);
+  if (raw === undefined) throw new Error("test row has no context window");
+  const ninetyPercent = Math.floor(raw * 0.9);
+  const configuredAutoCompact = rootAutoCompactTokenLimit ?? row.auto_compact_token_limit;
+  return {
+    raw,
+    effective: Math.floor(raw * (row.effective_context_window_percent ?? 95) / 100),
+    autoCompact: configuredAutoCompact === undefined
+      ? ninetyPercent
+      : Math.min(configuredAutoCompact, ninetyPercent),
+  };
+}
+
 function nativeTemplate(): Record<string, unknown> {
   return {
     slug: "gpt-5.5",
@@ -175,7 +203,7 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
     expect(entry.auto_compact_token_limit).toBe(120_000);
   });
 
-  test("official per-model 1M modes raise only the opted-in native GPT-5.6 catalog maxima", () => {
+  test("official per-model 1M modes promote only opted-in native GPT-5.6 catalog rows", () => {
     const limits = nativeContextLimits({
       providers: {
         openai: {
@@ -195,8 +223,9 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
       };
       applyNativeOpenAiContextOverride(entry as never, limits);
       expect(entry).toMatchObject({
-        context_window: 272_000,
+        context_window: 1_000_000,
         max_context_window: 1_000_000,
+        auto_compact_token_limit: 900_000,
         effective_context_window_percent: 95,
       });
     }
@@ -211,6 +240,7 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
     applyNativeOpenAiContextOverride(terra as never, limits);
     expect(terra.context_window).toBe(272_000);
     expect(terra.max_context_window).toBe(272_000);
+    expect(terra.auto_compact_token_limit).toBe(244_800);
 
     for (const slug of ["gpt-5.5", "gpt-daybreak-blue-latest"]) {
       const entry: Record<string, unknown> = {
@@ -273,11 +303,159 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
         effective_context_window_percent: 95,
       };
       applyNativeOpenAiContextOverride(entry as never, limits);
-      const expectedMax = (enabled as string[]).includes(slug) ? 1_000_000 : 272_000;
-      expect(entry.context_window).toBe(272_000);
+      const oneMillion = (enabled as string[]).includes(slug);
+      const expectedMax = oneMillion ? 1_000_000 : 272_000;
+      expect(entry.context_window).toBe(expectedMax);
       expect(entry.max_context_window).toBe(expectedMax);
+      expect(entry.auto_compact_token_limit).toBe(oneMillion ? 900_000 : 244_800);
       expect(entry.effective_context_window_percent).toBe(95);
     }
+  });
+
+  test("Sol sync then direct Luna -> Sol -> GPT-5.5/5.4 switches resolve per-model windows without another sync", () => {
+    const limits = nativeContextLimits({
+      providers: {
+        openai: {
+          adapter: "openai-responses",
+          baseUrl: "https://chatgpt.com/backend-api/codex",
+          authMode: "forward",
+          codexNativeModelContextModes: { "gpt-5.6-luna": "1m" },
+        },
+      },
+    } as never);
+    // Generate the one catalog that a sync while config.toml still names Sol would persist.
+    // The generator intentionally has no active-model argument and config.toml gets no root
+    // context/compact override, so later Desktop switches keep using these same independent rows.
+    const catalog = buildCatalogEntries(
+      nativeTemplate(),
+      ["gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4"],
+      [],
+      undefined,
+      false,
+      "default",
+      new Set(),
+      [],
+      new Set(),
+      new Set(),
+      limits,
+    );
+    const rows = Object.fromEntries(catalog
+      .filter(row => ["gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4"].includes(String(row.slug)))
+      .map(row => [row.slug as string, row as CodexContextRow & { slug: string }]));
+
+    expect(rows["gpt-5.6-luna"]).toMatchObject({
+      context_window: 1_000_000,
+      max_context_window: 1_000_000,
+      auto_compact_token_limit: 900_000,
+      effective_context_window_percent: 95,
+    });
+    expect(resolveCodexContext(rows["gpt-5.6-luna"]!)).toEqual({
+      raw: 1_000_000,
+      effective: 950_000,
+      autoCompact: 900_000,
+    });
+    expect(resolveCodexContext(rows["gpt-5.6-sol"]!)).toEqual({
+      raw: 272_000,
+      effective: 258_400,
+      autoCompact: 244_800,
+    });
+    expect(resolveCodexContext(rows["gpt-5.5"]!)).toEqual({
+      raw: 272_000,
+      effective: 258_400,
+      autoCompact: 244_800,
+    });
+    expect(resolveCodexContext(rows["gpt-5.4"]!)).toEqual({
+      raw: 1_000_000,
+      effective: 950_000,
+      autoCompact: 900_000,
+    });
+  });
+
+  test("1M mode remains lowering-only under existing per-model window and compaction overlays", () => {
+    const limits = nativeContextLimits({
+      providers: {
+        openai: {
+          adapter: "openai-responses",
+          baseUrl: "https://chatgpt.com/backend-api/codex",
+          authMode: "forward",
+          codexNativeModelContextModes: { "gpt-5.6-luna": "1m" },
+          modelContextWindows: { "gpt-5.6-luna": 500_000 },
+          modelAutoCompactTokenLimits: { "gpt-5.6-luna": 400_000 },
+        },
+      },
+    } as never);
+    const luna = {
+      slug: "gpt-5.6-luna",
+      context_window: 272_000,
+      max_context_window: 922_000,
+      effective_context_window_percent: 95,
+    };
+    applyNativeOpenAiContextOverride(luna as never, limits);
+    expect(luna).toMatchObject({
+      context_window: 500_000,
+      max_context_window: 500_000,
+      auto_compact_token_limit: 400_000,
+      effective_context_window_percent: 95,
+    });
+  });
+
+  test("current config re-derives a stale Luna catalog row into persistent per-model 1M mode", () => {
+    const limits = nativeContextLimits({
+      providers: {
+        openai: {
+          adapter: "openai-responses",
+          baseUrl: "https://chatgpt.com/backend-api/codex",
+          authMode: "forward",
+          codexNativeModelContextModes: { "gpt-5.6-luna": "1m" },
+        },
+      },
+    } as never);
+    const staleLuna = {
+      slug: "gpt-5.6-luna",
+      context_window: 272_000,
+      max_context_window: 272_000,
+      auto_compact_token_limit: 244_800,
+      effective_context_window_percent: 95,
+    };
+
+    applyNativeOpenAiContextOverride(staleLuna as never, limits);
+
+    expect(staleLuna).toEqual({
+      slug: "gpt-5.6-luna",
+      context_window: 1_000_000,
+      max_context_window: 1_000_000,
+      auto_compact_token_limit: 900_000,
+      effective_context_window_percent: 95,
+    });
+  });
+
+  test("switching Luna back to Default re-derives an old 1M row to the existing safe default", () => {
+    const luna = {
+      slug: "gpt-5.6-luna",
+      context_window: 1_000_000,
+      max_context_window: 1_000_000,
+      auto_compact_token_limit: 900_000,
+      effective_context_window_percent: 95,
+    };
+
+    applyNativeOpenAiContextOverride(luna as never, nativeContextLimits({
+      providers: {
+        openai: {
+          adapter: "openai-responses",
+          baseUrl: "https://chatgpt.com/backend-api/codex",
+          authMode: "forward",
+          codexNativeModelContextModes: { "gpt-5.6-luna": "default" },
+        },
+      },
+    } as never));
+
+    expect(luna).toEqual({
+      slug: "gpt-5.6-luna",
+      context_window: 272_000,
+      max_context_window: 272_000,
+      auto_compact_token_limit: 244_800,
+      effective_context_window_percent: 95,
+    });
   });
 
   test("1M mode is ignored on a non-canonical provider named openai", () => {
@@ -910,9 +1088,8 @@ describe("#2574 a stale on-disk row is what a subagent reads", () => {
    * ~/.codex/opencodex-catalog.json still held 272,000 from an earlier sync. With
    * effective_context_window_percent = 95 that renders as 258,400 — the exact number reported.
    *
-   * The subagent roster reads the persisted catalog rather than re-deriving from config, so a
-   * row that predates the current limits is served verbatim. The override is correct; what is
-   * missing is any assertion that the WRITTEN row matches what the resolver would produce.
+   * The persisted row can predate current config. The collaboration path now re-derives it in
+   * memory, while these assertions also pin the writer invariant so the next sync repairs disk.
    */
   test("a raised cap opts the family into the wider window, and the row follows", () => {
     // The legacy measured-window path is expressed as a raised providerContextCaps.openai,
@@ -922,8 +1099,7 @@ describe("#2574 a stale on-disk row is what a subagent reads", () => {
     expect(nativeOpenAiContextWindow("gpt-5.6-sol", optedIn)).toBe(NATIVE_GPT56_OPT_IN_CONTEXT_WINDOW);
 
     // A row written before that opt-in carries the narrow width. Re-applying the override with
-    // the current limits is what repairs it — which is exactly what a stale on-disk catalog
-    // never gets, because the subagent roster reads the file rather than re-deriving.
+    // the current limits is what repairs it in memory and on the next catalog sync.
     const stale: Record<string, unknown> = {
       slug: "gpt-5.6-sol",
       context_window: NATIVE_GPT56_CONTEXT_WINDOW,

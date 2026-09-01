@@ -213,14 +213,14 @@ preserving a stale one would block every later migration.
   (auto-compact 244,800). The existing provider context-cap workflow can raise that operating
   window to the measured 922,000 / 829,800 mode. Separately, the Models card exposes the official
   per-model `Default | 1M` Codex opt-in for exactly Sol/Terra/Luna (`codexNativeModelContextModes`).
-  For each opted-in model the catalog `context_window` keeps its normal default, only
-  `max_context_window` rises to 1,000,000, and the root `model_context_window = 1000000` plus
-  `model_auto_compact_token_limit = 900000` block (marker-managed) is written ONLY while that
-  model is Codex's active root `model`; it is stripped again for any other active model.
-  Codex ≥0.147 additionally clamps the root override against each model's catalog
-  `max_context_window`, so other GPT-5.6 rows and GPT-5.5/5.4 never inherit 1M. Residual root-level
-  limitation: a user who switches models inside Codex directly (bypassing opencodex sync) can keep
-  the block alive until the next sync; the clamp bounds the damage to each model's own maximum.
+  Each opted-in model's own catalog row receives `context_window = 1000000`,
+  `max_context_window = 1000000`, and `auto_compact_token_limit = 900000`. No root context or
+  compaction override is written. This matters because Codex resolves a row's ordinary
+  `context_window` before its maximum; a max-only row would fall back to 272,000 after a direct
+  Desktop model switch, while a global root request could widen Default rows to their maxima.
+  Per-model rows therefore keep direct in-app switches persistent without affecting other GPT-5.6
+  rows or GPT-5.5/5.4. Sync also removes the marker-owned root block written by the earlier
+  active-model implementation while preserving unmarked user settings.
 
   The ceiling is the same on both — probing a real Codex-login account accepted 921,508 input
   tokens and refused 922,013 with `context_length_exceeded` on Sol, Terra and Luna alike,

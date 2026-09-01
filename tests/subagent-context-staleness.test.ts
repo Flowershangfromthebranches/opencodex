@@ -44,11 +44,10 @@ function writeConfig(): void {
       adapter: "openai-responses",
       baseUrl: "https://chatgpt.com/backend-api/codex",
       authMode: "forward",
-      // The current-config re-derive must carry the new maximum even when the file predates it.
+      // The current-config re-derive must promote the entire per-model row even when the file predates it.
       codexNativeModelContextModes: { "gpt-5.6-sol": "1m" },
     } },
-    // Keep the pre-existing measured 922k operating-window path active too: the official 1M
-    // mode changes the catalog maximum, while this cap continues to choose the ordinary window.
+    // A cap above the official mode must neither mask the 1M row nor widen it beyond 1M.
     providerContextCaps: { openai: 1_050_000 },
   }));
 }

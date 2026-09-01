@@ -17,14 +17,18 @@ import {
 } from "../src/codex/subagent-defaults";
 import {
   MANAGED_NATIVE_CONTEXT_MARKER,
-  transformManagedNativeContextMode,
+  removeManagedNativeContextMode,
 } from "../src/codex/native-context-mode";
 
 describe("Codex config injection", () => {
-  test("managed GPT-5.6 1M settings are exact, idempotent, and reversible", () => {
-    const original = [
+  test("legacy managed GPT-5.6 root settings are removed idempotently", () => {
+    const legacy = [
       'model = "gpt-5.6-sol"',
       "model_reasoning_effort = \"high\"",
+      MANAGED_NATIVE_CONTEXT_MARKER,
+      "model_context_window = 1000000",
+      MANAGED_NATIVE_CONTEXT_MARKER,
+      "model_auto_compact_token_limit = 900000",
       "",
       "[features]",
       "fast_mode = true",
@@ -33,47 +37,36 @@ describe("Codex config injection", () => {
       'command = "example"',
       "",
     ].join("\n");
-    const enabled = transformManagedNativeContextMode(original, true);
-    expect(enabled.ok).toBe(true);
-    if (!enabled.ok) return;
-    expect(enabled.content.match(/^model_context_window = 1000000$/gm)?.length).toBe(1);
-    expect(enabled.content.match(/^model_auto_compact_token_limit = 900000$/gm)?.length).toBe(1);
-    expect(enabled.content.match(new RegExp(MANAGED_NATIVE_CONTEXT_MARKER, "g"))?.length).toBe(2);
-    expect(enabled.content).toContain("[mcp_servers.example]");
+    const removed = removeManagedNativeContextMode(legacy);
+    expect(removed.ok).toBe(true);
+    if (!removed.ok) return;
+    expect(removed.content).not.toContain(MANAGED_NATIVE_CONTEXT_MARKER);
+    expect(removed.content).not.toContain("model_context_window = 1000000");
+    expect(removed.content).not.toContain("model_auto_compact_token_limit = 900000");
+    expect(removed.content).toContain('model = "gpt-5.6-sol"');
+    expect(removed.content).toContain("[mcp_servers.example]");
 
-    const repeated = transformManagedNativeContextMode(enabled.content, true);
-    expect(repeated).toEqual({ ok: true, changed: false, content: enabled.content });
-
-    const disabled = transformManagedNativeContextMode(enabled.content, false);
-    expect(disabled.ok).toBe(true);
-    if (!disabled.ok) return;
-    expect(disabled.content).not.toContain(MANAGED_NATIVE_CONTEXT_MARKER);
-    expect(disabled.content).not.toContain("model_context_window = 1000000");
-    expect(disabled.content).not.toContain("model_auto_compact_token_limit = 900000");
-    expect(disabled.content).toContain('model = "gpt-5.6-sol"');
-    expect(disabled.content).toContain("[mcp_servers.example]");
+    expect(removeManagedNativeContextMode(removed.content)).toEqual({
+      ok: true,
+      changed: false,
+      content: removed.content,
+    });
   });
 
-  test("1M settings preserve an exact user compaction value and reject a conflicting one", () => {
-    const exact = transformManagedNativeContextMode(
+  test("per-model cleanup preserves every unmarked user root setting and fails closed on bad ownership", () => {
+    for (const content of [
       "\"model_auto_compact_token_limit\" = 900_000\n[features]\nfast_mode = true\n",
-      true,
-    );
-    expect(exact.ok).toBe(true);
-    if (exact.ok) {
-      expect(exact.content).toContain('"model_auto_compact_token_limit" = 900_000');
-      expect(exact.content.match(new RegExp(MANAGED_NATIVE_CONTEXT_MARKER, "g"))?.length).toBe(1);
-      const removed = transformManagedNativeContextMode(exact.content, false);
-      expect(removed.ok).toBe(true);
-      if (removed.ok) expect(removed.content).toContain('"model_auto_compact_token_limit" = 900_000');
+      "model_auto_compact_token_limit = 120000\n[features]\nfast_mode = true\n",
+    ]) {
+      expect(removeManagedNativeContextMode(content)).toEqual({ ok: true, changed: false, content });
     }
 
-    const conflict = "model_auto_compact_token_limit = 120000\n[features]\nfast_mode = true\n";
-    expect(transformManagedNativeContextMode(conflict, true)).toEqual({
+    const ambiguous = `${MANAGED_NATIVE_CONTEXT_MARKER}\nmodel_context_window = 922000\n`;
+    expect(removeManagedNativeContextMode(ambiguous)).toEqual({
       ok: false,
       changed: false,
-      content: conflict,
-      error: "user-owned model_auto_compact_token_limit conflicts with the 1M mode",
+      content: ambiguous,
+      error: "managed model_context_window has an unexpected value",
     });
   });
 
