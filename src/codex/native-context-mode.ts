@@ -1,7 +1,13 @@
+import { NATIVE_GPT56_ONE_MILLION_MODEL_IDS } from "../types";
+
 /** Root Codex settings published for the explicit GPT-5.6 1M opt-in. */
 export const NATIVE_GPT56_ONE_MILLION_CONTEXT_WINDOW = 1_000_000;
 export const NATIVE_GPT56_ONE_MILLION_AUTO_COMPACT_LIMIT = 900_000;
 export const MANAGED_NATIVE_CONTEXT_MARKER = "# Managed by opencodex: native GPT-5.6 1M context";
+
+/** Exact public model allowlist for the official 1M mode. Capability aliases are excluded. */
+export const NATIVE_GPT56_ONE_MILLION_MODELS: ReadonlySet<string>
+  = new Set(NATIVE_GPT56_ONE_MILLION_MODEL_IDS);
 
 const TARGETS = {
   model_context_window: NATIVE_GPT56_ONE_MILLION_CONTEXT_WINDOW,

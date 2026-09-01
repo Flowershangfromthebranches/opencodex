@@ -36,9 +36,9 @@ test("the native provider group carries the additive entitlement diagnostic", ()
 test("the native provider group carries the persisted GPT-5.6 context mode", () => {
   const groups = buildProviderModelGroups(
     [nativeRow("gpt-5.6-sol")],
-    [{ name: "openai", codexNativeContextMode: "1m" }],
+    [{ name: "openai", codexNativeModelContextModes: { "gpt-5.6-luna": "1m" } }],
   );
-  expect(groups[0]!.codexNativeContextMode).toBe("1m");
+  expect(groups[0]!.codexNativeModelContextModes).toEqual({ "gpt-5.6-luna": "1m" });
 });
 
 test("the native card keeps sorting first once a custom row joins it", () => {

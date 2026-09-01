@@ -25,8 +25,22 @@ export type ReasoningSummaryDelivery = typeof REASONING_SUMMARY_DELIVERY_VALUES[
 /** Trusted runtime ownership for Codex-account credentials. Never persisted per provider. */
 export type CodexAccountMode = "direct" | "pool";
 
-/** User-selected context policy for canonical Codex-login GPT-5.6 models. */
+/** User-selected context policy for a canonical Codex-login GPT-5.6 model. */
 export type CodexNativeContextMode = "default" | "1m";
+
+/** Exact public GPT-5.6 model ids eligible for the official 1M opt-in. Capability aliases excluded. */
+export const NATIVE_GPT56_ONE_MILLION_MODEL_IDS = [
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+] as const;
+
+export type NativeGpt56OneMillionModelId = typeof NATIVE_GPT56_ONE_MILLION_MODEL_IDS[number];
+
+/** Per-model 1M opt-in map. Absent (or `"default"`) means the model keeps current default behavior. */
+export type CodexNativeModelContextModes = Partial<
+  Record<NativeGpt56OneMillionModelId, CodexNativeContextMode>
+>;
 
 export const OPENAI_PROVIDER_TIER_VERSION = 2 as const;
 

@@ -51,6 +51,7 @@ import {
   fmtK,
   NATIVE_CAP_OPTIONS,
   NATIVE_CAP_OPTION_SET,
+  NATIVE_GPT56_CONTEXT_MODELS,
   NATIVE_GPT56_DEFAULT_WINDOW,
   NATIVE_GPT56_SAFE_WINDOW,
   PAGE,
@@ -756,23 +757,31 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
       busyRef.current = false;
     }
   };
-  const saveNativeContextMode = async (mode: "default" | "1m") => {
+  const saveNativeContextMode = async (modelId: string, mode: "default" | "1m") => {
     if (nativeContextModeBusyRef.current) return;
     nativeContextModeBusyRef.current = true;
     setNativeContextModeSaving(true);
     setStatus("");
     try {
+      // The PATCH is a single-field atomic map replace: send every GPT-5.6 row's effective
+      // mode so the two untouched models keep their current selection even if another
+      // editor changed them meanwhile.
+      const openaiProvider = providers.find(provider => provider.name === "openai");
+      const current = openaiProvider?.codexNativeModelContextModes ?? {};
+      const nextModes = Object.fromEntries(
+        NATIVE_GPT56_CONTEXT_MODELS.map(id => [id, id === modelId ? mode : current[id] ?? "default"]),
+      );
       const response = await fetch(`${apiBase}/api/providers?name=openai`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ codexNativeContextMode: mode }),
+        body: JSON.stringify({ codexNativeModelContextModes: nextModes }),
       });
-      await readJsonOrThrow<{ success: boolean; codexNativeContextMode: "default" | "1m" }>(
+      await readJsonOrThrow<{ success: boolean; codexNativeModelContextModes: Record<string, "default" | "1m"> }>(
         response,
         t("models.nativeContextModeSaveFailed"),
       );
       setProviders(current => current.map(provider => provider.name === "openai"
-        ? { ...provider, codexNativeContextMode: mode }
+        ? { ...provider, codexNativeModelContextModes: nextModes }
         : provider));
       publishFeedback(true, t("models.nativeContextModeApplied"));
       await load(true);
@@ -1231,7 +1240,7 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
     const nativeOneMillionAvailable = nativeProviderGroup && rows.some(row =>
       row.id === "gpt-5.6-sol" || row.id === "gpt-5.6-terra" || row.id === "gpt-5.6-luna"
     );
-    const nativeContextMode = group.codexNativeContextMode ?? "default";
+    const nativeContextModes = group.codexNativeModelContextModes ?? {};
     const q = (search[provider] ?? "").trim().toLowerCase();
     const filtered = q ? rows.filter(m => m.id.toLowerCase().includes(q)) : rows;
     // Display-only: enabled models float to the top of each provider group so they
@@ -1459,33 +1468,38 @@ export default function Models({ apiBase, restartEpoch = 0 }: { apiBase: string;
               <div className="row models-provider-hint" data-testid="native-gpt56-context-mode">
                 <div style={{ display: "grid", gap: 3, flex: "1 1 360px" }}>
                   <span className="text-label font-semibold">{t("models.nativeContextModeTitle")}</span>
-                  <span className="muted text-caption">
-                    {nativeContextMode === "1m"
-                      ? t("models.nativeContextModeOneMillionHint")
-                      : t("models.nativeContextModeDefaultHint")}
-                  </span>
                   <span className="muted text-caption">{t("models.nativeContextModeExperimental")}</span>
                 </div>
-                <div
-                  className="segmented models-segmented"
-                  role="radiogroup"
-                  aria-label={t("models.nativeContextModeTitle")}
-                >
-                  {(["default", "1m"] as const).map(mode => (
-                    <button
-                      key={mode}
-                      type="button"
-                      role="radio"
-                      aria-checked={nativeContextMode === mode}
-                      className={`btn btn-sm${nativeContextMode === mode ? " btn-primary" : " btn-ghost"}`}
-                      disabled={busy || nativeContextModeSaving}
-                      onClick={() => void saveNativeContextMode(mode)}
-                    >
-                      {t(mode === "default"
-                        ? "models.nativeContextModeDefault"
-                        : "models.nativeContextModeOneMillion")}
-                    </button>
-                  ))}
+                <div style={{ display: "grid", gap: 6 }}>
+                  {NATIVE_GPT56_CONTEXT_MODELS.map(modelId => {
+                    const modelMode = nativeContextModes[modelId] ?? "default";
+                    return (
+                      <div key={modelId} className="row" data-testid={`native-gpt56-context-mode-${modelId}`}>
+                        <span className="text-label" style={{ flex: "1 1 200px" }}>{modelId}</span>
+                        <div
+                          className="segmented models-segmented"
+                          role="radiogroup"
+                          aria-label={`${modelId} ${t("models.nativeContextModeTitle")}`}
+                        >
+                          {(["default", "1m"] as const).map(mode => (
+                            <button
+                              key={mode}
+                              type="button"
+                              role="radio"
+                              aria-checked={modelMode === mode}
+                              className={`btn btn-sm${modelMode === mode ? " btn-primary" : " btn-ghost"}`}
+                              disabled={busy || nativeContextModeSaving}
+                              onClick={() => void saveNativeContextMode(modelId, mode)}
+                            >
+                              {t(mode === "default"
+                                ? "models.nativeContextModeDefault"
+                                : "models.nativeContextModeOneMillion")}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
                 {nativeContextModeSaving && (
                   <span className="muted text-caption" role="status">{t("common.saving")}</span>

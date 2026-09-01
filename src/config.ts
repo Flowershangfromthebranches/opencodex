@@ -64,6 +64,7 @@ import { MODEL_ALIAS_PATTERN } from "./providers/default-aliases";
 import { vercelGatewayRoutingConfigError } from "./providers/vercel-gateway-routing";
 import {
   MODEL_ADAPTER_OVERRIDE_ALLOWED,
+  NATIVE_GPT56_ONE_MILLION_MODEL_IDS,
   OPENAI_PROVIDER_TIER_VERSION,
   pinnedWireAdapter,
   UPSTREAM_HTTP_VERSION_VALUES,
@@ -531,7 +532,7 @@ const providerConfigSchema = z.object({
   retryOn429: retryOn429PolicySchema.optional(),
   transientRetryOn5xx: transientRetryOn5xxPolicySchema.optional(),
   codexAccountMode: z.enum(["pool", "direct"]).optional(),
-  codexNativeContextMode: z.enum(["default", "1m"]).optional(),
+  codexNativeModelContextModes: z.record(z.string(), z.enum(["default", "1m"])).optional(),
   // Validated rather than passed through: this schema ends in `.passthrough()`, so an
   // undeclared key survives verbatim. A misspelled `codexToolMode` therefore used to be
   // accepted, persisted, and then silently resolved to the `code_mode_only` default — the
@@ -1259,7 +1260,7 @@ const configSchema = z.object({
         });
       }
     }
-    if (Object.hasOwn(provider, "codexNativeContextMode") && provider.codexNativeContextMode !== undefined) {
+    if (Object.hasOwn(provider, "codexNativeModelContextModes") && provider.codexNativeModelContextModes !== undefined) {
       const canonicalOpenAiShape = name === "openai"
         && provider.adapter === "openai-responses"
         && (provider as { authMode?: unknown }).authMode === "forward"
@@ -1268,9 +1269,26 @@ const configSchema = z.object({
       if (!canonicalOpenAiShape) {
         ctx.addIssue({
           code: "custom",
-          path: ["providers", redactSecretString(name), "codexNativeContextMode"],
-          message: "codexNativeContextMode is valid only on the canonical built-in openai provider",
+          path: ["providers", redactSecretString(name), "codexNativeModelContextModes"],
+          message: "codexNativeModelContextModes is valid only on the canonical built-in openai provider",
         });
+      } else {
+        for (const [modelId, mode] of Object.entries(provider.codexNativeModelContextModes as Record<string, unknown>)) {
+          if (!(NATIVE_GPT56_ONE_MILLION_MODEL_IDS as readonly string[]).includes(modelId)) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["providers", redactSecretString(name), "codexNativeModelContextModes", redactSecretString(modelId)],
+              message: `codexNativeModelContextModes keys are limited to the exact GPT-5.6 family: ${NATIVE_GPT56_ONE_MILLION_MODEL_IDS.join(", ")}`,
+            });
+          }
+          if (mode !== "default" && mode !== "1m") {
+            ctx.addIssue({
+              code: "custom",
+              path: ["providers", redactSecretString(name), "codexNativeModelContextModes", redactSecretString(modelId)],
+              message: "codexNativeModelContextModes values must be default or 1m",
+            });
+          }
+        }
       }
     }
   }

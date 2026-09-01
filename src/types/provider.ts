@@ -2,7 +2,7 @@ import type {
   UpstreamHttpVersion,
   ReasoningSummaryDelivery,
   CodexAccountMode,
-  CodexNativeContextMode,
+  CodexNativeModelContextModes,
 } from "./wire";
 
 /**
@@ -295,8 +295,8 @@ export interface OcxProviderConfig {
    * failover engine; "direct" pins the caller's main Codex login and never touches pool state.
    */
   codexAccountMode?: CodexAccountMode;
-  /** Official Codex context mode for the canonical native GPT-5.6 family. */
-  codexNativeContextMode?: CodexNativeContextMode;
+  /** Official per-model Codex context mode for the canonical native GPT-5.6 family. */
+  codexNativeModelContextModes?: CodexNativeModelContextModes;
   apiKey?: string;
   /**
    * Key-auth header style for Anthropic-compatible providers.

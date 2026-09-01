@@ -49,8 +49,8 @@ import {
 } from "./native-models";
 import { cachedAvailableAccountGatedNativeModels } from "../model-entitlements";
 import { MAIN_CODEX_ACCOUNT_ID } from "../main-account";
-import { NATIVE_GPT56_ONE_MILLION_CONTEXT_WINDOW } from "../native-context-mode";
-export { NATIVE_GPT56_ONE_MILLION_CONTEXT_WINDOW } from "../native-context-mode";
+import { NATIVE_GPT56_ONE_MILLION_CONTEXT_WINDOW, NATIVE_GPT56_ONE_MILLION_MODELS } from "../native-context-mode";
+export { NATIVE_GPT56_ONE_MILLION_CONTEXT_WINDOW, NATIVE_GPT56_ONE_MILLION_MODELS } from "../native-context-mode";
 export { CODEX_NATIVE_ALIAS_CATALOG_KIND } from "./kinds";
 export {
   NATIVE_DAYBREAK_BLUE_MODEL,
@@ -143,13 +143,6 @@ export const NATIVE_GPT56_MAX_INPUT_TOKENS = 922_000;
 /** Legacy measured/safe operating-window opt-in used by the provider context-cap controls. */
 export const NATIVE_GPT56_OPT_IN_CONTEXT_WINDOW = NATIVE_GPT56_MAX_INPUT_TOKENS;
 
-/** Exact public model allowlist for the official 1M mode. Capability aliases are excluded. */
-export const NATIVE_GPT56_ONE_MILLION_MODELS: ReadonlySet<string> = new Set([
-  "gpt-5.6-sol",
-  "gpt-5.6-terra",
-  "gpt-5.6-luna",
-]);
-
 const NATIVE_GPT56_FAMILY = new Set<string>([
   "gpt-5.6-sol",
   "gpt-5.6-terra",
@@ -216,8 +209,8 @@ export interface NativeContextLimits {
   readonly modelWindows?: Readonly<Record<string, number>>;
   /** `providers.openai.modelAutoCompactTokenLimits` — soft, lowering-only budgets. */
   readonly modelAutoCompactTokenLimits?: Readonly<Record<string, number>>;
-  /** Official root Codex override, valid only on the canonical forward provider. */
-  readonly nativeContextMode?: "default" | "1m";
+  /** Exact native slugs with the official per-model 1M opt-in enabled (canonical forward provider only). */
+  readonly nativeOneMillionModels?: ReadonlySet<string>;
 }
 
 export type NativeContextLimitsInput = NativeContextLimits | number | undefined;
@@ -253,10 +246,16 @@ export function nativeContextLimits(
     ...(positiveInt(provider?.contextWindow) !== undefined ? { providerWindow: provider!.contextWindow } : {}),
     ...(Object.keys(modelWindows).length > 0 ? { modelWindows } : {}),
     ...(Object.keys(modelAutoCompactTokenLimits).length > 0 ? { modelAutoCompactTokenLimits } : {}),
-    ...(provider?.codexNativeContextMode === "1m"
-      && isCanonicalOpenAiForwardProvider(provider)
-      ? { nativeContextMode: "1m" as const }
-      : {}),
+    ...(() => {
+      if (!provider || !isCanonicalOpenAiForwardProvider(provider)) return {};
+      const enabled = new Set(
+        Object.entries(provider?.codexNativeModelContextModes ?? {})
+          .filter(([, mode]) => mode === "1m")
+          .map(([slug]) => slug)
+          .filter(slug => NATIVE_GPT56_ONE_MILLION_MODELS.has(slug)),
+      );
+      return enabled.size > 0 ? { nativeOneMillionModels: enabled } : {};
+    })(),
   };
 }
 
@@ -287,9 +286,10 @@ export function nativeOpenAiContextWindow(slug: string, limits?: NativeContextLi
 }
 
 /**
- * Catalog ceiling for a native model. The official 1M mode raises only the exact public
- * Sol/Terra/Luna allowlist and deliberately leaves their ordinary `context_window` alone.
- * Existing explicit context overlays and provider caps remain lowering constraints.
+ * Catalog ceiling for a native model. The official per-model 1M opt-in raises only the exact
+ * public Sol/Terra/Luna rows whose mode is enabled and deliberately leaves their ordinary
+ * `context_window` alone. Existing explicit context overlays and provider caps remain
+ * lowering constraints.
  */
 export function nativeOpenAiMaxContextWindow(
   slug: string,
@@ -298,7 +298,7 @@ export function nativeOpenAiMaxContextWindow(
   const limits = asLimits(input);
   const configured = NATIVE_OPENAI_CONTEXT_OVERRIDES[slug]?.maxContextWindow;
   if (configured === undefined) return undefined;
-  if (limits.nativeContextMode !== "1m" || !NATIVE_GPT56_ONE_MILLION_MODELS.has(slug)) {
+  if (!limits.nativeOneMillionModels?.has(slug) || !NATIVE_GPT56_ONE_MILLION_MODELS.has(slug)) {
     const contextWindow = nativeOpenAiContextWindow(slug, limits);
     return contextWindow === undefined ? configured : Math.min(configured, contextWindow);
   }

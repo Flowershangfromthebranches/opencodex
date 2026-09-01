@@ -2914,7 +2914,7 @@ describe("provider management validation", () => {
     });
   });
 
-  test("native GPT-5.6 context mode persists only after full sync and rolls back on failure", async () => {
+  test("per-model GPT-5.6 1M modes persist only after full sync and roll back on failure", async () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
     process.env.OPENCODEX_HOME = TEST_DIR;
@@ -2924,7 +2924,7 @@ describe("provider management validation", () => {
       defaultProvider: "openai",
       openaiProviderTierVersion: 2,
       providers: {
-        openai: { ...canonicalDirect, codexNativeContextMode: "default" },
+        openai: { ...canonicalDirect },
         extra: { adapter: "openai-chat", baseUrl: "https://extra.example.test/v1" },
       },
     };
@@ -2934,7 +2934,7 @@ describe("provider management validation", () => {
     const deps = {
       createManagementConvergeCodex: catalogConvergenceFactory(),
       syncModelsToCodex: async (_port: number | undefined, current: OcxConfig) => {
-        seenModes.push(current.providers.openai?.codexNativeContextMode ?? "default");
+        seenModes.push(JSON.stringify(current.providers.openai?.codexNativeModelContextModes ?? {}));
         if (failNext) {
           failNext = false;
           return {
@@ -2960,25 +2960,30 @@ describe("provider management validation", () => {
         } as const;
       },
     };
-    const patch = async (name: string, mode: unknown) => {
+    const patch = async (name: string, modes: unknown) => {
       const req = new Request(`http://127.0.0.1/api/providers?name=${name}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ codexNativeContextMode: mode }),
+        body: JSON.stringify({ codexNativeModelContextModes: modes }),
       });
       return handleManagementAPI(req, new URL(req.url), liveConfig, deps);
     };
 
-    expect((await patch("extra", "1m"))?.status).toBe(400);
-    expect((await patch("openai", "invalid"))?.status).toBe(400);
-    const enabled = await patch("openai", "1m");
+    expect((await patch("extra", { "gpt-5.6-luna": "1m" }))?.status).toBe(400);
+    expect((await patch("openai", { "gpt-5.6-luna": "invalid" }))?.status).toBe(400);
+    expect((await patch("openai", { "gpt-9-future": "1m" }))?.status).toBe(400);
+    const enabled = await patch("openai", { "gpt-5.6-luna": "1m" });
     expect(enabled?.status).toBe(200);
     expect(await enabled?.json()).toMatchObject({
       success: true,
-      codexNativeContextMode: "1m",
+      codexNativeModelContextModes: {
+        "gpt-5.6-sol": "default",
+        "gpt-5.6-terra": "default",
+        "gpt-5.6-luna": "1m",
+      },
     });
-    expect(liveConfig.providers.openai?.codexNativeContextMode).toBe("1m");
-    expect(loadConfig().providers.openai?.codexNativeContextMode).toBe("1m");
+    expect(liveConfig.providers.openai?.codexNativeModelContextModes).toEqual({ "gpt-5.6-luna": "1m" });
+    expect(loadConfig().providers.openai?.codexNativeModelContextModes).toEqual({ "gpt-5.6-luna": "1m" });
 
     const listedRequest = new Request("http://127.0.0.1/api/providers");
     const listedResponse = await handleManagementAPI(
@@ -2988,8 +2993,12 @@ describe("provider management validation", () => {
       deps,
     );
     const listed = await listedResponse!.json() as Array<Record<string, unknown>>;
-    expect(listed.find(row => row.name === "openai")?.codexNativeContextMode).toBe("1m");
-    expect(listed.find(row => row.name === "extra")).not.toHaveProperty("codexNativeContextMode");
+    expect(listed.find(row => row.name === "openai")?.codexNativeModelContextModes).toEqual({
+      "gpt-5.6-sol": "default",
+      "gpt-5.6-terra": "default",
+      "gpt-5.6-luna": "1m",
+    });
+    expect(listed.find(row => row.name === "extra")).not.toHaveProperty("codexNativeModelContextModes");
 
     const destinationProbe = spyOn(destinationPolicy, "providerDestinationResolvedError")
       .mockResolvedValue(null);
@@ -3006,23 +3015,32 @@ describe("provider management validation", () => {
         deps,
       );
       expect(overwrite?.status).toBe(200);
-      expect(liveConfig.providers.openai?.codexNativeContextMode).toBe("1m");
+      expect(liveConfig.providers.openai?.codexNativeModelContextModes).toEqual({ "gpt-5.6-luna": "1m" });
     } finally {
       destinationProbe.mockRestore();
     }
 
     failNext = true;
-    const failed = await patch("openai", "default");
+    const failed = await patch("openai", { "gpt-5.6-luna": "default" });
     expect(failed?.status).toBe(500);
     expect(await failed?.json()).toMatchObject({
       error: "synthetic sync failure",
-      codexNativeContextMode: "1m",
+      codexNativeModelContextModes: {
+        "gpt-5.6-sol": "default",
+        "gpt-5.6-terra": "default",
+        "gpt-5.6-luna": "1m",
+      },
       rolledBack: true,
       rollbackSyncOk: true,
     });
-    expect(liveConfig.providers.openai?.codexNativeContextMode).toBe("1m");
-    expect(loadConfig().providers.openai?.codexNativeContextMode).toBe("1m");
-    expect(seenModes).toEqual(["1m", "default", "1m"]);
+    expect(liveConfig.providers.openai?.codexNativeModelContextModes).toEqual({ "gpt-5.6-luna": "1m" });
+    expect(loadConfig().providers.openai?.codexNativeModelContextModes).toEqual({ "gpt-5.6-luna": "1m" });
+    // Enable → clear attempt rolled back → rollback re-sync of the enabled map.
+    expect(seenModes).toEqual([
+      JSON.stringify({ "gpt-5.6-luna": "1m" }),
+      JSON.stringify({}),
+      JSON.stringify({ "gpt-5.6-luna": "1m" }),
+    ]);
   });
 
   test("xAI Responses opt-in reports mixed state and atomically normalizes both model adapters", async () => {

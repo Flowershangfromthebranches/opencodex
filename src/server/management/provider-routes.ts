@@ -72,6 +72,7 @@ import {
   type DebugFlag,
 } from "../../lib/debug-settings";
 import type { OcxClaudeCodeConfig, OcxConfig, OcxCustomModel, OcxProviderConfig } from "../../types";
+import { NATIVE_GPT56_ONE_MILLION_MODEL_IDS } from "../../types";
 import { drainAndShutdown } from "../lifecycle";
 import { filterRequestLogs, getRequestLogEntries, type RequestLogEntry } from "../request-log";
 import { estimateComboCost, estimateRequestCost, normalizeCostTokens, tokensPerSecond } from "../../usage/cost";
@@ -429,23 +430,31 @@ function canonicalOpenAiBudgetPatchError(
     ?? providerEmptyToolOutputConfigError("openai", applied.next);
 }
 
-/** Admit the dedicated native-context field without widening the shared auth/config validator. */
-function providerManagementConfigWithNativeContextModeError(
+/** Validate the per-model native-context map and admit it without widening the shared validator. */
+function providerManagementConfigWithNativeContextModesError(
   name: string,
   provider: unknown,
 ): string | null {
-  if (!isPlainRecord(provider) || !Object.hasOwn(provider, "codexNativeContextMode")) {
+  if (!isPlainRecord(provider) || !Object.hasOwn(provider, "codexNativeModelContextModes")) {
     return providerManagementConfigError(name, provider);
   }
-  const mode = provider.codexNativeContextMode;
-  if (mode !== "default" && mode !== "1m") {
-    return `provider ${name} codexNativeContextMode must be default or 1m`;
+  const modes = provider.codexNativeModelContextModes;
+  if (!isPlainRecord(modes)) {
+    return `provider ${name} codexNativeModelContextModes must be a plain object`;
+  }
+  for (const [modelId, mode] of Object.entries(modes)) {
+    if (!(NATIVE_GPT56_ONE_MILLION_MODEL_IDS as readonly string[]).includes(modelId)) {
+      return `provider ${name} codexNativeModelContextModes keys are limited to the exact GPT-5.6 family: ${NATIVE_GPT56_ONE_MILLION_MODEL_IDS.join(", ")}`;
+    }
+    if (mode !== "default" && mode !== "1m") {
+      return `provider ${name} codexNativeModelContextModes values must be default or 1m`;
+    }
   }
   if (name !== "openai" || !isCanonicalOpenAiForwardProvider(provider as unknown as OcxProviderConfig)) {
-    return `provider ${name} codexNativeContextMode is valid only on the canonical built-in openai provider`;
+    return `provider ${name} codexNativeModelContextModes is valid only on the canonical built-in openai provider`;
   }
   const candidate = { ...provider };
-  delete candidate.codexNativeContextMode;
+  delete candidate.codexNativeModelContextModes;
   return providerManagementConfigError(name, candidate);
 }
 
@@ -494,7 +503,9 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       disabled: p.disabled === true,
       codexAccountMode: providerCodexAccountMode(name, p),
       ...(name === "openai" && isCanonicalOpenAiForwardProvider(p)
-        ? { codexNativeContextMode: p.codexNativeContextMode ?? "default" }
+        ? { codexNativeModelContextModes: Object.fromEntries(
+            NATIVE_GPT56_ONE_MILLION_MODEL_IDS.map(id => [id, p.codexNativeModelContextModes?.[id] ?? "default"]),
+          ) }
         : {}),
       ...(name === "xai" ? { xaiResponsesOptInState: xaiResponsesOptInState(p) } : {}),
       discovery: p.liveModels === false ? undefined : getProviderDiscoveryStatus(name),
@@ -524,7 +535,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       return jsonResponse({ error: "provider reload target unavailable" }, 404);
     }
     const provider = diskConfig.providers[name]!;
-    const providerError = providerManagementConfigWithNativeContextModeError(name, provider)
+    const providerError = providerManagementConfigWithNativeContextModesError(name, provider)
       ?? providerEmptyToolOutputConfigError(name, provider);
     if (providerError) return jsonResponse({ error: "provider reload target invalid" }, 409);
     const namespaceCollision = codexAccountNamespaceProviderCollisionError(
@@ -584,7 +595,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     let body: { name?: unknown; provider?: unknown; setDefault?: boolean };
     try { body = await readManagementJsonBody(req); } catch (error) { rethrowManagementBodyTooLarge(error); return jsonResponse({ error: "invalid JSON body" }, 400); }
     const name = typeof body.name === "string" ? body.name.trim() : "";
-    const providerError = providerManagementConfigWithNativeContextModeError(name, body.provider)
+    const providerError = providerManagementConfigWithNativeContextModesError(name, body.provider)
       ?? providerEmptyToolOutputConfigError(name, body.provider);
     if (providerError) return jsonResponse({ error: providerError }, 400);
     const serviceTierError = providerServiceTierConfigError(name, body.provider);
@@ -627,7 +638,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     const submittedModelContextWindows = Object.hasOwn(prov, "modelContextWindows");
     const submittedModelAutoCompactTokenLimits = Object.hasOwn(prov, "modelAutoCompactTokenLimits");
     const submittedRequestPacing = Object.hasOwn(prov, "requestPacing");
-    const submittedNativeContextMode = Object.hasOwn(prov, "codexNativeContextMode");
+    const submittedNativeContextModes = Object.hasOwn(prov, "codexNativeModelContextModes");
     // Same trap, one more field: DeepSeek carries a registry default of `true` for
     // annotateEmptyToolOutputs, so enrichment cannot distinguish "the client omitted it"
     // from "the registry supplied it" either. Without this sample, an unrelated edit that
@@ -655,8 +666,8 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     // absence in the request means "not carried", never "the user deleted it". Deletion goes
     // through PATCH with an explicit null (#1409).
     const existing = config.providers[name];
-    if (!submittedNativeContextMode && name === "openai" && existing?.codexNativeContextMode !== undefined) {
-      prov.codexNativeContextMode = existing.codexNativeContextMode;
+    if (!submittedNativeContextModes && name === "openai" && existing?.codexNativeModelContextModes !== undefined) {
+      prov.codexNativeModelContextModes = existing.codexNativeModelContextModes;
     }
     if (!submittedRequestPacing && existing?.requestPacing) {
       prov.requestPacing = structuredClone(existing.requestPacing);
@@ -705,33 +716,49 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     if (!isPlainRecord(rawBody)) return jsonResponse({ error: "provider patch body must be a plain object" }, 400);
     const keys = Object.keys(rawBody);
     const hasMode = Object.hasOwn(rawBody, "codexAccountMode");
-    const hasNativeContextMode = Object.hasOwn(rawBody, "codexNativeContextMode");
+    const hasNativeContextModes = Object.hasOwn(rawBody, "codexNativeModelContextModes");
     const hasSetDefault = Object.hasOwn(rawBody, "setDefault");
     const canonicalBudgetOnly = name === "openai"
       && keys.length === 1
       && keys[0] === "modelAutoCompactTokenLimits";
 
-    if (hasNativeContextMode) {
+    if (hasNativeContextModes) {
       if (keys.length !== 1) {
-        return jsonResponse({ error: "codexNativeContextMode cannot be combined with other patch fields" }, 400);
+        return jsonResponse({ error: "codexNativeModelContextModes cannot be combined with other patch fields" }, 400);
       }
       if (name !== "openai") {
-        return jsonResponse({ error: "codexNativeContextMode is valid only for provider openai" }, 400);
+        return jsonResponse({ error: "codexNativeModelContextModes is valid only for provider openai" }, 400);
       }
-      const mode = rawBody.codexNativeContextMode;
-      if (mode !== "default" && mode !== "1m") {
-        return jsonResponse({ error: "codexNativeContextMode must be default or 1m" }, 400);
+      const submittedModes = rawBody.codexNativeModelContextModes;
+      if (!isPlainRecord(submittedModes)) {
+        return jsonResponse({ error: "codexNativeModelContextModes must be a plain object" }, 400);
+      }
+      for (const [modelId, mode] of Object.entries(submittedModes)) {
+        if (!(NATIVE_GPT56_ONE_MILLION_MODEL_IDS as readonly string[]).includes(modelId)) {
+          return jsonResponse({ error: `codexNativeModelContextModes keys are limited to the exact GPT-5.6 family: ${NATIVE_GPT56_ONE_MILLION_MODEL_IDS.join(", ")}` }, 400);
+        }
+        if (mode !== "default" && mode !== "1m") {
+          return jsonResponse({ error: "codexNativeModelContextModes values must be default or 1m" }, 400);
+        }
       }
       const provider = config.providers.openai;
       if (!provider || !isCanonicalOpenAiForwardProvider(provider)) {
         return jsonResponse({ error: "provider openai must be the canonical built-in provider" }, 400);
       }
+      // Normalize: "default" entries are dropped, so absence always means default behavior.
+      const normalizedModes: Record<string, "1m"> = {};
+      for (const [modelId, mode] of Object.entries(submittedModes)) {
+        if (mode === "1m") normalizedModes[modelId] = "1m";
+      }
 
-      const previousPresent = Object.hasOwn(provider, "codexNativeContextMode");
-      const previousMode = provider.codexNativeContextMode;
+      const previousPresent = Object.hasOwn(provider, "codexNativeModelContextModes");
+      const previousModes = provider.codexNativeModelContextModes;
       const save = deps.saveConfigPreservingClaudeCode ?? saveConfigPreservingClaudeCode;
       withConfigMutationLockSync(() => {
-        config.providers.openai = { ...config.providers.openai!, codexNativeContextMode: mode };
+        const next = { ...config.providers.openai! };
+        if (Object.keys(normalizedModes).length > 0) next.codexNativeModelContextModes = normalizedModes;
+        else delete next.codexNativeModelContextModes;
+        config.providers.openai = next;
         save(config);
       });
       reconcileLiveStateStores();
@@ -760,15 +787,17 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         return jsonResponse({
           success: true,
           name: "openai",
-          codexNativeContextMode: mode,
+          codexNativeModelContextModes: Object.fromEntries(
+            NATIVE_GPT56_ONE_MILLION_MODEL_IDS.map(id => [id, normalizedModes[id] ?? "default"]),
+          ),
           sync: attachStaleAppServerHint(result),
         });
       }
 
       withConfigMutationLockSync(() => {
         const current = { ...config.providers.openai! };
-        if (previousPresent) current.codexNativeContextMode = previousMode;
-        else delete current.codexNativeContextMode;
+        if (previousPresent) current.codexNativeModelContextModes = previousModes;
+        else delete current.codexNativeModelContextModes;
         config.providers.openai = current;
         save(config);
       });
@@ -786,7 +815,9 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
         : 500;
       return jsonResponse({
         error: result.message,
-        codexNativeContextMode: previousMode ?? "default",
+        codexNativeModelContextModes: Object.fromEntries(
+          NATIVE_GPT56_ONE_MILLION_MODEL_IDS.map(id => [id, previousModes?.[id as keyof typeof previousModes] ?? "default"]),
+        ),
         rolledBack: true,
         rollbackSyncOk: rollbackOk,
       }, status);
@@ -855,7 +886,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
     if (applied.editorTouched && !pacingOnly) {
       const providerError = canonicalBudgetOnly
         ? canonicalOpenAiBudgetPatchError(next, rawBody, keys, config)
-        : providerManagementConfigWithNativeContextModeError(name, next)
+        : providerManagementConfigWithNativeContextModesError(name, next)
           ?? providerEmptyToolOutputConfigError(name, next);
       if (providerError) return jsonResponse({ error: providerError }, 400);
       if (!canonicalBudgetOnly) {
@@ -889,7 +920,7 @@ export async function handleProviderRoutes(ctx: ManagementContext): Promise<Resp
       if (replay.editorTouched && !pacingOnly) {
         const syncError = canonicalBudgetOnly
           ? canonicalOpenAiBudgetPatchError(replay.next, rawBody, keys, config)
-          : providerManagementConfigWithNativeContextModeError(name, replay.next)
+          : providerManagementConfigWithNativeContextModesError(name, replay.next)
             ?? providerEmptyToolOutputConfigError(name, replay.next);
         if (syncError) {
           replayError = syncError;

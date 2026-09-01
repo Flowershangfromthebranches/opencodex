@@ -86,6 +86,8 @@ export const CAP_OPTION_SET = new Set(CAP_OPTIONS);
  */
 export const NATIVE_GPT56_DEFAULT_WINDOW = 272_000;
 export const NATIVE_GPT56_SAFE_WINDOW = 922_000;
+/** The exact native GPT-5.6 rows that expose the per-model official 1M opt-in. */
+export const NATIVE_GPT56_CONTEXT_MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const;
 export const NATIVE_CAP_OPTIONS = [NATIVE_GPT56_DEFAULT_WINDOW, 372_000, NATIVE_GPT56_SAFE_WINDOW];
 export const NATIVE_CAP_OPTION_SET = new Set(NATIVE_CAP_OPTIONS);
 export const CUSTOM_OPTION = "custom";

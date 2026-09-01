@@ -175,18 +175,18 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
     expect(entry.auto_compact_token_limit).toBe(120_000);
   });
 
-  test("official 1M mode raises only the exact native GPT-5.6 catalog maximum", () => {
+  test("official per-model 1M modes raise only the opted-in native GPT-5.6 catalog maxima", () => {
     const limits = nativeContextLimits({
       providers: {
         openai: {
           adapter: "openai-responses",
           baseUrl: "https://chatgpt.com/backend-api/codex",
           authMode: "forward",
-          codexNativeContextMode: "1m",
+          codexNativeModelContextModes: { "gpt-5.6-sol": "1m", "gpt-5.6-luna": "1m" },
         },
       },
     } as never);
-    for (const slug of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+    for (const slug of ["gpt-5.6-sol", "gpt-5.6-luna"]) {
       const entry: Record<string, unknown> = {
         slug,
         context_window: 272_000,
@@ -200,6 +200,17 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
         effective_context_window_percent: 95,
       });
     }
+
+    // Terra was NOT opted in: it must keep the ordinary default/safe maximum.
+    const terra: Record<string, unknown> = {
+      slug: "gpt-5.6-terra",
+      context_window: 272_000,
+      max_context_window: 922_000,
+      effective_context_window_percent: 95,
+    };
+    applyNativeOpenAiContextOverride(terra as never, limits);
+    expect(terra.context_window).toBe(272_000);
+    expect(terra.max_context_window).toBe(272_000);
 
     for (const slug of ["gpt-5.5", "gpt-daybreak-blue-latest"]) {
       const entry: Record<string, unknown> = {
@@ -238,6 +249,37 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
     });
   });
 
+  test.each([
+    ["gpt-5.6-sol"],
+    ["gpt-5.6-terra"],
+    ["gpt-5.6-luna"],
+    ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+  ])("1M opt-in raises exactly the opted-in rows: %j", (...enabled) => {
+    const limits = nativeContextLimits({
+      providers: {
+        openai: {
+          adapter: "openai-responses",
+          baseUrl: "https://chatgpt.com/backend-api/codex",
+          authMode: "forward",
+          codexNativeModelContextModes: Object.fromEntries(enabled.map(slug => [slug, "1m"])),
+        },
+      },
+    } as never);
+    for (const slug of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+      const entry: Record<string, unknown> = {
+        slug,
+        context_window: 272_000,
+        max_context_window: 922_000,
+        effective_context_window_percent: 95,
+      };
+      applyNativeOpenAiContextOverride(entry as never, limits);
+      const expectedMax = (enabled as string[]).includes(slug) ? 1_000_000 : 272_000;
+      expect(entry.context_window).toBe(272_000);
+      expect(entry.max_context_window).toBe(expectedMax);
+      expect(entry.effective_context_window_percent).toBe(95);
+    }
+  });
+
   test("1M mode is ignored on a non-canonical provider named openai", () => {
     const limits = nativeContextLimits({
       providers: {
@@ -245,7 +287,7 @@ describe("native GPT model toggles (bare slugs in disabledModels)", () => {
           adapter: "openai-responses",
           baseUrl: "https://example.invalid/v1",
           authMode: "forward",
-          codexNativeContextMode: "1m",
+          codexNativeModelContextModes: { "gpt-5.6-sol": "1m" },
         },
       },
     } as never);

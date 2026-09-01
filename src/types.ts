@@ -21,10 +21,13 @@ export type {
   ReasoningSummaryDelivery,
   CodexAccountMode,
   CodexNativeContextMode,
+  CodexNativeModelContextModes,
+  NativeGpt56OneMillionModelId,
 } from "./types/wire";
 export {
   UPSTREAM_HTTP_VERSION_VALUES,
   REASONING_SUMMARY_DELIVERY_VALUES,
+  NATIVE_GPT56_ONE_MILLION_MODEL_IDS,
   OPENAI_PROVIDER_TIER_VERSION,
   MODEL_ADAPTER_OVERRIDE_ALLOWED,
   captureWireAdapterHardPins,

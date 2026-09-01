@@ -14,7 +14,7 @@ let previousGlobals: Record<(typeof globals)[number], PropertyDescriptor | undef
 let testWindow: Window;
 let container: HTMLElement;
 let root: Root | null = null;
-let serverMode: "default" | "1m";
+let serverModes: Record<string, "default" | "1m">;
 let failSave: boolean;
 let releaseSave: (() => void) | null;
 const patches: Array<Record<string, unknown>> = [];
@@ -26,7 +26,7 @@ const models = [
 
 function providers() {
   return [
-    { name: "openai", authMode: "forward", codexNativeContextMode: serverMode },
+    { name: "openai", authMode: "forward", codexNativeModelContextModes: serverModes },
     { name: "openrouter", authMode: "api-key" },
   ];
 }
@@ -43,7 +43,7 @@ beforeEach(() => {
     globals.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
   ) as typeof previousGlobals;
   root = null;
-  serverMode = "default";
+  serverModes = {};
   failSave = false;
   releaseSave = null;
   patches.length = 0;
@@ -76,8 +76,8 @@ beforeEach(() => {
       patches.push(body);
       if (releaseSave !== null) await new Promise<void>(resolve => { releaseSave = resolve; });
       if (failSave) return Response.json({ error: "synthetic mode failure" }, { status: 500 });
-      serverMode = body.codexNativeContextMode as "default" | "1m";
-      return Response.json({ success: true, codexNativeContextMode: serverMode });
+      serverModes = { ...serverModes, ...(body.codexNativeModelContextModes as Record<string, "default" | "1m">) };
+      return Response.json({ success: true, codexNativeModelContextModes: serverModes });
     }
     if (pathname === "/api/providers") return Response.json(providers());
     if (pathname === "/api/selected-models") return Response.json({ selected: {} });
@@ -114,10 +114,14 @@ test("native GPT-5.6 shows Default / 1M while routed providers do not", async ()
   const controls = container.querySelectorAll<HTMLElement>("[data-testid=native-gpt56-context-mode]");
   expect(controls.length).toBe(1); // routed openrouter row never gets the native control
   const control = () => container.querySelector<HTMLElement>("[data-testid=native-gpt56-context-mode]")!;
-  const button = (label: string) => [...control().querySelectorAll<HTMLButtonElement>("button")]
-    .find(item => item.textContent === label)!;
-  expect(button("Default").getAttribute("aria-checked")).toBe("true");
-  expect(button("1M").getAttribute("aria-checked")).toBe("false");
+  // One Default / 1M pair per GPT-5.6 model, keyed by exact model id.
+  for (const modelId of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+    const row = container.querySelector<HTMLElement>(`[data-testid="native-gpt56-context-mode-${modelId}"]`)!;
+    const button = (label: string) => [...row.querySelectorAll<HTMLButtonElement>("button")]
+      .find(item => item.textContent === label)!;
+    expect(button("Default").getAttribute("aria-checked")).toBe("true");
+    expect(button("1M").getAttribute("aria-checked")).toBe("false");
+  }
 });
 
 test("native context save uses an isolated PATCH, disables both choices, and reloads truth on failure", async () => {
@@ -128,17 +132,28 @@ test("native context save uses an isolated PATCH, disables both choices, and rel
   });
   await flush();
 
-  const control = () => container.querySelector<HTMLElement>("[data-testid=native-gpt56-context-mode]")!;
-  const button = (label: string) => [...control().querySelectorAll<HTMLButtonElement>("button")]
-    .find(item => item.textContent === label)!;
+  const rowButton = (modelId: string, label: string) => {
+    const row = container.querySelector<HTMLElement>(`[data-testid="native-gpt56-context-mode-${modelId}"]`)!;
+    return [...row.querySelectorAll<HTMLButtonElement>("button")]
+      .find(item => item.textContent === label)!;
+  };
 
   releaseSave = () => {}; // hold the first PATCH so the pending UI can be asserted
-  act(() => { button("1M").click(); });
+  act(() => { rowButton("gpt-5.6-luna", "1M").click(); });
   await Promise.resolve();
-  expect(patches).toEqual([{ codexNativeContextMode: "1m" }]);
-  expect(button("Default").disabled).toBe(true);
-  expect(button("1M").disabled).toBe(true);
-  button("Default").click();
+  // The PATCH carries the FULL per-model map: the untouched models keep their effective mode.
+  expect(patches).toEqual([{
+    codexNativeModelContextModes: {
+      "gpt-5.6-sol": "default",
+      "gpt-5.6-terra": "default",
+      "gpt-5.6-luna": "1m",
+    },
+  }]);
+  for (const modelId of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+    expect(rowButton(modelId, "Default").disabled).toBe(true);
+    expect(rowButton(modelId, "1M").disabled).toBe(true);
+  }
+  rowButton("gpt-5.6-luna", "Default").click();
   expect(patches.length).toBe(1); // disabled controls and the single-flight ref block repeats
 
   const settle = releaseSave;
@@ -146,17 +161,31 @@ test("native context save uses an isolated PATCH, disables both choices, and rel
   releaseSave = null;
   settle!();
   await flush();
-  expect(button("1M").getAttribute("aria-checked")).toBe("true");
-  expect(container.textContent).toContain("context mode synced");
+  expect(rowButton("gpt-5.6-luna", "1M").getAttribute("aria-checked")).toBe("true");
+  expect(rowButton("gpt-5.6-sol", "1M").getAttribute("aria-checked")).toBe("false");
+  expect(container.textContent).toContain("1M selection synced");
 
   failSave = true;
-  act(() => { button("Default").click(); });
+  act(() => { rowButton("gpt-5.6-luna", "Default").click(); });
   await flush();
   expect(patches).toEqual([
-    { codexNativeContextMode: "1m" },
-    { codexNativeContextMode: "default" },
+    {
+      codexNativeModelContextModes: {
+        "gpt-5.6-sol": "default",
+        "gpt-5.6-terra": "default",
+        "gpt-5.6-luna": "1m",
+      },
+    },
+    {
+      codexNativeModelContextModes: {
+        "gpt-5.6-sol": "default",
+        "gpt-5.6-terra": "default",
+        "gpt-5.6-luna": "default",
+      },
+    },
   ]);
-  expect(button("1M").getAttribute("aria-checked")).toBe("true");
-  expect(button("Default").getAttribute("aria-checked")).toBe("false");
+  // Reload of server truth restores the saved selection after the failed save.
+  expect(rowButton("gpt-5.6-luna", "1M").getAttribute("aria-checked")).toBe("true");
+  expect(rowButton("gpt-5.6-luna", "Default").getAttribute("aria-checked")).toBe("false");
   expect(container.textContent).toContain("synthetic mode failure");
 });

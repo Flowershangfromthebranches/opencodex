@@ -45,7 +45,7 @@ function writeConfig(): void {
       baseUrl: "https://chatgpt.com/backend-api/codex",
       authMode: "forward",
       // The current-config re-derive must carry the new maximum even when the file predates it.
-      codexNativeContextMode: "1m",
+      codexNativeModelContextModes: { "gpt-5.6-sol": "1m" },
     } },
     // Keep the pre-existing measured 922k operating-window path active too: the official 1M
     // mode changes the catalog maximum, while this cap continues to choose the ordinary window.

@@ -47,7 +47,7 @@ function runRestore(codexHome: string, ocxHome: string): { stdout: string; statu
   return { stdout: result.stdout?.trim() ?? "", status: result.status ?? 1 };
 }
 
-function nativeContextConfig(mode: "default" | "1m"): string {
+function nativeContextConfig(modes: Record<string, "default" | "1m">): string {
   return JSON.stringify({
     port: 10100,
     defaultProvider: "openai",
@@ -57,7 +57,7 @@ function nativeContextConfig(mode: "default" | "1m"): string {
         baseUrl: "https://chatgpt.com/backend-api/codex",
         authMode: "forward",
         codexAccountMode: "pool",
-        codexNativeContextMode: mode,
+        codexNativeModelContextModes: modes,
       },
     },
   });
@@ -169,16 +169,17 @@ describe("injectCodexConfig integration (Design B)", () => {
       "",
     ].join("\n"), "utf8");
 
-    expect(runInject(codexHome, ocxHome, nativeContextConfig("1m")).status).toBe(0);
+    // The active model in config.toml is gpt-5.6-sol, so only Sol's mode gates the root block.
+    expect(runInject(codexHome, ocxHome, nativeContextConfig({ "gpt-5.6-sol": "1m" })).status).toBe(0);
     const enabled = readFileSync(join(codexHome, "config.toml"), "utf8");
     expect(enabled.match(/^model_context_window = 1000000$/gm)?.length).toBe(1);
     expect(enabled.match(/^model_auto_compact_token_limit = 900000$/gm)?.length).toBe(1);
     expect(() => Bun.TOML.parse(enabled)).not.toThrow();
 
-    expect(runInject(codexHome, ocxHome, nativeContextConfig("1m")).status).toBe(0);
+    expect(runInject(codexHome, ocxHome, nativeContextConfig({ "gpt-5.6-sol": "1m" })).status).toBe(0);
     expect(readFileSync(join(codexHome, "config.toml"), "utf8")).toBe(enabled);
 
-    expect(runInject(codexHome, ocxHome, nativeContextConfig("default")).status).toBe(0);
+    expect(runInject(codexHome, ocxHome, nativeContextConfig({})).status).toBe(0);
     const disabled = readFileSync(join(codexHome, "config.toml"), "utf8");
     expect(disabled).not.toContain("model_context_window = 1000000");
     expect(disabled).not.toContain("model_auto_compact_token_limit = 900000");
@@ -202,10 +203,53 @@ describe("injectCodexConfig integration (Design B)", () => {
     ].join("\n");
     writeFileSync(join(codexHome, "config.toml"), original, "utf8");
 
-    const result = runInject(codexHome, ocxHome, nativeContextConfig("1m"));
+    const result = runInject(codexHome, ocxHome, nativeContextConfig({ "gpt-5.6-sol": "1m" }));
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout).success).toBe(false);
     expect(readFileSync(join(codexHome, "config.toml"), "utf8")).toBe(original);
+  });
+
+  test("the root 1M block is written only while the active model is opted in", () => {
+    // Luna is opted in but the ACTIVE model is Sol: the managed root block must stay off so
+    // Sol keeps the current default behavior (Codex clamps the root override against the
+    // catalog max_context_window; only the opted-in row's maximum is raised to 1,000,000).
+    writeFileSync(join(codexHome, "config.toml"), [
+      'model = "gpt-5.6-sol"',
+      "",
+      "[features]",
+      "fast_mode = true",
+      "",
+    ].join("\n"), "utf8");
+    expect(runInject(codexHome, ocxHome, nativeContextConfig({ "gpt-5.6-luna": "1m" })).status).toBe(0);
+    const solActive = readFileSync(join(codexHome, "config.toml"), "utf8");
+    expect(solActive).not.toContain("model_context_window = 1000000");
+    expect(solActive).not.toContain("model_auto_compact_token_limit = 900000");
+
+    // Switch the active model to the opted-in Luna through the same inject: the block appears.
+    writeFileSync(join(codexHome, "config.toml"), [
+      'model = "gpt-5.6-luna"',
+      "",
+      "[features]",
+      "fast_mode = true",
+      "",
+    ].join("\n"), "utf8");
+    expect(runInject(codexHome, ocxHome, nativeContextConfig({ "gpt-5.6-luna": "1m" })).status).toBe(0);
+    const lunaActive = readFileSync(join(codexHome, "config.toml"), "utf8");
+    expect(lunaActive.match(/^model_context_window = 1000000$/gm)?.length).toBe(1);
+    expect(lunaActive.match(/^model_auto_compact_token_limit = 900000$/gm)?.length).toBe(1);
+
+    // A non-GPT-5.6 active model must not keep the root block either.
+    writeFileSync(join(codexHome, "config.toml"), [
+      'model = "gpt-5.5"',
+      "",
+      "[features]",
+      "fast_mode = true",
+      "",
+    ].join("\n"), "utf8");
+    expect(runInject(codexHome, ocxHome, nativeContextConfig({ "gpt-5.6-luna": "1m" })).status).toBe(0);
+    const gpt55Active = readFileSync(join(codexHome, "config.toml"), "utf8");
+    expect(gpt55Active).not.toContain("model_context_window = 1000000");
+    expect(gpt55Active).not.toContain("model_auto_compact_token_limit = 900000");
   });
 
   test.each([

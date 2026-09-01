@@ -73,7 +73,7 @@ import {
   transformManagedSubagentDefaults,
   type ManagedSubagentDefaults,
 } from "./subagent-defaults";
-import { transformManagedNativeContextMode } from "./native-context-mode";
+import { NATIVE_GPT56_ONE_MILLION_MODELS, transformManagedNativeContextMode } from "./native-context-mode";
 import { isCanonicalOpenAiForwardProvider } from "../providers/openai-tiers";
 import type { OcxConfig } from "../types";
 
@@ -452,10 +452,34 @@ export function stripRootContextWindowOverrides(content: string): string {
     .join("\n");
 }
 
-function configuredNativeOneMillionContext(config: OcxConfig | undefined): boolean {
+/**
+ * Native slugs whose official 1M opt-in is enabled on the canonical forward provider.
+ * Empty when the provider is not the canonical forward seed or no model is opted in.
+ */
+function configuredNativeOneMillionModels(config: OcxConfig | undefined): Set<string> {
   const provider = config?.providers?.openai;
-  return provider?.codexNativeContextMode === "1m"
-    && isCanonicalOpenAiForwardProvider(provider);
+  if (!provider || !isCanonicalOpenAiForwardProvider(provider)) return new Set();
+  return new Set(
+    Object.entries(provider.codexNativeModelContextModes ?? {})
+      .filter(([, mode]) => mode === "1m")
+      .map(([slug]) => slug)
+      .filter(slug => NATIVE_GPT56_ONE_MILLION_MODELS.has(slug)),
+  );
+}
+
+/**
+ * The model Codex will run, read from the root `model` key (bare native slug or a
+ * `native/`-prefixed form). The official 1M opt-in is a ROOT-level Codex setting that
+ * applies to whichever model is active, so the managed root block is written only while
+ * an opted-in model is active. When Codex 0.147+ clamps the root override against the
+ * catalog `max_context_window`, this keeps other models at their own maxima even if a
+ * stale block survives a direct in-app model switch (recorded root-level limitation).
+ */
+function activeNativeContextModel(content: string): string | null {
+  const raw = rootTomlString(content, "model");
+  if (raw === null) return null;
+  const slug = raw.trim().replace(/^native\//, "");
+  return slug === "" ? null : slug;
 }
 
 function stripRootRoutedModel(content: string): string {
@@ -704,7 +728,7 @@ export async function injectCodexConfig(
   const rawContent = readFileSync(CODEX_CONFIG_PATH, "utf-8");
   const activeProvider = externalCodexModelProvider(rawContent);
   if (activeProvider) {
-    if (configuredNativeOneMillionContext(config)) {
+    if (configuredNativeOneMillionModels(config).size > 0) {
       return {
         success: false,
         message:
@@ -834,8 +858,10 @@ export async function injectCodexConfig(
     keptUserBaseUrl = result.keptUserBaseUrl;
   }
 
-  const desiredNativeOneMillionContext = configuredNativeOneMillionContext(config);
-  if (desiredNativeOneMillionContext && (legacyMode || keptUserBaseUrl)) {
+  const nativeOneMillionModels = configuredNativeOneMillionModels(config);
+  const activeModel = activeNativeContextModel(content);
+  const desiredNativeOneMillionContext = activeModel !== null && nativeOneMillionModels.has(activeModel);
+  if (nativeOneMillionModels.size > 0 && (legacyMode || keptUserBaseUrl)) {
     return {
       success: false,
       message:

@@ -28,7 +28,7 @@ export interface ConfiguredProviderSummary {
   models?: string[];
   contextWindow?: number;
   modelContextWindows?: Record<string, number>;
-  codexNativeContextMode?: "default" | "1m";
+  codexNativeModelContextModes?: Record<string, "default" | "1m">;
   discovery?: ProviderDiscoverySummary;
   entitlement?: ProviderEntitlementSummary;
 }
@@ -50,7 +50,7 @@ export interface ProviderModelGroup<Row> {
   configuredModels: string[];
   contextWindow?: number;
   modelContextWindows?: Record<string, number>;
-  codexNativeContextMode?: "default" | "1m";
+  codexNativeModelContextModes?: Record<string, "default" | "1m">;
   discovery?: ProviderDiscoverySummary;
   entitlement?: ProviderEntitlementSummary;
 }
@@ -88,7 +88,7 @@ export function buildProviderModelGroups<Row extends { provider: string; native?
         configuredModels: configured?.models ?? [],
         contextWindow: configured?.contextWindow,
         modelContextWindows: configured?.modelContextWindows,
-        codexNativeContextMode: configured?.codexNativeContextMode,
+        codexNativeModelContextModes: configured?.codexNativeModelContextModes,
         discovery: configured?.discovery,
         entitlement: configured?.entitlement,
       };
