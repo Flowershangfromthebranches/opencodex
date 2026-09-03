@@ -167,6 +167,42 @@ describe("codebuddy runTurn fails closed before any spawn", () => {
     expect(events[0]).toMatchObject({ type: "error", code: "cli_spawn_failed", retryable: false });
     expect((events[0] as { message: string }).message).not.toContain("cb-global-key");
   });
+
+  test("a synchronous spawn failure redacts the exact configured credential", async () => {
+    const adapter = createCodeBuddyAdapter(provider(), {
+      spawn: () => { throw new Error("launch rejected credential cb-global-key"); },
+      which: () => "/stale/path/codebuddy",
+    });
+
+    const events = await run(adapter, parsed());
+    expect(events[0]).toMatchObject({ type: "error", code: "cli_spawn_failed", retryable: false });
+    expect((events[0] as { message: string }).message).toContain("credential [redacted]");
+    expect((events[0] as { message: string }).message).not.toContain("cb-global-key");
+  });
+
+  test("a Windows cmd shim is launched through commandInvocation with escaped arguments", async () => {
+    let command = "";
+    let args: readonly string[] = [];
+    let options: import("node:child_process").SpawnOptions | undefined;
+    const adapter = createCodeBuddyAdapter(provider(), {
+      platform: "win32",
+      which: () => "C:\\npm\\codebuddy.cmd",
+      spawn: (seenCommand, seenArgs, seenOptions) => {
+        command = seenCommand;
+        args = seenArgs;
+        options = seenOptions;
+        return fakeChild([enc.encode('{"type":"result","subtype":"success"}\n')]) as unknown as ChildProcess;
+      },
+      killGraceMs: 20,
+    });
+
+    await run(adapter, parsed({ context: { systemPrompt: ['Say "hello" & stop'], messages: [] } }));
+    expect(command.toLowerCase()).toContain("cmd.exe");
+    expect(args.slice(0, 3)).toEqual(["/d", "/s", "/c"]);
+    expect(args[3]).toContain("codebuddy.cmd");
+    expect(args[3]).toContain("Say");
+    expect(options?.windowsVerbatimArguments).toBe(true);
+  });
 });
 
 describe("codebuddy runTurn streams a headless turn", () => {
@@ -307,6 +343,39 @@ describe("codebuddy runTurn streams a headless turn", () => {
     expect(child.killed).toBe(true);
     expect(killSignal).toBe("SIGTERM");
     expect(events.some(e => e.type === "error")).toBe(true);
+    expect(events.some(e => e.type === "done")).toBe(false);
+  });
+
+  test("a timeout destroys a stalled stdout stream and returns even when close never arrives", async () => {
+    const stdoutStream = new Readable({ read() { /* stays open until timeout destroys it */ } });
+    const child = new EventEmitter() as FakeChild;
+    child.stdout = stdoutStream;
+    child.stderr = Readable.from([]);
+    child.written = [];
+    child.stdin = new Writable({ write(_c, _e, cb) { cb(); } });
+    child.killed = false;
+    child.exitCode = null;
+    const signals: string[] = [];
+    child.kill = (sig?: string) => {
+      child.killed = true;
+      signals.push(sig ?? "SIGTERM");
+      return true;
+    };
+
+    const adapter = createCodeBuddyAdapter(provider(), {
+      spawn: () => child as unknown as ChildProcess,
+      which: () => "/usr/bin/codebuddy",
+      timeoutMs: 10,
+      killGraceMs: 10,
+      reapTimeoutMs: 35,
+    });
+    const startedAt = Date.now();
+    const events = await run(adapter, parsed());
+
+    expect(Date.now() - startedAt).toBeLessThan(250);
+    expect(stdoutStream.destroyed).toBe(true);
+    expect(signals).toContain("SIGTERM");
+    expect(events).toContainEqual(expect.objectContaining({ type: "error", status: 504, code: "timeout" }));
     expect(events.some(e => e.type === "done")).toBe(false);
   });
 });

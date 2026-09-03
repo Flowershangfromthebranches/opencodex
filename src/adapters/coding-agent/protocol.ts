@@ -46,9 +46,8 @@ export type StreamMessage = Record<string, unknown>;
  *
  * Handles the streaming hazards the task calls out (§二十五): fragmented JSON across chunks, split
  * multi-byte UTF-8 (via the decoder's `stream` mode), partial trailing lines, and multiple frames in
- * one chunk. A frame that does not parse to a JSON record is dropped, never thrown: an unparseable
- * line is padding, and terminating on it would discard deltas that already arrived (the same
- * reasoning the command-code NDJSON reader documents for #1219/#1240).
+ * one chunk. A non-empty frame that does not parse to a JSON record fails closed so corrupted
+ * protocol output cannot be mistaken for a successful response.
  */
 export async function* readJsonLines(
   chunks: AsyncIterable<Uint8Array>,
@@ -62,6 +61,9 @@ export async function* readJsonLines(
   let totalBytes = 0;
 
   const flushLine = function* (line: string): Generator<StreamMessage> {
+    if (encoder.encode(line).byteLength > maxLineBytes) {
+      throw new CodingAgentStreamLimitError("Coding-agent stream line exceeded the byte ceiling");
+    }
     const trimmed = line.trim();
     if (!trimmed) return; // Blank lines and whitespace-only lines are ignored as padding.
     let parsed: unknown;
@@ -88,15 +90,15 @@ export async function* readJsonLines(
       throw new CodingAgentStreamLimitError("Coding-agent stream exceeded the total byte ceiling");
     }
     buffer += decoder.decode(chunk, { stream: true });
-    if (encoder.encode(buffer).byteLength > maxLineBytes) {
-      throw new CodingAgentStreamLimitError("Coding-agent stream line exceeded the byte ceiling");
-    }
     let newline = buffer.indexOf("\n");
     while (newline >= 0) {
       const line = buffer.slice(0, newline);
       buffer = buffer.slice(newline + 1);
       yield* flushLine(line);
       newline = buffer.indexOf("\n");
+    }
+    if (encoder.encode(buffer).byteLength > maxLineBytes) {
+      throw new CodingAgentStreamLimitError("Coding-agent stream line exceeded the byte ceiling");
     }
   }
   // Flush the decoder's trailing bytes and any final line without a newline terminator.

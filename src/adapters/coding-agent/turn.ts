@@ -1,5 +1,6 @@
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import type { AdapterEvent, OcxParsedRequest, OcxProviderConfig } from "../../types";
+import { commandInvocation } from "../../lib/win-exec";
 import type { IncomingMeta } from "../base";
 import { buildConversationInput, CodingAgentProtocolError, mapStreamMessageToEvents, readJsonLines, type StreamParseState } from "./protocol";
 import { resolveCodingAgentBinary, resolveProfileByBaseUrl, type CodingAgentProviderProfile, type WhichFn } from "./profile";
@@ -14,6 +15,10 @@ export interface CodingAgentDeps {
   timeoutMs?: number;
   /** Grace period between SIGTERM and SIGKILL (ms). */
   killGraceMs?: number;
+  /** Maximum time to wait for a child that never reports close after termination (ms). */
+  reapTimeoutMs?: number;
+  /** Test seam for Windows command-shim invocation. */
+  platform?: NodeJS.Platform;
 }
 
 const DEFAULT_TIMEOUT_MS = 300_000;
@@ -85,6 +90,7 @@ export async function runCodingAgentTurn(input: CodingAgentTurnInput): Promise<v
   const spawnFn = deps.spawn ?? nodeSpawn;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const killGraceMs = deps.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
+  const reapTimeoutMs = deps.reapTimeoutMs ?? (killGraceMs * 2 + 250);
 
   if (incoming.abortSignal?.aborted) {
     emit({ type: "error", message: "Coding-agent turn was aborted before start." });
@@ -132,12 +138,25 @@ export async function runCodingAgentTurn(input: CodingAgentTurnInput): Promise<v
 
   const args = buildArgs(profile, parsed, provider);
   const env = buildEnv(profile, apiKey);
+  const invocation = commandInvocation(binary, args, deps.platform ?? process.platform, { env });
 
   let child: ChildProcess;
   try {
-    child = spawnFn(binary, args, { env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    child = spawnFn(invocation.file, invocation.args, {
+      ...invocation.options,
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
   } catch (err) {
-    emit({ type: "error", message: redactSecrets(err instanceof Error ? err.message : String(err), profile.tokenEnv), status: 500, errorType: "upstream_error" });
+    emit({
+      type: "error",
+      message: redactSecrets(err instanceof Error ? err.message : String(err), profile.tokenEnv, apiKey),
+      status: 500,
+      errorType: "upstream_error",
+      code: "cli_spawn_failed",
+      retryable: false,
+    });
     return;
   }
 
@@ -182,10 +201,17 @@ export async function runCodingAgentTurn(input: CodingAgentTurnInput): Promise<v
     }, killGraceMs);
   };
 
-  const onAbort = (): void => { kill(); };
+  const stopStream = (): void => {
+    try { child.stdout?.destroy(); } catch { /* already closed */ }
+  };
+  const onAbort = (): void => {
+    kill();
+    stopStream();
+  };
   incoming.abortSignal?.addEventListener("abort", onAbort, { once: true });
   const timeoutTimer = setTimeout(() => {
     kill();
+    stopStream();
     emitOnce({ type: "error", message: `${profile.label} turn timed out.`, status: 504, errorType: "upstream_error", code: "timeout", retryable: true });
   }, timeoutMs);
 
@@ -245,8 +271,15 @@ export async function runCodingAgentTurn(input: CodingAgentTurnInput): Promise<v
   // Reap the process so no zombie is left behind (§三十): wait for the real `close`, and
   // force-terminate only if it lingers past the grace window after the stream ended.
   const graceTimer = setTimeout(() => { kill(); }, killGraceMs);
-  await processLifecycle;
+  let reapTimer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    processLifecycle,
+    new Promise<void>(resolve => {
+      reapTimer = setTimeout(resolve, reapTimeoutMs);
+    }),
+  ]);
   clearTimeout(graceTimer);
+  if (reapTimer) clearTimeout(reapTimer);
   if (killTimer) clearTimeout(killTimer);
 
   if (!terminalEmitted) {
