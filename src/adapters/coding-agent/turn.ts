@@ -45,10 +45,12 @@ export function baseScopedEnv(): Record<string, string> {
   return env;
 }
 
-/** Redact the profile's credential env value and common secret shapes before surfacing diagnostics. */
-export function redactSecrets(text: string, tokenEnv: string): string {
+/** Redact the profile's credential and common secret shapes before surfacing diagnostics. */
+export function redactSecrets(text: string, tokenEnv: string, credential?: string): string {
   const escaped = tokenEnv.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return text
+  let redacted = text;
+  if (credential) redacted = redacted.split(credential).join("[redacted]");
+  return redacted
     .replace(new RegExp(`(${escaped}\\s*[:=]\\s*)\\S+`, "gi"), "$1[redacted]")
     .replace(/(authorization\s*[:=]\s*)\S+/gi, "$1[redacted]")
     .replace(/\b(sk-[A-Za-z0-9_-]{6,})\b/g, "[redacted]");
@@ -139,6 +141,26 @@ export async function runCodingAgentTurn(input: CodingAgentTurnInput): Promise<v
     return;
   }
 
+  // `spawn()` reports launch failures such as ENOENT asynchronously through `error`; they are not
+  // reliably thrown by the call above. Subscribe immediately and create the lifecycle promise now,
+  // before stdout can end, so neither a fast close nor a launch failure can be missed by the reap step.
+  let childProcessError: Error | undefined;
+  const processLifecycle = new Promise<void>(resolve => {
+    let settled = false;
+    const settle = (): void => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    child.once("error", err => {
+      childProcessError = err;
+      // A launch failure has no process to reap and is not guaranteed to emit `close` on every runtime.
+      if (child.pid === undefined) settle();
+    });
+    child.once("close", settle);
+    if (child.exitCode !== null) settle();
+  });
+
   let terminalEmitted = false;
   const emitOnce = (event: AdapterEvent): void => {
     if (event.type === "done" || event.type === "error" || event.type === "incomplete") {
@@ -181,6 +203,7 @@ export async function runCodingAgentTurn(input: CodingAgentTurnInput): Promise<v
   };
 
   let streamProtocolError: string | undefined;
+  let turnError: string | undefined;
   const state: StreamParseState = {
     sawPartialText: false,
     sawPartialThinking: false,
@@ -201,45 +224,55 @@ export async function runCodingAgentTurn(input: CodingAgentTurnInput): Promise<v
     try {
       for await (const message of readJsonLines(stdout)) {
         if (incoming.abortSignal?.aborted) break;
-        for (const event of mapStreamMessageToEvents(message, state)) emitOnce(event);
+        for (const event of mapStreamMessageToEvents(message, state)) {
+          emitOnce(event.type === "error"
+            ? { ...event, message: redactSecrets(event.message, profile.tokenEnv, apiKey) }
+            : event);
+        }
         if (terminalEmitted) break;
       }
     } catch (err) {
       kill();
       streamProtocolError = err instanceof Error ? err.message : String(err);
-      emitOnce({
-        type: "error",
-        message: redactSecrets(streamProtocolError, profile.tokenEnv),
-        status: 502,
-        errorType: "upstream_error",
-        code: "protocol_error",
-        retryable: false,
-      });
     }
   } catch (err) {
     kill();
-    emitOnce({ type: "error", message: redactSecrets(err instanceof Error ? err.message : String(err), profile.tokenEnv), status: 502, errorType: "upstream_error" });
+    turnError = err instanceof Error ? err.message : String(err);
   } finally {
     cleanup();
   }
 
   // Reap the process so no zombie is left behind (§三十): wait for the real `close`, and
   // force-terminate only if it lingers past the grace window after the stream ended.
-  await new Promise<void>(resolve => {
-    if (child.exitCode !== null) { resolve(); return; }
-    const graceTimer = setTimeout(() => { kill(); }, killGraceMs);
-    child.once("close", () => { clearTimeout(graceTimer); resolve(); });
-  });
+  const graceTimer = setTimeout(() => { kill(); }, killGraceMs);
+  await processLifecycle;
+  clearTimeout(graceTimer);
   if (killTimer) clearTimeout(killTimer);
 
   if (!terminalEmitted) {
-    const stderr = redactSecrets(boundedStderr(stderrChunks), profile.tokenEnv);
+    const stderr = redactSecrets(boundedStderr(stderrChunks), profile.tokenEnv, apiKey);
     if (incoming.abortSignal?.aborted) {
       emitOnce({ type: "error", message: `${profile.label} turn was aborted.`, retryable: false });
+    } else if (childProcessError) {
+      emitOnce({
+        type: "error",
+        message: `${profile.label} CLI failed to start: ${redactSecrets(childProcessError.message, profile.tokenEnv, apiKey)}`,
+        status: 500,
+        errorType: "upstream_error",
+        code: "cli_spawn_failed",
+        retryable: false,
+      });
+    } else if (turnError) {
+      emitOnce({
+        type: "error",
+        message: redactSecrets(turnError, profile.tokenEnv, apiKey),
+        status: 502,
+        errorType: "upstream_error",
+      });
     } else if (streamProtocolError) {
       emitOnce({
         type: "error",
-        message: redactSecrets(streamProtocolError, profile.tokenEnv),
+        message: redactSecrets(streamProtocolError, profile.tokenEnv, apiKey),
         status: 502,
         errorType: "upstream_error",
         code: "protocol_error",

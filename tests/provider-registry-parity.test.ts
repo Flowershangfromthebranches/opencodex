@@ -41,6 +41,15 @@ const EXPECTED_KEY_PROVIDER_IDS = [
 ];
 
 describe("provider registry parity", () => {
+  test("CodeBuddy static catalogs cover every official CLI-agent model in the bundled 2.143.0 manifest", () => {
+    const global = providerConfigSeed(PROVIDER_REGISTRY.find(entry => entry.id === "codebuddy")!);
+    const cn = providerConfigSeed(PROVIDER_REGISTRY.find(entry => entry.id === "codebuddy-cn")!);
+    expect(global.models).toContain("gemini-3.5-flash");
+    expect(cn.models).toEqual(expect.arrayContaining([
+      "glm-5.0", "glm-5.0-turbo", "glm-5v-turbo", "glm-4.7", "kimi-k2.5", "deepseek-v3-2-volc",
+    ]));
+  });
+
   test("registry ids are unique", () => {
     const ids = PROVIDER_REGISTRY.map(entry => entry.id);
     expect(new Set(ids).size).toBe(ids.length);

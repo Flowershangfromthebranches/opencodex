@@ -150,6 +150,23 @@ describe("codebuddy runTurn fails closed before any spawn", () => {
     expect(events[0]).toMatchObject({ type: "error", code: "cli_not_found" });
     expect(String((events[0] as { message: string }).message)).toContain("npm install -g @tencent-ai/codebuddy-code");
   });
+
+  test("an asynchronous spawn failure settles as cli_spawn_failed without waiting for close", async () => {
+    const child = fakeChild([], { emitClose: false });
+    const adapter = createCodeBuddyAdapter(provider(), {
+      spawn: () => {
+        setTimeout(() => child.emit("error", Object.assign(new Error("spawn ENOENT cb-global-key"), { code: "ENOENT" })), 0);
+        return child as unknown as ChildProcess;
+      },
+      which: () => "/stale/path/codebuddy",
+      killGraceMs: 20,
+    });
+
+    const events = await run(adapter, parsed());
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "error", code: "cli_spawn_failed", retryable: false });
+    expect((events[0] as { message: string }).message).not.toContain("cb-global-key");
+  });
 });
 
 describe("codebuddy runTurn streams a headless turn", () => {
@@ -202,6 +219,15 @@ describe("codebuddy runTurn streams a headless turn", () => {
     expect(last.type).toBe("error");
     expect(last.code).toBe("process_exit_error");
     expect(last.message).not.toContain("sk-secretvalue");
+  });
+
+  test("redacts the exact configured credential even when stderr uses no known secret prefix", async () => {
+    const child = fakeChild([], { stderr: "authentication failed: token cb-global-key rejected", exitCode: 1 });
+    const adapter = createCodeBuddyAdapter(provider(), { spawn: () => child as unknown as ChildProcess, which: () => "/usr/bin/codebuddy", killGraceMs: 20 });
+    const events = await run(adapter, parsed());
+    const last = events.at(-1) as { message: string };
+    expect(last.message).toContain("token [redacted] rejected");
+    expect(last.message).not.toContain("cb-global-key");
   });
 
   test("a CLI that exits with non-zero exit code and empty stderr reports process_exit_error and never done", async () => {
