@@ -3,6 +3,7 @@ import { createAzureAdapter } from "./azure";
 import type { ProviderAdapter } from "./base";
 import { withClinePassDeepSeekV4ToolReplayCompatibility } from "./cline-pass-deepseek-v4-tool-replay";
 import { createCodeBuddyAdapter } from "./codebuddy/adapter";
+import { createQoderAdapter } from "./qoder/adapter";
 import { createCommandCodeAdapter } from "./command-code";
 import { createCursorAdapter } from "./cursor";
 import { createGoogleAdapter } from "./google";
@@ -114,6 +115,10 @@ export const ADAPTER_REGISTRY = {
   "mimo-free": {
     contractParent: "openai-chat",
     create: (provider: OcxProviderConfig, _context: AdapterFactoryContext) => createMimoFreeAdapter(provider),
+  },
+  qoder: {
+    contractParent: "codebuddy",
+    create: (provider: OcxProviderConfig, _context: AdapterFactoryContext) => createQoderAdapter(provider),
   },
 } as const satisfies Record<string, AdapterDefinition>;
 

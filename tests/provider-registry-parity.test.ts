@@ -37,7 +37,7 @@ const EXPECTED_KEY_PROVIDER_IDS = [
   "volcengine", "volcengine-coding-plan", "volcengine-agent-plan", "qianfan", "alibaba", "alibaba-token-plan", "alibaba-token-plan-intl", "parallel", "zenmux", "litellm", "ollama-cloud", "mistral",
   "minimax", "minimax-cn", "kimi-code", "opencode-zen", "vercel-ai-gateway",
   "opencode-free", "xiaomi", "xiaomi-mimo", "kilo", "mimo-free", "mimo", "cloudflare-ai-gateway", "cloudflare-workers-ai", "gitlab-duo",
-  "codebuddy", "codebuddy-cn",
+  "qoder", "codebuddy", "codebuddy-cn",
 ];
 
 describe("provider registry parity", () => {
@@ -1093,13 +1093,12 @@ describe("free-provider directory isolation", () => {
   test("directory metadata never becomes a canonical runtime provider", () => {
     // The directory is a catalog of endpoints we have not adopted. If its ids reached
     // PROVIDER_REGISTRY, routedProviderConfig() would canonicalize a user's same-named provider
-    // onto the directory's adapter and baseUrl — for `qoder` that baseUrl is the empty string,
-    // so the request would lose its destination entirely.
+    // onto the directory's adapter and baseUrl, so the request could lose its destination.
     const directoryOnlyIds = FREE_PROVIDER_DIRECTORY
       .filter(entry => entry.supportLevel === "reference")
       .map(entry => entry.id);
     expect(directoryOnlyIds.length).toBeGreaterThan(0);
-    expect(directoryOnlyIds).toContain("qoder");
+    expect(directoryOnlyIds).not.toContain("qoder");
 
     const registryIds = new Set(PROVIDER_REGISTRY.map(entry => entry.id));
     for (const id of directoryOnlyIds) {
@@ -1144,6 +1143,8 @@ describe("free-provider directory isolation", () => {
       baseUrl: "https://custom.example.test/v1",
       liveModels: true,
     });
+    expect(routed.provider.adapter).not.toBe("qoder");
+    expect(routed.provider.baseUrl).not.toBe("https://qoder.com");
     expect(routed.modelId).toBe("custom-model");
   });
 

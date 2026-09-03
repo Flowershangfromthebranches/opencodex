@@ -1,7 +1,7 @@
 import type { AdapterEvent, OcxMessage, OcxParsedRequest, OcxUsage } from "../../types";
 
 /**
- * Shared stream-json protocol for official coding-agent CLIs (CodeBuddy Code).
+ * Shared stream-json protocol for official coding-agent CLIs (CodeBuddy Code and Qoder CLI).
  *
  * The vendor speaks the Anthropic/Claude-Code `stream-json` protocol ("the naming and protocol
  * align with Anthropic Claude Code v2.1.88"). A headless turn is a newline-delimited JSON stream on stdout:
@@ -72,13 +72,13 @@ export async function* readJsonLines(
     } catch {
       const snippet = trimmed.slice(0, 64).replace(/[\r\n]+/g, " ");
       throw new CodingAgentProtocolError(
-        `Malformed stream-json frame received from CodeBuddy CLI: ${snippet}`,
+        `Malformed stream-json frame received from coding-agent CLI: ${snippet}`,
       );
     }
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
       const snippet = trimmed.slice(0, 64).replace(/[\r\n]+/g, " ");
       throw new CodingAgentProtocolError(
-        `Non-object stream-json frame received from CodeBuddy CLI: ${snippet}`,
+        `Non-object stream-json frame received from coding-agent CLI: ${snippet}`,
       );
     }
     yield parsed as StreamMessage;
@@ -186,12 +186,41 @@ export function mapStreamMessageToEvents(message: StreamMessage, state: StreamPa
     const isError = message.is_error === true || asString(message.subtype) === "error_during_execution";
     const usage = usageFromResult(message);
     if (isError) {
+      const errors = Array.isArray(message.errors)
+        ? message.errors.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        : [];
+      const detail = asString(message.result) || errors[0] || "Coding-agent CLI ended the turn with an execution error";
+      const vendorCode = typeof message.error_code === "number" ? message.error_code : undefined;
+      // Qoder documents code 118 and emits the "credit usage limit" wording. Keep the
+      // match deliberately narrow so other coding-agent CLIs retain their established
+      // generic-upstream handling for ambiguous text such as "insufficient credits".
+      const insufficientQuota = vendorCode === 118 || /credit usage limit/i.test(detail);
+      const authentication = /not logged in|invalid (?:personal access )?token|authentication/i.test(detail);
+      const rateLimited = !insufficientQuota && /rate limit|too many requests/i.test(detail);
+      const modelUnavailable = /model (?:is )?(?:not found|unavailable|unsupported)|invalid model/i.test(detail);
       events.push({
         type: "error",
-        message: asString(message.result) || "CodeBuddy CLI ended the turn with an execution error",
-        status: 502,
-        errorType: "upstream_error",
-        code: "upstream_error",
+        message: detail,
+        status: insufficientQuota || rateLimited ? 429 : authentication ? 401 : modelUnavailable ? 400 : 502,
+        errorType: insufficientQuota
+          ? "insufficient_quota"
+          : rateLimited
+            ? "rate_limit_error"
+            : authentication
+              ? "authentication_error"
+              : modelUnavailable
+                ? "invalid_request_error"
+                : "upstream_error",
+        code: insufficientQuota
+          ? "insufficient_quota"
+          : rateLimited
+            ? "rate_limit_exceeded"
+            : authentication
+              ? "invalid_api_key"
+              : modelUnavailable
+                ? "model_not_found"
+                : "upstream_error",
+        retryable: rateLimited,
         ...(usage ? { usage } : {}),
       });
       return events;

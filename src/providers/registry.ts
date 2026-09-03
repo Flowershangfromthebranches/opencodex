@@ -35,6 +35,7 @@ import {
   CODEBUDDY_GLOBAL_MODEL_REASONING_EFFORTS,
   CODEBUDDY_REASONING_EFFORTS,
 } from "./codebuddy-models";
+import { QODER_GLOBAL_MODELS, QODER_REASONING_EFFORTS } from "./qoder-models";
 
 export type ProviderAuthKind = "forward" | "oauth" | "key" | "local";
 export type MetadataModelIdNormalize = "case-insensitive";
@@ -3025,6 +3026,25 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
   },
   // FREEZE 2026-07-10: no public OpenAI-compatible endpoint is documented. Evidence: devlog/_plan/260710_provider_hardening/003_research_aggregators.md.
   { id: "gitlab-duo", label: "GitLab Duo", baseUrl: "https://cloud.gitlab.com/ai/v1/proxy/openai/v1", adapter: "openai-chat", authKind: "key", dashboardUrl: "https://gitlab.com/-/user_settings/personal_access_tokens" },
+  {
+    // Official Qoder Global CLI automation surface. The canonical URL is an identity boundary;
+    // inference and model discovery are performed only by the installed vendor CLI. Authentication
+    // uses the documented PAT environment variable and never imports desktop/session credentials.
+    id: "qoder",
+    label: "Qoder (Global)",
+    adapter: "qoder",
+    baseUrl: "https://qoder.com",
+    authKind: "key",
+    apiKeyValidation: "unknown",
+    preserveCustomDestination: true,
+    dashboardUrl: "https://qoder.com/account/integrations",
+    defaultModel: "Qwen3.8-Max",
+    models: [...QODER_GLOBAL_MODELS],
+    liveModels: true,
+    reasoningEfforts: [...QODER_REASONING_EFFORTS],
+    noVisionModels: [...QODER_GLOBAL_MODELS],
+    note: "Official Qoder Global CLI using QODER_PERSONAL_ACCESS_TOKEN. Models are discovered per account with `qoder --list-models`; the documented roster is a degraded fallback. The CLI runs single-turn with tools, MCP, settings hooks, and session persistence disabled. Requires `npm install -g @qoder-ai/qodercli`.",
+  },
   {
     // Official CodeBuddy Code CLI provider (Tencent Cloud), GLOBAL / `public` environment.
     // Transport is the vendor-documented headless CLI automation surface

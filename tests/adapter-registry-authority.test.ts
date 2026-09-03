@@ -22,6 +22,7 @@ const EXPECTED_ADAPTER_NAMES = {
   "azure-openai": "azure-openai",
   cursor: "cursor",
   "mimo-free": "mimo-free",
+  qoder: "qoder",
 } as const;
 
 function provider(adapter: string): OcxProviderConfig {
@@ -33,6 +34,8 @@ function provider(adapter: string): OcxProviderConfig {
       ? "https://api.xiaomimimo.com/api/free-ai/openai/chat"
       : adapter === "codebuddy"
         ? "https://www.codebuddy.ai"
+        : adapter === "qoder"
+          ? "https://qoder.com"
         // ollama-native refuses a bare /v1 path on a host it does not recognise, rather than
         // guessing that an arbitrary destination speaks Ollama's compatibility surface.
         : adapter === "ollama-native"

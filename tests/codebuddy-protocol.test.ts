@@ -76,13 +76,13 @@ describe("codebuddy stream-json line reader", () => {
   test("fails closed on malformed stream-json line with CodingAgentProtocolError", async () => {
     const line = enc.encode('{"type":"ok"}\nnot-json\n');
     const gen = readJsonLines(chunks(line));
-    await expect(collect(gen)).rejects.toThrow("Malformed stream-json frame received from CodeBuddy CLI");
+    await expect(collect(gen)).rejects.toThrow("Malformed stream-json frame received from coding-agent CLI");
   });
 
   test("fails closed on non-object JSON frame (array or primitive)", async () => {
     const line = enc.encode('[1,2]\n');
     const gen = readJsonLines(chunks(line));
-    await expect(collect(gen)).rejects.toThrow("Non-object stream-json frame received from CodeBuddy CLI");
+    await expect(collect(gen)).rejects.toThrow("Non-object stream-json frame received from coding-agent CLI");
   });
 
   test("ignores blank and whitespace padding lines between valid frames", async () => {
@@ -98,6 +98,16 @@ describe("codebuddy stream-json line reader", () => {
 });
 
 describe("codebuddy stream-json event mapping", () => {
+  test("classifies coding-agent auth, rate-limit, and unavailable-model results", () => {
+    const frame = (detail: string) => mapStreamMessageToEvents(
+      { type: "result", subtype: "error_during_execution", is_error: true, errors: [detail] },
+      { sawPartialText: false, sawPartialThinking: false, sawTerminalResult: false },
+    )[0];
+    expect(frame("Not logged in; invalid token")).toMatchObject({ status: 401, code: "invalid_api_key", retryable: false });
+    expect(frame("Too many requests: rate limit reached")).toMatchObject({ status: 429, code: "rate_limit_exceeded", retryable: true });
+    expect(frame("Model is unavailable")).toMatchObject({ status: 400, code: "model_not_found", retryable: false });
+  });
+
   test("maps partial text and thinking deltas and decouples their state", () => {
     const state = { sawPartialText: false, sawPartialThinking: false, sawTerminalResult: false };
     const text = mapStreamMessageToEvents(

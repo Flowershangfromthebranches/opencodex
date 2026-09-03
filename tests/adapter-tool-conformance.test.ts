@@ -419,7 +419,7 @@ describe("registry-derived routed tool conformance", () => {
     }
   });
 
-  const TOOL_LESS_ADAPTERS = new Set(["codebuddy"]);
+  const TOOL_LESS_ADAPTERS = new Set(["codebuddy", "qoder"]);
 
   test("every registered adapter keeps the nested apply_patch helper in its final request", async () => {
     for (const [adapterId] of adapterDefinitions()) {
