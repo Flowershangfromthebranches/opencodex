@@ -37,6 +37,7 @@ const EXPECTED_KEY_PROVIDER_IDS = [
   "volcengine", "volcengine-coding-plan", "volcengine-agent-plan", "qianfan", "alibaba", "alibaba-token-plan", "alibaba-token-plan-intl", "parallel", "zenmux", "litellm", "ollama-cloud", "mistral",
   "minimax", "minimax-cn", "kimi-code", "opencode-zen", "vercel-ai-gateway",
   "opencode-free", "xiaomi", "xiaomi-mimo", "kilo", "mimo-free", "mimo", "cloudflare-ai-gateway", "cloudflare-workers-ai", "gitlab-duo",
+  "codebuddy", "codebuddy-cn",
 ];
 
 describe("provider registry parity", () => {
@@ -1134,6 +1135,31 @@ describe("free-provider directory isolation", () => {
       baseUrl: "https://custom.example.test/v1",
       liveModels: true,
     });
+    expect(routed.modelId).toBe("custom-model");
+  });
+
+  test("a custom provider named codebuddy keeps its own destination (preserveCustomDestination)", () => {
+    const config: OcxConfig = {
+      port: 10100,
+      defaultProvider: "codebuddy",
+      providers: {
+        codebuddy: {
+          adapter: "openai-chat",
+          baseUrl: "https://custom.codebuddy.example.test/v1",
+          apiKey: "test-key",
+          liveModels: true,
+        },
+      },
+    };
+
+    const routed = routeModel(config, "codebuddy/custom-model");
+    expect(routed.provider).toMatchObject({
+      adapter: "openai-chat",
+      baseUrl: "https://custom.codebuddy.example.test/v1",
+      liveModels: true,
+    });
+    expect(routed.provider.adapter).not.toBe("codebuddy");
+    expect(routed.provider.baseUrl).not.toBe("https://www.codebuddy.ai");
     expect(routed.modelId).toBe("custom-model");
   });
 
