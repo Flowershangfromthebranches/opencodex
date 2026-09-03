@@ -17,7 +17,19 @@ export const QODER_GLOBAL_PROFILE: QoderProfile = {
   documentationUrl: "https://docs.qoder.com/cli/authentication",
 };
 
-export const QODER_PROFILES: readonly QoderProfile[] = [QODER_GLOBAL_PROFILE];
+export const QODER_CN_PROFILE: QoderProfile = {
+  providerId: "qoder-cn",
+  family: "qoder",
+  region: "cn",
+  label: "Qoder CN",
+  canonicalBaseUrl: "https://qoder.cn",
+  binaryCandidates: ["qodercn", "qoderclicn"],
+  tokenEnv: "QODERCN_PERSONAL_ACCESS_TOKEN",
+  installHint: "npm install -g @qodercn-ai/qoderclicn",
+  documentationUrl: "https://docs.qoder.cn/en/cli/authentication",
+};
+
+export const QODER_PROFILES: readonly QoderProfile[] = [QODER_GLOBAL_PROFILE, QODER_CN_PROFILE];
 export function resolveQoderProfile(baseUrl: string | undefined): QoderProfile | undefined {
   return resolveProfileByBaseUrl(QODER_PROFILES, baseUrl) as QoderProfile | undefined;
 }

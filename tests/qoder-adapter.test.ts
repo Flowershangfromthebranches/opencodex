@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { Readable, Writable } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import { buildQoderArgs, buildQoderChildEnv, createQoderAdapter } from "../src/adapters/qoder/adapter";
-import { clearQoderBinaryCache, QODER_GLOBAL_PROFILE } from "../src/adapters/qoder/profiles";
+import { clearQoderBinaryCache, QODER_CN_PROFILE, QODER_GLOBAL_PROFILE, resolveQoderProfile } from "../src/adapters/qoder/profiles";
 import type { AdapterEvent, OcxParsedRequest, OcxProviderConfig } from "../src/types";
 import { createTestTranslatorBudget } from "./helpers/translator-budget";
 
@@ -42,6 +42,42 @@ describe("qoder adapter", () => {
     expect(args).toContain("--no-session-persistence");
     expect(args[args.indexOf("--reasoning-effort") + 1]).toBe("high");
     expect(args).not.toContain("--dangerously-skip-permissions");
+  });
+
+  test("keeps Global and CN profiles, executables, destinations, and PAT variables isolated", async () => {
+    expect(resolveQoderProfile("https://qoder.com/")).toBe(QODER_GLOBAL_PROFILE);
+    expect(resolveQoderProfile("https://qoder.cn/")).toBe(QODER_CN_PROFILE);
+    expect(QODER_CN_PROFILE.binaryCandidates).toEqual(["qodercn", "qoderclicn"]);
+
+    const globalEnv = buildQoderChildEnv(QODER_GLOBAL_PROFILE, "global-pat");
+    const cnEnv = buildQoderChildEnv(QODER_CN_PROFILE, "cn-pat");
+    expect(globalEnv.QODER_PERSONAL_ACCESS_TOKEN).toBe("global-pat");
+    expect(globalEnv.QODERCN_PERSONAL_ACCESS_TOKEN).toBeUndefined();
+    expect(cnEnv.QODERCN_PERSONAL_ACCESS_TOKEN).toBe("cn-pat");
+    expect(cnEnv.QODER_PERSONAL_ACCESS_TOKEN).toBeUndefined();
+
+    const spawned: Array<{ executable: string; env: NodeJS.ProcessEnv }> = [];
+    const runRegion = async (configured: OcxProviderConfig, executable: string) => {
+      const adapter = createQoderAdapter(configured, {
+        which: candidate => candidate === executable ? `/bin/${candidate}` : undefined,
+        spawn: (command, _args, options) => {
+          spawned.push({ executable: command, env: options.env ?? {} });
+          return fakeChild(['{"type":"result","subtype":"success","is_error":false}\n']);
+        },
+      });
+      await adapter.runTurn!(parsed(), { headers: new Headers(), translatorBudget: createTestTranslatorBudget() }, () => {});
+    };
+    await Promise.all([
+      runRegion(provider({ baseUrl: "https://qoder.com", apiKey: "global-pat" }), "qoder"),
+      runRegion(provider({ baseUrl: "https://qoder.cn", apiKey: "cn-pat" }), "qodercn"),
+    ]);
+    expect(spawned).toHaveLength(2);
+    const global = spawned.find(item => item.executable.endsWith("/qoder"))!;
+    const cn = spawned.find(item => item.executable.endsWith("/qodercn"))!;
+    expect(global.env.QODER_PERSONAL_ACCESS_TOKEN).toBe("global-pat");
+    expect(global.env.QODERCN_PERSONAL_ACCESS_TOKEN).toBeUndefined();
+    expect(cn.env.QODERCN_PERSONAL_ACCESS_TOKEN).toBe("cn-pat");
+    expect(cn.env.QODER_PERSONAL_ACCESS_TOKEN).toBeUndefined();
   });
 
   test("fails closed before spawn for a non-canonical destination", async () => {

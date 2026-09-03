@@ -72,6 +72,22 @@ describe("POST /api/providers/test (WP040 connectivity probe)", () => {
     expect(calls).toEqual([{ providerId: "qoder", token: "qoder-pat" }]);
   });
 
+  test("Qoder CN probes its own CLI profile and PAT", async () => {
+    const calls: Array<{ providerId: string; token: string }> = [];
+    setFetchQoderModelsForTests((profile, token) => {
+      calls.push({ providerId: profile.providerId, token });
+      return { ok: true, models: ["Qwen3.8-Flash"] };
+    });
+    const config = baseConfig({
+      "qoder-cn": { adapter: "qoder", baseUrl: "https://qoder.cn", apiKey: "cn-pat", authMode: "key", liveModels: true },
+    });
+
+    const { body } = await probe(config, "qoder-cn");
+
+    expect(body).toMatchObject({ ok: true, models: 1, message: "Connected. 1 models." });
+    expect(calls).toEqual([{ providerId: "qoder-cn", token: "cn-pat" }]);
+  });
+
   test("Cursor probes GetUsableModels and reports the live model count", async () => {
     const calls: { apiKey: string; baseUrl?: string }[] = [];
     setFetchCursorUsableModelsForTests(async options => {

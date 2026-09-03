@@ -37,7 +37,7 @@ const EXPECTED_KEY_PROVIDER_IDS = [
   "volcengine", "volcengine-coding-plan", "volcengine-agent-plan", "qianfan", "alibaba", "alibaba-token-plan", "alibaba-token-plan-intl", "parallel", "zenmux", "litellm", "ollama-cloud", "mistral",
   "minimax", "minimax-cn", "kimi-code", "opencode-zen", "vercel-ai-gateway",
   "opencode-free", "xiaomi", "xiaomi-mimo", "kilo", "mimo-free", "mimo", "cloudflare-ai-gateway", "cloudflare-workers-ai", "gitlab-duo",
-  "qoder", "codebuddy", "codebuddy-cn",
+  "qoder", "qoder-cn", "codebuddy", "codebuddy-cn",
 ];
 
 describe("provider registry parity", () => {
@@ -1099,6 +1099,7 @@ describe("free-provider directory isolation", () => {
       .map(entry => entry.id);
     expect(directoryOnlyIds.length).toBeGreaterThan(0);
     expect(directoryOnlyIds).not.toContain("qoder");
+    expect(directoryOnlyIds).not.toContain("qoder-cn");
 
     const registryIds = new Set(PROVIDER_REGISTRY.map(entry => entry.id));
     for (const id of directoryOnlyIds) {

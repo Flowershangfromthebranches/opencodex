@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { fetchQoderModels, parseQoderModelList, setFetchQoderModelsForTests } from "../src/adapters/qoder/live-models";
-import { clearQoderBinaryCache, QODER_GLOBAL_PROFILE } from "../src/adapters/qoder/profiles";
+import { clearQoderBinaryCache, QODER_CN_PROFILE, QODER_GLOBAL_PROFILE } from "../src/adapters/qoder/profiles";
 import { fetchProviderModels } from "../src/codex/catalog/provider-fetch";
 import { clearModelCache, providerCacheGenerations } from "../src/codex/model-cache";
 import type { OcxProviderConfig } from "../src/types";
@@ -29,6 +29,21 @@ describe("qoder live model discovery", () => {
     expect(seen?.command.toLowerCase()).toContain("cmd.exe");
     expect(seen?.args.slice(0, 3)).toEqual(["/d", "/s", "/c"]);
     expect(seen?.env?.QODER_PERSONAL_ACCESS_TOKEN).toBe("secret-pat");
+  });
+
+  test("CN discovery selects qodercn and passes only the CN PAT variable", async () => {
+    let seen: { command: string; env: Record<string, string> } | undefined;
+    const result = await fetchQoderModels(QODER_CN_PROFILE, "cn-secret", {
+      which: candidate => candidate === "qodercn" ? "/bin/qodercn" : undefined,
+      exec: async (command, _args, options) => {
+        seen = { command, env: options.env };
+        return { stdout: "MODEL\nQwen3.8-Max\nQwen3.8-Flash\n", stderr: "" };
+      },
+    });
+    expect(result).toEqual({ ok: true, models: ["Qwen3.8-Max", "Qwen3.8-Flash"] });
+    expect(seen?.command).toBe("/bin/qodercn");
+    expect(seen?.env.QODERCN_PERSONAL_ACCESS_TOKEN).toBe("cn-secret");
+    expect(seen?.env.QODER_PERSONAL_ACCESS_TOKEN).toBeUndefined();
   });
 
   test("live account roster is authoritative and static models are only fallback", async () => {

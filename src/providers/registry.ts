@@ -35,7 +35,7 @@ import {
   CODEBUDDY_GLOBAL_MODEL_REASONING_EFFORTS,
   CODEBUDDY_REASONING_EFFORTS,
 } from "./codebuddy-models";
-import { QODER_GLOBAL_MODELS, QODER_REASONING_EFFORTS } from "./qoder-models";
+import { QODER_CN_MODELS, QODER_GLOBAL_MODELS, QODER_REASONING_EFFORTS } from "./qoder-models";
 
 export type ProviderAuthKind = "forward" | "oauth" | "key" | "local";
 export type MetadataModelIdNormalize = "case-insensitive";
@@ -3044,6 +3044,24 @@ export const PROVIDER_REGISTRY: readonly ProviderRegistryEntry[] = [
     reasoningEfforts: [...QODER_REASONING_EFFORTS],
     noVisionModels: [...QODER_GLOBAL_MODELS],
     note: "Official Qoder Global CLI using QODER_PERSONAL_ACCESS_TOKEN. Models are discovered per account with `qoder --list-models`; the documented roster is a degraded fallback. The CLI runs single-turn with tools, MCP, settings hooks, and session persistence disabled. Requires `npm install -g @qoder-ai/qodercli`.",
+  },
+  {
+    // Qoder CN is a separate credential, executable, destination, entitlement cache, and health
+    // domain. It deliberately does not reuse the OAuth/private-protocol design from #3010.
+    id: "qoder-cn",
+    label: "Qoder CN",
+    adapter: "qoder",
+    baseUrl: "https://qoder.cn",
+    authKind: "key",
+    apiKeyValidation: "unknown",
+    preserveCustomDestination: true,
+    dashboardUrl: "https://qoder.cn/account/integrations",
+    defaultModel: "Qwen3.8-Max",
+    models: [...QODER_CN_MODELS],
+    liveModels: true,
+    reasoningEfforts: [...QODER_REASONING_EFFORTS],
+    noVisionModels: [...QODER_CN_MODELS],
+    note: "Official Qoder CN CLI using QODERCN_PERSONAL_ACCESS_TOKEN. Models are discovered per account with `qodercn --list-models`; the verified roster is a degraded fallback. The CLI runs single-turn with tools, MCP, settings hooks, and session persistence disabled. Requires `npm install -g @qodercn-ai/qoderclicn`.",
   },
   {
     // Official CodeBuddy Code CLI provider (Tencent Cloud), GLOBAL / `public` environment.
