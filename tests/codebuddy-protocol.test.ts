@@ -41,6 +41,12 @@ describe("codebuddy stream-json line reader", () => {
     expect(out.map(m => m.type)).toEqual(["a", "b", "c"]);
   });
 
+  test("applies the line limit to each frame instead of the combined chunk", async () => {
+    const line = enc.encode('{"type":"a"}\n{"type":"b"}\n{"type":"c"}\n');
+    const out = await collect(readJsonLines(chunks(line), { maxLineBytes: 12 }));
+    expect(out.map(m => m.type)).toEqual(["a", "b", "c"]);
+  });
+
   test("reassembles a JSON frame fragmented across chunk boundaries", async () => {
     const full = enc.encode('{"type":"result","subtype":"success"}\n');
     const out = await collect(readJsonLines(chunks(full.slice(0, 12), full.slice(12, 25), full.slice(25))));
