@@ -8,6 +8,7 @@ import { resolveCodingAgentBinary, resolveProfileByBaseUrl, type CodingAgentProv
 /** Injectable spawn for tests; production uses node:child_process. */
 export type SpawnFn = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
 
+/** Per-turn injectables: spawn/which seams for tests plus wall-clock ceilings for timeout, kill grace, and bounded reap. */
 export interface CodingAgentDeps {
   spawn?: SpawnFn;
   which?: WhichFn;
@@ -61,6 +62,7 @@ export function redactSecrets(text: string, tokenEnv: string, credential?: strin
     .replace(/\b(sk-[A-Za-z0-9_-]{6,})\b/g, "[redacted]");
 }
 
+/** Inputs for one headless CLI turn: region profiles, request context, and family-specific arg/env builders. */
 export interface CodingAgentTurnInput {
   /** Region profiles for this family; the turn fails closed if the base URL matches none. */
   profiles: readonly CodingAgentProviderProfile[];

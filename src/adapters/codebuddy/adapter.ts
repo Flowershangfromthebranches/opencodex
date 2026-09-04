@@ -56,6 +56,7 @@ export function buildArgs(profile: CodeBuddyProfile, parsed: OcxParsedRequest, p
   return args;
 }
 
+/** Create the shared CodeBuddy adapter: region profile selects Global vs CN, one turn runs tools-disabled. */
 export function createCodeBuddyAdapter(provider: OcxProviderConfig, deps: CodeBuddyAdapterDeps = {}): ProviderAdapter {
   return {
     name: "codebuddy",
