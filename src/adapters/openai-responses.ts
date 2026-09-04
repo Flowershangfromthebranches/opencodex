@@ -906,6 +906,61 @@ function toolOutputText(output: unknown): string {
   }).filter(Boolean).join("\n");
 }
 
+/** True when an output can be losslessly represented as user-message content. */
+function isRepairableToolOutput(output: unknown): output is string | Record<string, unknown>[] {
+  if (typeof output === "string") return true;
+  if (!Array.isArray(output)) return false;
+  return output.every(part => {
+    if (!isPlainObject(part)) return false;
+    if (typeof part.type !== "string") return false;
+    if (["output_text", "text", "input_text"].includes(part.type)) {
+      return typeof part.text === "string";
+    }
+    if (part.type === "refusal") return typeof part.refusal === "string";
+    if (part.type === "encrypted_content") return typeof part.encrypted_content === "string";
+    if (part.type !== "input_image") return false;
+    const imageUrl = part.image_url;
+    const fileId = part.file_id;
+    const imageUrlIsString = typeof imageUrl === "string";
+    const fileIdIsString = typeof fileId === "string";
+    const hasUsableSource = (imageUrlIsString && imageUrl.length > 0)
+      || (fileIdIsString && fileId.length > 0);
+    const validSource = hasUsableSource
+      && (part.image_url === undefined || imageUrlIsString)
+      && (part.file_id === undefined || fileIdIsString);
+    const validDetail = part.detail === undefined
+      || (typeof part.detail === "string"
+        && ["auto", "low", "high", "original"].includes(part.detail));
+    return validSource && validDetail;
+  });
+}
+
+/** Convert orphaned tool output to user-message content without discarding valid images. */
+function orphanedToolOutputContent(output: unknown, callId = ""): Record<string, unknown>[] {
+  const marker = `[tool output for ${callId || "unknown call"}]`;
+  if (typeof output !== "string" && !Array.isArray(output)) {
+    return [{ type: "input_text", text: marker }];
+  }
+  if (!Array.isArray(output)) {
+    return [{ type: "input_text", text: `${marker}\n${toolOutputText(output)}` }];
+  }
+
+  const content: Record<string, unknown>[] = [{ type: "input_text", text: marker }];
+  for (const part of output) {
+    if (!isPlainObject(part)) continue;
+    if (part.type === "input_image") {
+      content.push(part);
+    } else if (part.type === "encrypted_content" && typeof part.encrypted_content === "string") {
+      content.push({ type: "input_text", text: "[encrypted content omitted]" });
+    } else if (typeof part.text === "string") {
+      content.push({ type: "input_text", text: part.text });
+    } else if (part.type === "refusal" && typeof part.refusal === "string") {
+      content.push({ type: "input_text", text: `[refusal] ${part.refusal}` });
+    }
+  }
+  return content;
+}
+
 /** True when a Responses tool output item is present but carries no usable content. */
 function isToolOutputEmpty(output: unknown): boolean {
   if (typeof output === "string") return output.trim() === "";
@@ -936,6 +991,32 @@ function annotateEmptyResponsesToolOutputs(body: unknown, enabled: boolean): unk
     if (!isToolOutputEmpty(item.output)) return item;
     changed = true;
     return { ...item, output: EMPTY_TOOL_OUTPUT_ANNOTATION };
+  });
+  return changed ? { ...body, input } : body;
+}
+
+/**
+ * Preserve the text of structurally invalid tool-output items before they reach a strict
+ * Responses parser. Stateful destinations may legitimately receive an output whose matching
+ * call lives behind `previous_response_id`, so ordinary orphan repair cannot run universally.
+ * A missing or empty `call_id`, however, cannot identify stored state on any destination.
+ */
+function repairUnidentifiedToolOutputItems(body: unknown): unknown {
+  if (!isPlainObject(body) || !Array.isArray(body.input)) return body;
+  let changed = false;
+  const input = body.input.map(item => {
+    if (!isPlainObject(item)
+      || (item.type !== "function_call_output" && item.type !== "custom_tool_call_output")
+      || (typeof item.call_id === "string" && item.call_id.length > 0)) {
+      return item;
+    }
+    if (!isRepairableToolOutput(item.output)) return item;
+    changed = true;
+    return {
+      type: "message",
+      role: "user",
+      content: orphanedToolOutputContent(item.output),
+    };
   });
   return changed ? { ...body, input } : body;
 }
@@ -1060,12 +1141,17 @@ function repairOrphanedInputItems(body: unknown, dropReasoning: boolean, synthes
       flushPendingSyntheticOutputs();
       const callId = typeof item.call_id === "string" ? item.call_id : "";
       const paired = isFnOutput ? functionCallIds.has(callId) : customCallIds.has(callId);
-      if (!paired) {
+      const usableOutput = isRepairableToolOutput(item.output);
+      // A known orphan call is still useful as a labeled user message even when its output is
+      // incomplete. With no call id and no output, preserve the invalid item so validation fails
+      // closed rather than pretending any tool result exists.
+      const knownNullOutput = callId.length > 0 && item.output == null;
+      if (!paired && (knownNullOutput || usableOutput)) {
         changed = true;
         repaired.push({
           type: "message",
           role: "user",
-          content: [{ type: "input_text", text: `[tool output for ${callId || "unknown call"}]\n${toolOutputText(item.output)}` }],
+          content: orphanedToolOutputContent(item.output, callId),
         });
         continue;
       }
@@ -2272,11 +2358,14 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // Same predicate as the routedCompaction gate in handleResponses(): an authMode check would
       // let a noncanonical custom forward provider skip this rewrite while the server still routes
       // it as a summarizer turn (#422). The compaction body build removes the tool surface and must
-      // therefore be the last routed transform: anything before it may depend on the declarations;
-      // anything after it cannot.
+      // therefore be the last routed transform that may depend on those declarations. Structural
+      // sanitizers below can still run after it.
       if (parsed._compactionRequest === true && !isCanonicalOpenAiForwardProvider(provider)) {
         outBody = buildRoutedCompactionBody(outBody);
       }
+      // Run after routed compaction so nested input_image parts are replaced before a malformed
+      // tool output is flattened to text and can no longer be inspected structurally.
+      outBody = repairUnidentifiedToolOutputItems(outBody);
       const threadServingIdentityChanged = parsed._stripReasoningEncryptedContent === true;
       const sanitizedBody = normalizeToolSchemas(
         stripSparkCompatibility(
