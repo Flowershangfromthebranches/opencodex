@@ -120,6 +120,12 @@ import {
   isValidCodexAccountId,
 } from "./account-id";
 import { codexAccountIdNamespaceCollisionError } from "./account-namespace-match";
+import {
+  markManualResetCreditOperationAmbiguous,
+  openManualResetCreditOperation,
+  settleManualResetCreditOperation,
+} from "./reset-credit-operation-ledger";
+import { isCodexResetCreditOperationId } from "./reset-credit-recovery";
 import { ResourceAdmissionError, type AdmissionLease } from "../lib/admission";
 import { tryAcquireNativeMainProfileClaim } from "./native-main-admission";
 import { withNativeMainSharedClaim } from "./native-main-claim";
@@ -2168,31 +2174,107 @@ export async function handleCodexAuthAPI(
   }
 
   if (url.pathname === "/api/codex-auth/reset-credits/consume" && req.method === "POST") {
-    const body = (await req.json().catch(() => ({}))) as { accountId?: string };
+    const body = (await req.json().catch(() => ({}))) as {
+      accountId?: string;
+      operationId?: unknown;
+    };
     if (!body.accountId) return jsonResponse({ error: "accountId required" }, 400);
     const accountId = body.accountId;
+    // Optional caller-owned idempotency identity (#3375 axis D). Absent => legacy
+    // behavior: a fresh random redeem_request_id and no durable ledger row.
+    // The ledger throws TypeError on a malformed id, so the format check has to
+    // happen here rather than at the call site, or it surfaces as a 500.
+    const hasOperationId = body.operationId !== undefined;
+    if (hasOperationId && !isCodexResetCreditOperationId(body.operationId)) {
+      return jsonResponse({ error: "Invalid operationId format" }, 400);
+    }
+    const requestedOperationId = hasOperationId ? body.operationId as string : undefined;
 
     try {
       const operation = await withResetCreditAuth(getRuntimeConfig(config), accountId, async auth => {
-        const idempotencyKey = crypto.randomUUID();
-        const resp = await fetch(
-          "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume",
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${auth.accessToken}`,
-              "ChatGPT-Account-Id": auth.chatgptAccountId,
-              "Content-Type": "application/json",
+        // The ledger keys manual operations by the *physical* ChatGPT account, which is
+        // only known after the auth wrapper resolves credentials. Open here, not earlier.
+        const identity = requestedOperationId === undefined
+          ? undefined
+          : {
+            accountId,
+            chatgptAccountId: auth.chatgptAccountId,
+            operationId: requestedOperationId,
+          } as const;
+        let idempotencyKey: string;
+        if (identity) {
+          const opened = openManualResetCreditOperation(identity);
+          if (opened.kind === "terminal") {
+            // Durably settled already: replay the recorded outcome instead of
+            // trusting upstream idempotency for an irreversible spend. No
+            // `remaining` — that field is only reported from a freshly parsed
+            // available_count, and a replay has none.
+            return jsonResponse({ code: opened.code, replayed: true });
+          }
+          if (opened.kind === "identity-mismatch") {
+            return jsonResponse({
+              error: "operation_id_owned_by_another_account",
+              code: "identity_mismatch",
+            }, 409);
+          }
+          if (opened.kind !== "execute") {
+            // capacity | unavailable -> fail closed. Falling back to a random id
+            // would silently reintroduce the double-spend this identity prevents.
+            const response = jsonResponse({
+              error: opened.kind === "capacity"
+                ? "reset_credit_ledger_capacity"
+                : "reset_credit_ledger_unavailable",
+              code: opened.kind,
+            }, 503);
+            response.headers.set("Retry-After", "1");
+            return response;
+          }
+          // Canonical id, which an alias join may map to an earlier caller id.
+          idempotencyKey = opened.operationId;
+        } else {
+          idempotencyKey = crypto.randomUUID();
+        }
+        let resp: Response;
+        try {
+          resp = await fetch(
+            "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${auth.accessToken}`,
+                "ChatGPT-Account-Id": auth.chatgptAccountId,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ redeem_request_id: idempotencyKey }),
+              signal: AbortSignal.timeout(10_000),
             },
-            body: JSON.stringify({ redeem_request_id: idempotencyKey }),
-            signal: AbortSignal.timeout(10_000),
-          },
-        );
+          );
+        } catch (error) {
+          // Dispatch outcome unknown: the credit may or may not have been spent.
+          // Mark ambiguous so a replay of this same id is never treated as new.
+          if (identity) markManualResetCreditOperationAmbiguous(identity);
+          throw error;
+        }
         if (!resp.ok) {
           await resp.body?.cancel().catch(() => {});
+          if (identity) markManualResetCreditOperationAmbiguous(identity);
           return jsonResponse({ error: `Upstream error ${resp.status}` }, resp.status);
         }
         const result = safeResetCreditConsumeDto(await resp.json());
+        if (identity) {
+          // Narrow explicitly rather than casting: `safeResetCreditConsumeDto`
+          // normalizes anything unrecognized to "unknown", and settling that
+          // would come back as a mismatch and leave the row pending anyway.
+          // Settlement failure never downgrades the user-visible outcome: the
+          // spend already happened upstream, and reporting failure would invite
+          // a manual retry -- the exact double-spend this unit removes.
+          if (result.code === "reset" || result.code === "already_redeemed"
+            || result.code === "nothing_to_reset" || result.code === "no_credit") {
+            settleManualResetCreditOperation(identity, result.code);
+          } else {
+            markManualResetCreditOperationAmbiguous(identity);
+          }
+        }
         // After a successful redeem (or an idempotent already_redeemed), refresh WHAM usage
         // and return remaining only when that refresh freshly parsed available_count.
         // Do not fall back to a preserved cached resetCredits (failed/omitted refresh).

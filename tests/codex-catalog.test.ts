@@ -1556,6 +1556,90 @@ describe("combo catalog capability intersection", () => {
     )).toBeUndefined();
   });
 
+  test("resolveComboCatalogMember restores vendor image and effort capabilities for thin Claude rows", () => {
+    const providers = new Map([["anthropic", {
+      adapter: "anthropic" as const,
+      baseUrl: "https://api.anthropic.com",
+    }]]);
+    // A discovery row that only carries id + window (the live Anthropic /models shape).
+    expect(resolveComboCatalogMember(
+      { provider: "anthropic", model: "claude-opus-5" },
+      new Map([["anthropic/claude-opus-5", { provider: "anthropic", id: "claude-opus-5", contextWindow: 1_000_000 }]]),
+      providers,
+    )).toMatchObject({
+      contextWindow: 1_000_000,
+      inputModalities: ["text", "image"],
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+    });
+    // Point-release ids fall back to their family row in the vendor table.
+    expect(resolveComboCatalogMember(
+      { provider: "anthropic", model: "claude-fable-5-1" },
+      new Map([["anthropic/claude-fable-5-1", { provider: "anthropic", id: "claude-fable-5-1", contextWindow: 1_000_000 }]]),
+      providers,
+    )).toMatchObject({
+      inputModalities: ["text", "image"],
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+    });
+    // An explicit caller fallback still wins over the vendor table.
+    expect(resolveComboCatalogMember(
+      { provider: "anthropic", model: "claude-opus-5" },
+      new Map([["anthropic/claude-opus-5", { provider: "anthropic", id: "claude-opus-5", contextWindow: 1_000_000 }]]),
+      providers,
+      undefined,
+      { inputModalities: ["text"], reasoningEfforts: [] },
+    )).toMatchObject({ inputModalities: ["text"], reasoningEfforts: [] });
+    // Unknown ids keep their unknown ladder rather than inventing one.
+    expect(resolveComboCatalogMember(
+      { provider: "a", model: "ghost" },
+      new Map(),
+      new Map([["a", { adapter: "openai-chat" as const, baseUrl: "https://a.example/v1" }]]),
+    )).not.toHaveProperty("reasoningEfforts");
+  });
+
+  // Sniper for the OUTPUT-vs-INPUT mapping defect carried over from PR #3332. The test
+  // above uses toMatchObject, which only inspects the keys it names, so without this a
+  // regression that puts the OUTPUT ceiling into the INPUT slot passes green.
+  test("vendor metadata fills the OUTPUT ceiling and never shrinks the combo input window", () => {
+    const providers = new Map([["anthropic", {
+      adapter: "anthropic" as const,
+      baseUrl: "https://api.anthropic.com",
+    }]]);
+    const member = resolveComboCatalogMember(
+      { provider: "anthropic", model: "claude-opus-5" },
+      new Map([["anthropic/claude-opus-5", { provider: "anthropic", id: "claude-opus-5", contextWindow: 1_000_000 }]]),
+      providers,
+    );
+    // claude-opus-5 vendor row is { contextWindow: 1e6, maxTokens: 128_000 }.
+    // maxTokens is the OUTPUT ceiling: it must land on maxOutputTokens, never maxInputTokens.
+    expect(member?.maxOutputTokens).toBe(128_000);
+    expect(member?.maxInputTokens ?? 1_000_000).toBe(1_000_000);
+
+    // The intersection in deriveComboCatalogModel takes Math.min over member input
+    // ceilings, so a misplaced 128k would collapse a 1M combo window (and its
+    // autoCompact budget) for every other target in the group.
+    const peer = {
+      provider: "xai",
+      id: "grok-4.6",
+      contextWindow: 1_000_000,
+      maxInputTokens: 1_000_000,
+      maxOutputTokens: 128_000,
+      inputModalities: ["text", "image"],
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+    };
+    const derived = deriveComboCatalogModel("claude-grok", normalizedCombo({
+      targets: [
+        { provider: "anthropic", model: "claude-opus-5", weight: 1 },
+        { provider: "xai", model: "grok-4.6", weight: 1 },
+      ],
+    }), [member!, peer]);
+    expect(derived).toMatchObject({
+      contextWindow: 1_000_000,
+      maxInputTokens: 1_000_000,
+      maxOutputTokens: 128_000,
+      autoCompactTokenLimit: 900_000,
+    });
+  });
+
   test("still omits combos when synthesis cannot recover hard failures", async () => {
     const config: OcxConfig = {
       port: 10100,
