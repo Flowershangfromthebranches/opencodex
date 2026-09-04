@@ -79,6 +79,8 @@ afterEach(() => {
   lookupMock.mockReset();
   clearModelCache("command-code");
   clearProviderDiscoveryStatus("command-code");
+  clearModelCache("nebius");
+  clearProviderDiscoveryStatus("nebius");
   clearGatherRoutedModelsInflight();
 });
 
@@ -232,6 +234,78 @@ describe("command-code OAuth discovery under Clash/Mihomo fake-IP DNS", () => {
         { isCanonicalUrl: isRegistryModelDiscoveryUrl },
       )).rejects.toThrow(ProviderOutboundPolicyError);
     }
+  });
+
+  // CodeRabbit round 1 on PR #3489: the proof blanket-rejected every query, so a
+  // registry-owned fixed query (Nebius `path: "models"` + `query: { verbose:
+  // "true" }`) could never receive the TUN exception even though the normal
+  // discovery resolver appends that exact query to the final request URL.
+  // Registry-owned fixed queries are canonical ONLY on exact match; anything
+  // missing, changed, added, or fragmented stays rejected.
+  test("registry-owned fixed queries match exactly (real Nebius entry)", async () => {
+    clearProxyEnv();
+    const canonical = "https://api.tokenfactory.nebius.com/v1/models?verbose=true";
+    expect(isRegistryModelDiscoveryUrl("nebius", canonical)).toBe(true);
+    // The production request builder must emit exactly the proven URL.
+    const request = buildModelsRequest(
+      { adapter: "openai-chat", baseUrl: "https://api.tokenfactory.nebius.com/v1", authMode: "key" },
+      "nebius-key",
+      "nebius",
+    );
+    expect(request.url).toBe(canonical);
+
+    // Canonical query pin-connects through the TUN without proxy env.
+    lookupMock.mockResolvedValueOnce([{ address: "198.18.0.29", family: 4 }]);
+    const accepted = await providerOutboundGet(
+      "nebius",
+      { baseUrl: "https://api.tokenfactory.nebius.com/v1" },
+      canonical,
+      { headers: request.headers },
+      {
+        isCanonicalUrl: isRegistryModelDiscoveryUrl,
+        pinnedGet: (async (_url, pinned, _signal, requestOptions) => {
+          expect(pinned.address).toBe("198.18.0.29");
+          expect(new Headers(requestOptions?.headers).get("authorization")).toBe("Bearer nebius-key");
+          return new Response(JSON.stringify({ data: [{ id: "moonshotai/Kimi-K3" }] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }) as never,
+      },
+    );
+    expect(accepted.status).toBe(200);
+
+    // Missing, changed, additional, and fragmented queries stay rejected.
+    for (const url of [
+      "https://api.tokenfactory.nebius.com/v1/models",
+      "https://api.tokenfactory.nebius.com/v1/models?verbose=false",
+      "https://api.tokenfactory.nebius.com/v1/models?verbose=true&x=1",
+      "https://api.tokenfactory.nebius.com/v1/models?verbose=true#fragment",
+    ]) {
+      expect(isRegistryModelDiscoveryUrl("nebius", url)).toBe(false);
+      lookupMock.mockResolvedValueOnce([{ address: "198.18.0.29", family: 4 }]);
+      await expect(providerOutboundGet(
+        "nebius",
+        { baseUrl: "https://api.tokenfactory.nebius.com/v1" },
+        url,
+        {},
+        { isCanonicalUrl: isRegistryModelDiscoveryUrl },
+      )).rejects.toThrow(ProviderOutboundPolicyError);
+    }
+  });
+
+  test("absolute url specs with a fixed registry query require the exact query", async () => {
+    const { withRegistryDiscovery } = await import("./helpers/provider-registry-discovery");
+    await withRegistryDiscovery("together", {
+      url: "https://api.together.xyz/v1/catalog",
+      query: { capability: "chat" },
+    }, async () => {
+      const canonical = "https://api.together.xyz/v1/catalog?capability=chat";
+      expect(isRegistryModelDiscoveryUrl("together", canonical)).toBe(true);
+      expect(isRegistryModelDiscoveryUrl("together", "https://api.together.xyz/v1/catalog")).toBe(false);
+      expect(isRegistryModelDiscoveryUrl("together", "https://api.together.xyz/v1/catalog?capability=embed")).toBe(false);
+      expect(isRegistryModelDiscoveryUrl("together", "https://api.together.xyz/v1/catalog?capability=chat&x=1")).toBe(false);
+    });
   });
 
   test("renamed rows fetching an attacker URL gain nothing", async () => {

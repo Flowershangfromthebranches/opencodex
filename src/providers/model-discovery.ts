@@ -170,13 +170,19 @@ function appendDiscoveryQuery(url: URL, query: Readonly<Record<string, string>> 
  * against registry spec URLs keeps a renamed custom row fetching an
  * attacker-controlled URL from gaining the exception.
  *
- * Both spec shapes are covered: an absolute `url` spec matches its own URL,
- * and a `path` spec matches the URL it resolves to against the registry's own
- * baseUrl (so the `commandcode` key preset's `path: "models"` proves the same
+ * Both spec shapes are covered: an absolute `url` spec matches its own URL
+ * (plus the spec's fixed query), and a `path` spec matches the URL it resolves
+ * to against the registry's own baseUrl (plus the spec's fixed query) — so the
+ * `commandcode` key preset's `path: "models"` proves the same
  * `https://api.commandcode.ai/provider/v1/models` string the `command-code`
- * OAuth `url` spec proves). A caller-supplied query or fragment never matches:
- * the registry spec owns the query allow-list, so `?token=` smuggling on the
- * right origin+path is not canonical.
+ * OAuth `url` spec proves, and the `nebius` `path: "models"` plus
+ * `query: { verbose: "true" }` proves
+ * `https://api.tokenfactory.nebius.com/v1/models?verbose=true`.
+ *
+ * Registry-owned fixed query parameters are canonical only on EXACT match:
+ * a missing, changed, or additional parameter is not canonical, so `?token=`
+ * smuggling on the right origin+path stays rejected. Fragments are never
+ * canonical.
  */
 export function isRegistryModelDiscoveryUrl(providerName: string, url: string): boolean {
   const entry = getProviderRegistryEntry(providerName);
@@ -190,7 +196,7 @@ export function isRegistryModelDiscoveryUrl(providerName: string, url: string): 
   }
   if (candidate.protocol !== "https:") return false;
   if (candidate.username || candidate.password) return false;
-  if (candidate.search || candidate.hash) return false;
+  if (candidate.hash) return false;
   const sameUrl = (canonical: string): boolean => {
     let expected: URL;
     try {
@@ -199,9 +205,21 @@ export function isRegistryModelDiscoveryUrl(providerName: string, url: string): 
       return false;
     }
     return candidate.origin === expected.origin
-      && candidate.pathname.replace(/\/+$/, "") === expected.pathname.replace(/\/+$/, "");
+      && candidate.pathname.replace(/\/+$/, "") === expected.pathname.replace(/\/+$/, "")
+      && candidate.search === expected.search;
   };
-  if ("url" in spec && spec.url) return sameUrl(spec.url);
+  // One shared construction with `resolveProviderModelDiscoveryUrl` below: the
+  // absolute `url` form carries the spec's fixed query (if any), and the `path`
+  // form resolves against the REGISTRY's own baseUrl (never a configured one)
+  // before appending the spec's fixed query. The candidate's own query must
+  // equal the registry-owned query exactly — no subset/superset matching.
+  if ("url" in spec && spec.url) {
+    try {
+      return sameUrl(appendDiscoveryQuery(new URL(spec.url), spec.query).toString());
+    } catch {
+      return false;
+    }
+  }
   if ("path" in spec && spec.path) {
     try {
       const base = new URL(entry.baseUrl.endsWith("/") ? entry.baseUrl : `${entry.baseUrl}/`);
