@@ -363,7 +363,13 @@ describe("unauthenticated loopback listener", () => {
         });
         const loopbackBody = await viaLoopback.json() as { error?: { message?: string } };
         expect(viaLoopback.status).not.toBe(404);
-        expect([400, 503]).toContain(viaLoopback.status);
+        // What proves the gate is open is that the answer comes from BEHIND it, exactly as in
+        // the /v1/alpha/search case above: the relay's own rejection for a request it accepted
+        // but cannot serve without a credential (401), a 400 for the deliberately thin body, or
+        // 503 while native-main maintenance holds. Which one arrives depends on how far the
+        // relay gets before it runs out of credential, so pinning a single status makes this
+        // test assert the environment rather than the allowlist.
+        expect([400, 401, 503]).toContain(viaLoopback.status);
         expect(loopbackBody.error?.message).toBeDefined();
         expect(loopbackBody.error?.message).not.toBe("opencodex API key required");
 
