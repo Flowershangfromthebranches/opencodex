@@ -158,6 +158,64 @@ function appendDiscoveryQuery(url: URL, query: Readonly<Record<string, string>> 
   return url;
 }
 
+/**
+ * Whether a model-discovery request URL is a registry-owned fixed discovery
+ * URL — the canonical-URL proof for the transparent fake-IP (Clash/Surge/
+ * Mihomo TUN) exception in provider-outbound.
+ *
+ * The proof is on the FINAL URL, not the provider name: an OAuth/forward name
+ * matches any baseUrl by design (`providerMatchesRegistryTransport` returns
+ * true regardless of destination), while the bearer is pinned to the registry
+ * destination independently in `buildModelsRequest`. Comparing the fetched URL
+ * against registry spec URLs keeps a renamed custom row fetching an
+ * attacker-controlled URL from gaining the exception.
+ *
+ * Both spec shapes are covered: an absolute `url` spec matches its own URL,
+ * and a `path` spec matches the URL it resolves to against the registry's own
+ * baseUrl (so the `commandcode` key preset's `path: "models"` proves the same
+ * `https://api.commandcode.ai/provider/v1/models` string the `command-code`
+ * OAuth `url` spec proves). A caller-supplied query or fragment never matches:
+ * the registry spec owns the query allow-list, so `?token=` smuggling on the
+ * right origin+path is not canonical.
+ */
+export function isRegistryModelDiscoveryUrl(providerName: string, url: string): boolean {
+  const entry = getProviderRegistryEntry(providerName);
+  const spec = entry?.modelDiscovery;
+  if (!spec) return false;
+  let candidate: URL;
+  try {
+    candidate = new URL(url);
+  } catch {
+    return false;
+  }
+  if (candidate.protocol !== "https:") return false;
+  if (candidate.username || candidate.password) return false;
+  if (candidate.search || candidate.hash) return false;
+  const sameUrl = (canonical: string): boolean => {
+    let expected: URL;
+    try {
+      expected = new URL(canonical);
+    } catch {
+      return false;
+    }
+    return candidate.origin === expected.origin
+      && candidate.pathname.replace(/\/+$/, "") === expected.pathname.replace(/\/+$/, "");
+  };
+  if ("url" in spec && spec.url) return sameUrl(spec.url);
+  if ("path" in spec && spec.path) {
+    try {
+      const base = new URL(entry.baseUrl.endsWith("/") ? entry.baseUrl : `${entry.baseUrl}/`);
+      const resolved = spec.path.startsWith("/")
+        ? new URL(spec.path, base.origin)
+        : new URL(spec.path, base);
+      return sameUrl(appendDiscoveryQuery(resolved, spec.query).toString());
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 /** Apply a registry-owned URL/path/query policy to the adapter's normal discovery endpoint. */
 export function resolveProviderModelDiscoveryUrl(
   providerName: string,
