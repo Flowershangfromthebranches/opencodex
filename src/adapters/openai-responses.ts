@@ -2052,10 +2052,10 @@ export function stripOpenAiOnlyWebSearchFields(body: unknown): unknown {
 }
 
 /**
- * Muse Spark ids whose Responses gateway refuses `search_content_types` on a plain
+ * Muse Spark ids whose Responses gateway refuses provider-specific fields on a plain
  * `web_search` tool. Membership, not equality: 1.3 shipped 2026-09-02 as the
  * same-shaped successor to 1.2 on the same Zen wire, and an equality check would
- * have let a Codex-emitted `web_search` + `search_content_types` body reach the
+ * have let a Codex-emitted `web_search` body reach the
  * gateway and come back 400 for every request the moment 1.3 was selected.
  */
 const MUSE_SPARK_WEB_SEARCH_STRICT_MODELS = new Set([
@@ -2063,14 +2063,16 @@ const MUSE_SPARK_WEB_SEARCH_STRICT_MODELS = new Set([
   "muse-spark-1.2-contributor",
 ]);
 
+const MUSE_SPARK_UNSUPPORTED_WEB_SEARCH_FIELDS = [
+  "search_content_types",
+  "indexed_web_access",
+] as const;
+
 /**
- * OpenCode Zen / Go Muse Spark Responses gateway refuses `search_content_types`
- * on a plain `web_search` tool (400) but accepts it on `web_search_preview`; a
- * plain `web_search` is also accepted. Probed directly against the gateway on
- * 2026-08-26: `web_search` + `search_content_types` -> 400, `web_search_preview`
- * + `search_content_types` -> 200, plain `web_search` -> 200. Luna accepts every
- * shape, so this is Muse-only. Drop only the field the gateway refuses while
- * keeping the tool type and every other accepted option intact.
+ * OpenCode Zen / Go Muse Spark Responses gateway refuses a short list of Codex
+ * `web_search` fields. `web_search_preview` keeps its accepted shape, and Luna
+ * remains untouched. Keep the rejected names together so a newly identified field
+ * is a one-line compatibility update rather than another bespoke rewrite.
  */
 function stripMuseSparkUnsupportedWebSearchFields(body: unknown, modelId: unknown): unknown {
   if (!isPlainObject(body)) return body;
@@ -2081,8 +2083,11 @@ function stripMuseSparkUnsupportedWebSearchFields(body: unknown, modelId: unknow
     let changed = false;
     const rewritten = tools.map(tool => {
       if (!isPlainObject(tool) || tool.type !== "web_search") return tool;
-      if (!Object.hasOwn(tool, "search_content_types")) return tool;
-      const { search_content_types: _dropped, ...rest } = tool;
+      if (!MUSE_SPARK_UNSUPPORTED_WEB_SEARCH_FIELDS.some(field => Object.hasOwn(tool, field))) {
+        return tool;
+      }
+      const rest = { ...tool };
+      for (const field of MUSE_SPARK_UNSUPPORTED_WEB_SEARCH_FIELDS) delete rest[field];
       changed = true;
       return rest;
     });
