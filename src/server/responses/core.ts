@@ -5152,6 +5152,36 @@ async function handleResponsesInner(
     }
   }
 
+  // Tool results are PAIRED by call_id. parseRequest writes it into OcxToolResultMessage.toolCallId
+  // (parser.ts:738/752) without validating it, because inputItemSchema's permissive catch-all
+  // (schema.ts:106) accepts a tool item whose strict schema failed only for a missing call_id. A
+  // translating adapter then consumes `toolCallId: string` holding undefined: kiro-wire.ts:32
+  // TypeErrors, ollama-native.ts:334 throws, and anthropic.ts:775 sends
+  // "[tool_result without adjacent tool_use: undefined]" upstream (issue #3259).
+  //
+  // This CANNOT move into the schema. parseRequest (:2812) runs before the passthrough branch
+  // (:3719), so a parse-time rejection would also kill forward/key passthrough and routed
+  // compaction — paths that never read context.messages, build from _rawBody, and already
+  // degrade an unpaired output to "[tool output for unknown call]" on their own.
+  //
+  // Keyed on the adapter, not on position: routedCompaction skips the passthrough branch above
+  // yet still builds from _rawBody (see the :3703 comment).
+  if (!("passthrough" in adapter && adapter.passthrough)) {
+    const unpaired = parsed.context.messages.find(
+      message => message.role === "toolResult"
+        && (typeof (message as { toolCallId?: unknown }).toolCallId !== "string"
+          || (message as { toolCallId: string }).toolCallId.length === 0),
+    );
+    if (unpaired) {
+      // Never interpolate the tool output: this message reaches the client and the logs.
+      return formatErrorResponse(
+        400,
+        "invalid_request_error",
+        "tool result requires a non-empty string call_id",
+      );
+    }
+  }
+
   // Image / web-search sidecars: plan once, then dispatch with runTurn-aware priority.
   // Routed-compaction turns must NOT hit the image bridge: compaction clears tools/_webSearch but
   // leaves _imageGeneration, so planImageBridge would activate and return a normal Responses

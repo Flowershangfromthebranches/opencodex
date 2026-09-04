@@ -795,3 +795,59 @@ describe("codex-rs compat surface (260707)", () => {
     expect(call?.namespace).toBeUndefined();
   });
 });
+
+describe("unpaired tool result boundary (#3259)", () => {
+  // The real delegation-history shape that produced the defect: a subagent bootstrap turn
+  // whose FIRST tool result has no originating call in the same request.
+  const delegationHistory = (toolItem: Record<string, unknown>) => ({
+    model: "test-model",
+    input: [
+      { type: "message", role: "developer", content: [{ type: "input_text", text: "You are a subagent." }] },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "do the task" }] },
+      toolItem,
+    ],
+  });
+
+  const toolResultOf = (item: Record<string, unknown>) =>
+    parseRequest(delegationHistory(item)).context.messages.find(m => m.role === "toolResult") as
+      | { toolCallId?: unknown; content?: unknown }
+      | undefined;
+
+  test("a function_call_output with no call_id still parses, and yields an unusable toolCallId", () => {
+    // This is the state src/server/responses/core.ts guards on. `toolCallId` is declared
+    // `string` (src/types/request.ts:168) but is undefined here — the schema catch-all
+    // (schema.ts:106) accepted the item and parser.ts:738 assigned it unchecked.
+    const result = toolResultOf({ type: "function_call_output", output: "bootstrap result" });
+    expect(result).toBeDefined();
+    expect(typeof result?.toolCallId).not.toBe("string");
+  });
+
+  test("an empty-string call_id is equally unusable", () => {
+    // findToolById (parser.ts:328) matches by identity, so "" can never pair. The guard
+    // must treat it exactly like undefined.
+    const result = toolResultOf({ type: "function_call_output", call_id: "", output: "x" });
+    expect(result?.toolCallId).toBe("");
+  });
+
+  test("a well-formed tool result on the same history pairs normally", () => {
+    const result = toolResultOf({ type: "function_call_output", call_id: "call_1", output: "ok" });
+    expect(result).toMatchObject({ toolCallId: "call_1", content: "ok" });
+  });
+
+  test("custom_tool_call_output has the identical hole (parser.ts:752)", () => {
+    const result = toolResultOf({ type: "custom_tool_call_output", output: "x" });
+    expect(result).toBeDefined();
+    expect(typeof result?.toolCallId).not.toBe("string");
+  });
+
+  test("tolerances unrelated to call_id stay intact", () => {
+    // parser.ts:611-621 deliberately tolerates non-JSON arguments; nothing here may 400 it.
+    expect(() => parseRequest(delegationHistory({
+      type: "function_call", call_id: "c1", name: "shell", arguments: "not json",
+    }))).not.toThrow();
+    // Unknown future item types must keep flowing through the catch-all untouched.
+    expect(() => parseRequest(delegationHistory({
+      type: "brand_new_item_2027", foo: 1,
+    }))).not.toThrow();
+  });
+});
