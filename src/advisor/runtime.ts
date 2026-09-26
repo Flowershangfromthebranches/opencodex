@@ -115,10 +115,21 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
       );
       logConsultation(reason, result);
     }
-    if (reason === "preflight" || result.ok) {
+    // Only a SUCCESSFUL consultation counts as "this task was advised". A failed preflight is
+    // recorded under a separate ledger key so it is not retried on every turn of the task
+    // (retry-storm guard), but the entry expires with the ledger TTL and the task can get its
+    // guaranteed consultation once the advisor recovers. Failed outcomes are injected with the
+    // `<opencodex_advisor_unavailable>` wrapper, which historyHasAdvisorResult deliberately
+    // does NOT match — a failure is not advice and must not permanently suppress preflight.
+    if (result.ok) {
       preflightLedger.mark(
         conversationPreflightKey(firstUserText(parsed), deps.workerModelId),
         reason,
+      );
+    } else if (reason === "preflight") {
+      preflightLedger.mark(
+        `${conversationPreflightKey(firstUserText(parsed), deps.workerModelId)}:failed`,
+        "manual",
       );
     }
     if (!result.ok) {
@@ -142,7 +153,10 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
     if (historyHasAdvisorResult(parsed)) return false;
     if (!hasOrientationEvidence(parsed)) return false;
     const key = conversationPreflightKey(firstUserText(parsed), deps.workerModelId);
-    if (preflightLedger.has(key)) return false;
+    // A successful consultation suppresses retries for the ledger TTL; a failed one suppresses
+    // them under its own key, which expires on the same clock so the task retries once the
+    // advisor recovers instead of being locked out for the conversation's lifetime.
+    if (preflightLedger.has(key) || preflightLedger.has(`${key}:failed`)) return false;
     preflightUsed = true;
     const outcome = await runConsultation(parsed, "preflight", undefined);
     parsed.context.messages = [

@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { Notice } from "../ui";
 import { useDataSurface } from "../data-surface";
-import { useT } from "../i18n/shared";
+import { useT, type TKey } from "../i18n/shared";
 
 /**
  * Advisor sidecar configuration (PR1: minimal but real). Reads and writes the RESOLVED
@@ -28,6 +28,9 @@ const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
 
 function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
   const t = useT();
+  // The saved baseline the dirty check compares against. dto.settings is the boot state; it is
+  // advanced after every successful PUT so the Save button re-disables once nothing is pending.
+  const [saved, setSaved] = useState<AdvisorSettings>(dto.settings);
   const [draft, setDraft] = useState<AdvisorSettings>(dto.settings);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -36,11 +39,20 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
   const save = useCallback(async () => {
     setSaving(true);
     setSaveError("");
+    const submitted = draft;
     try {
       const response = await fetch(`${apiBase}/api/advisor/settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draft),
+        // Strict patch: send ONLY the accepted fields. draft may still carry GET-only
+        // properties (sources) that the PUT parser must reject.
+        body: JSON.stringify({
+          enabled: submitted.enabled,
+          model: submitted.model,
+          effort: submitted.effort,
+          policy: submitted.policy,
+          timeoutMs: submitted.timeoutMs,
+        }),
       });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
@@ -48,7 +60,10 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
         return;
       }
       const body = (await response.json()) as AdvisorDto;
-      setDraft(body.settings);
+      setSaved(body.settings);
+      // Edits made while the PUT was in flight stay in the draft: only overwrite the draft
+      // when the user has not touched it since this save started.
+      setDraft(current => (JSON.stringify(current) === JSON.stringify(submitted) ? body.settings : current));
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 2500);
     } catch (error) {
@@ -58,7 +73,7 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
     }
   }, [apiBase, draft]);
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(dto.settings);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   const modelMissing = draft.enabled && draft.model.trim() === "";
   const rowStyle = { display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.6rem 0" } as const;
   const labelStyle = { minWidth: "11rem" } as const;
@@ -72,6 +87,7 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             <input
               type="checkbox"
               checked={draft.enabled}
+              disabled={saving}
               aria-label={t("advisor.enabled")}
               onChange={event => setDraft({ ...draft, enabled: event.target.checked })}
             />
@@ -85,6 +101,7 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             id="advisor-model"
             type="text"
             value={draft.model}
+            disabled={saving}
             placeholder={t("advisor.modelPlaceholder")}
             onChange={event => setDraft({ ...draft, model: event.target.value })}
           />
@@ -94,9 +111,12 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
           <select
             id="advisor-effort"
             value={draft.effort}
+            disabled={saving}
             onChange={event => setDraft({ ...draft, effort: event.target.value })}
           >
-            {EFFORTS.map(effort => <option key={effort} value={effort}>{effort}</option>)}
+            {EFFORTS.map(effort => (
+              <option key={effort} value={effort}>{t(`models.reasoningEffort.${effort}` as TKey)}</option>
+            ))}
           </select>
         </div>
         <div style={rowStyle}>
@@ -104,6 +124,7 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
           <select
             id="advisor-policy"
             value={draft.policy}
+            disabled={saving}
             onChange={event => setDraft({ ...draft, policy: event.target.value === "preflight" ? "preflight" : "manual" })}
           >
             <option value="manual">{t("advisor.policy.manual")}</option>
@@ -118,6 +139,7 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             min={1000}
             max={600000}
             value={draft.timeoutMs}
+            disabled={saving}
             onChange={event => setDraft({ ...draft, timeoutMs: Number(event.target.value) })}
           />
         </div>
@@ -127,7 +149,7 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
       {savedFlash && <Notice tone="ok">{t("advisor.saved")}</Notice>}
       <div style={{ marginTop: "0.75rem" }}>
         <button type="button" className="btn" disabled={!dirty || saving} onClick={() => void save()}>
-          {t("advisor.save")}
+          {saving ? t("common.loading") : t("advisor.save")}
         </button>
       </div>
     </>

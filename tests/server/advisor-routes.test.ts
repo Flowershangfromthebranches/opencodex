@@ -142,4 +142,16 @@ describe("parseAdvisorSettingsPatch (strict validation)", () => {
     expect(parseAdvisorSettingsPatch("x").ok).toBe(false);
     expect(parseAdvisorSettingsPatch([]).ok).toBe(false);
   });
+
+  test("reset combined with other fields is refused", async () => {
+    const config = baseConfig();
+    (config as { advisor?: unknown }).advisor = { enabled: true };
+    const { ctx, saved } = makeCtx(config, "PUT", { reset: true, enabled: false });
+    const response = await handleAdvisorRoutes(ctx);
+    expect(response!.status).toBe(400);
+    const body = await response!.json() as { error: { code: string } };
+    expect(body.error.code).toBe("reset_with_fields");
+    expect(saved).toHaveLength(0);
+    expect((config as { advisor?: unknown }).advisor).toEqual({ enabled: true });
+  });
 });

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { createAdvisorRuntimePlan } from "../../src/advisor/runtime";
+import { formatAdvisorUnavailable } from "../../src/advisor/context";
 import type { OcxConfig, OcxParsedRequest } from "../../src/types";
 import { parseRequest } from "../../src/responses/parser";
 
@@ -167,7 +168,7 @@ describe("createAdvisorRuntimePlan — preflight policy", () => {
     expect(typeof parsed._advisorGuard).toBe("function");
   });
 
-  test("a failed preflight consultation injects the bounded unavailable context once", async () => {
+  test("a failed preflight consultation injects the bounded unavailable context once, without locking the task forever", async () => {
     globalThis.fetch = (async () => new Response("down", { status: 503 })) as typeof fetch;
     const warns: string[] = [];
     const warnSpy = spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
@@ -182,11 +183,23 @@ describe("createAdvisorRuntimePlan — preflight policy", () => {
       const parsed = orientedParsed();
       expect(await plan.preflightInject(parsed)).toBe(true);
       const last = parsed.context.messages[parsed.context.messages.length - 1]!;
+      // The failure wrapper is NOT the advice marker: a failure must never read as
+      // "already advised" to historyHasAdvisorResult.
       expect(String(last.content)).toContain("currently unavailable");
+      expect(String(last.content)).not.toContain("<opencodex_advisor>");
+      expect(String(last.content)).toContain("<opencodex_advisor_unavailable>");
       expect(warns.some(line => line.includes("[advisor] consultation failed"))).toBe(true);
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  test("a failed preflight does not permanently lock the conversation out of future advice", () => {
+    // Failure-path guard: the unavailable wrapper text must not match the advice marker
+    // historyHasAdvisorResult scans for.
+    const unavailable = formatAdvisorUnavailable("preflight", "down");
+    expect(unavailable).not.toContain("<opencodex_advisor>");
+    expect(unavailable).toContain("<opencodex_advisor_unavailable>");
   });
 });
 

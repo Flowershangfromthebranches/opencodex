@@ -242,7 +242,7 @@ describe("advisor responses wiring (end-to-end)", () => {
     );
     // Disabled advisor: no plan, no consultation — even for an oriented conversation.
     const disabled = { ...config, advisor: { ...config.advisor, enabled: false } } as OcxConfig;
-    loopbackInterceptor(disabled, chatRequests);
+    loopbackInterceptor(disabled, { chatRequests });
 
     const response = await handleResponses(workerRequest([
       { role: "user", content: "Fix the failing auth tests" },
