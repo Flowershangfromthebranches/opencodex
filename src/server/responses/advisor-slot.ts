@@ -242,32 +242,42 @@ export function createAdvisorGuard(plan: AdvisorPlan): NonNullable<OcxParsedRequ
 
       for (const call of advisorCalls) {
         if (consultations >= maxConsultations) {
+          // The _unavailable marker is deliberately distinct from the advice wrapper (see the
+          // catch below): a limit result is not advice and must not suppress preflight.
           messages.push(advisorToolResult(call, {
             ok: false,
             isError: true,
             content: [
-              "<opencodex_advisor>",
+              "<opencodex_advisor_unavailable>",
               "Advisor consultation limit reached for this request; no further advice is available.",
               "Continue the task with your own judgment.",
-              "</opencodex_advisor>",
+              "</opencodex_advisor_unavailable>",
             ].join("\n"),
           }, timestamp));
           continue;
         }
         consultations += 1;
         const args = parseAdvisorArgs(call.argsBuf);
+        // Later calls in the same leg must see what came before them: the rebuilt worker turn
+        // and every earlier advisor result in this leg's accumulated messages.
+        const consultParsed: OcxParsedRequest = {
+          ...parsed,
+          context: { ...parsed.context, messages },
+        };
         let outcome: AdvisorConsultOutcome;
         try {
-          outcome = await plan.consult(parsed, "manual", args.question);
+          outcome = await plan.consult(consultParsed, "manual", args.question);
         } catch (error) {
           outcome = {
             ok: false,
             isError: true,
+            // The _unavailable marker is deliberately distinct from the advice wrapper:
+            // historyHasAdvisorResult must not treat a failure as "already advised".
             content: [
-              "<opencodex_advisor>",
+              "<opencodex_advisor_unavailable>",
               `The advisor consultation failed: ${error instanceof Error ? error.message : String(error)}`,
               "Continue the task with your own judgment. This is not advice.",
-              "</opencodex_advisor>",
+              "</opencodex_advisor_unavailable>",
             ].join("\n"),
           };
         }

@@ -51,6 +51,7 @@ export function parseAdvisorSettingsPatch(body: unknown): ParsedPatch {
   const patch: AdvisorPatch = {};
   if (body.reset !== undefined) {
     if (body.reset !== true) return { ok: false, code: "invalid_reset", message: "reset must be true when present" };
+    if (Object.keys(body).length > 1) return { ok: false, code: "reset_with_fields", message: "reset must be the only field when present" };
     patch.reset = true;
     return { ok: true, patch };
   }
@@ -134,11 +135,13 @@ async function putAdvisorSettings(ctx: ManagementContext): Promise<Response> {
     : parseAdvisorSettingsPatch(body);
   if (!parsed.ok) return jsonResponse({ error: { code: parsed.code, message: parsed.message } }, 400, req, config);
 
-  const snapshot = isRec(config.advisor) ? { ...config.advisor } : undefined;
-  applyPatchInMemory(config, parsed.patch);
+  // Resolve the writer BEFORE touching the live config: a resolution failure must leave the
+  // in-memory config exactly as it was, not rely on the snapshot restore below.
   // `deps.` first: route tests with an in-memory fixture must never write the real config.
   const persist = ctx.deps.saveConfigPreservingClaudeCode
     ?? (await import("../../config")).saveConfigPreservingClaudeCode;
+  const snapshot = isRec(config.advisor) ? { ...config.advisor } : undefined;
+  applyPatchInMemory(config, parsed.patch);
   try {
     persist(config);
   } catch (error) {

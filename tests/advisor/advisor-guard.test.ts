@@ -210,4 +210,38 @@ describe("createAdvisorGuard — manual advisor() interception", () => {
     expect(assistant && assistant.content.some(p => p.type === "thinking" && p.thinking === "weighing options")).toBe(true);
     expect(assistant && assistant.content.some(p => p.type === "text" && p.text === "Consulting.")).toBe(true);
   });
+
+  test("the second advisor call in one leg sees the first call's advice", async () => {
+    const seen: string[] = [];
+    const { requests, continuation, queues } = makeContinuation();
+    queues.push([{ type: "done" }, { type: "text_delta", text: "both advised" }, { type: "done" }]);
+    const plan: AdvisorPlan = {
+      consult: async (parsed, _reason, question) => {
+        // Record what the advisor can see at consult time.
+        seen.push(JSON.stringify(parsed.context.messages));
+        return ADVICE;
+      },
+    };
+    const guard = createAdvisorGuard(plan);
+
+    await collect(guard({
+      parsed: baseParsed(),
+      firstEvents: (async function* () {
+        yield* advisorCallEvents("a1", { question: "first?" });
+        yield* advisorCallEvents("a2", { question: "second?" });
+        yield { type: "done" };
+      })(),
+      continuation,
+    }));
+
+    expect(seen).toHaveLength(2);
+    const first = JSON.parse(seen[0]!);
+    const second = JSON.parse(seen[1]!);
+    // Both calls live in ONE assistant message (two toolCall parts); the second consult
+    // additionally sees the first call's advice toolResult.
+    expect(second.length).toBe(first.length + 1);
+    const secondStr = seen[1]!;
+    expect(secondStr).toContain("a1");
+    expect(secondStr).toContain("advice body");
+  });
 });

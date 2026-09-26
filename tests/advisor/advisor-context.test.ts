@@ -117,9 +117,12 @@ describe("advice formatting", () => {
     expect(formatted).toContain("Do X first.");
   });
 
-  test("unavailable context is non-misleading and bounded", () => {
+  test("unavailable context is non-misleading, bounded, and NOT the advice marker", () => {
     const formatted = formatAdvisorUnavailable("preflight", "advisor HTTP 502: upstream exploded");
-    expect(formatted).toContain("<opencodex_advisor>");
+    // historyHasAdvisorResult scans for <opencodex_advisor>; a failure must never match it,
+    // otherwise one failed consultation would permanently suppress future preflight retries.
+    expect(formatted).not.toContain("<opencodex_advisor>");
+    expect(formatted).toContain("<opencodex_advisor_unavailable>");
     expect(formatted).toContain("currently unavailable");
     expect(formatted).toContain("This is not advice.");
   });

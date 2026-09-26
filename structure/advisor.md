@@ -72,11 +72,14 @@ is fail-open for correctness.
 ## Policies
 
 - `manual` (default): only an explicit worker `advisor()` call consults.
-- `preflight`: OpenCodex additionally guarantees at least one consultation per task. The
-  documented approximation for "before the first substantive mutation": the guaranteed
-  consultation fires on the first worker reasoning turn that arrives WITH tool evidence of
-  orientation since the latest user message, unless the conversation already carries advisor
-  advice. No semantic stagnation detection exists in PR1.
+- `preflight`: OpenCodex additionally ATTEMPTS one consultation per task automatically. The
+  documented approximation for "before the first substantive mutation": the attempt fires on the
+  first worker reasoning turn that arrives with orientation evidence — an assistant tool call OR
+  a tool result — since the latest user message, unless the conversation already carries advisor
+  advice. A failed attempt is recorded under its own ledger key (no retry storm within the TTL)
+  and injected with the `<opencodex_advisor_unavailable>` wrapper, which historyHasAdvisorResult
+  deliberately does not match: a failure is not advice and does not permanently suppress the
+  policy. No semantic stagnation detection exists in PR1.
 
 ## Observability
 
