@@ -42,11 +42,14 @@ Manage it with the dashboard **Advisor** page or
 
 - **`manual`** — only an explicit worker call to the synthetic `advisor` tool consults. The call
   is intercepted by the proxy, never shown to the client, and never executed as a local tool.
-- **`preflight`** — OpenCodex additionally guarantees at least one consultation per task. After
-  the worker has produced its first orientation evidence (at least one tool result since the
-  latest user message), the proxy consults the advisor and injects the advice before the worker's
-  next turn — even if the worker never calls the tool. The trigger is a deterministic,
-  documented approximation, not a semantic "model is stuck" detector.
+- **`preflight`** — OpenCodex additionally attempts one consultation per task automatically.
+  When the worker has produced its first orientation evidence (an assistant tool call OR a tool
+  result after the latest user message), the proxy consults the advisor and injects the advice
+  before the worker's next turn — even if the worker never calls the tool. The trigger is a
+  deterministic, documented approximation, not a semantic "model is stuck" detector. An
+  attempted consultation that FAILS is not silently treated as advice: the task retries after
+  the failure's ledger entry expires, so a temporary advisor outage does not permanently
+  silence the policy.
 
 ## What the advisor sees
 
@@ -79,4 +82,4 @@ never switches the session's main model.
 - No adaptive trigger: no stuck detection, repeated-failure analysis, escalation tiers, multiple
   advisors, or advisor voting. `manual` and `preflight` are the only policies.
 - The preflight dedup ledger is process-local; after a proxy restart, a task in progress may
-  receive one more preflight consultation.
+  receive one more preflight attempt.

@@ -137,15 +137,22 @@ export function formatAdvisorAdvice(input: { advisorModel: string; reason: strin
   ].join("\n");
 }
 
-/** Non-misleading, bounded context handed to the worker when the advisor itself failed. */
+/**
+ * Non-misleading, bounded context handed to the worker when the advisor itself failed.
+ *
+ * Deliberately NOT wrapped in `<opencodex_advisor>`: that wrapper is the single marker
+ * `historyHasAdvisorResult` treats as "this task already has advice". A failure is not advice —
+ * wrapping it there would permanently suppress preflight retries for the whole conversation
+ * even after the failure ledger entry expires.
+ */
 export function formatAdvisorUnavailable(reason: string, error: string): string {
   return [
-    "<opencodex_advisor>",
+    "<opencodex_advisor_unavailable>",
     "The advisor was consulted but is currently unavailable, so this consultation produced no advice.",
     `consultation reason: ${reason}`,
     `failure: ${error}`,
     "",
     "Continue the task with your own judgment. This is not advice.",
-    "</opencodex_advisor>",
+    "</opencodex_advisor_unavailable>",
   ].join("\n");
 }

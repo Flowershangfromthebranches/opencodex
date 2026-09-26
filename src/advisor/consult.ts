@@ -137,11 +137,26 @@ export async function consultAdvisor(
     });
     const detachBodyGuard = cancelBodyOnAbort(res.body, linkedSignal.signal);
     try {
-      const raw = await res.text();
-      const durationMs = Date.now() - t0;
-      if (raw.length > MAX_ADVISOR_RESPONSE_BYTES) {
-        return { ok: false, advice: "", advisorModel: input.advisorModel, error: "advisor response exceeded byte bound", durationMs };
+      // Bounded read: count bytes per chunk and cancel the reader the moment the bound is
+      // exceeded, instead of materializing the full body before the length check.
+      let raw = "";
+      let totalBytes = 0;
+      const reader = res.body?.getReader();
+      if (reader) {
+        const decoder = new TextDecoder();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          totalBytes += value.byteLength;
+          if (totalBytes > MAX_ADVISOR_RESPONSE_BYTES) {
+            try { await reader.cancel(); } catch { /* body already closing */ }
+            return { ok: false, advice: "", advisorModel: input.advisorModel, error: "advisor response exceeded byte bound", durationMs: Date.now() - t0 };
+          }
+          raw += decoder.decode(value, { stream: true });
+        }
+        raw += decoder.decode();
       }
+      const durationMs = Date.now() - t0;
       if (!res.ok) {
         return {
           ok: false, advice: "", advisorModel: input.advisorModel,
