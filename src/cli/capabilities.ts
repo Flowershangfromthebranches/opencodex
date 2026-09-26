@@ -19,6 +19,22 @@ export const CAPABILITIES: readonly Capability[] = [
   ...PROVIDER_MODEL_CAPABILITIES,
   ...ACCOUNT_CAPABILITIES,
   ...AGENT_ROUTING_CAPABILITIES,
+  {
+    command: ["advisor"],
+    summary: "Inspect and configure the advisor sidecar (expert consultation for routed workers).",
+    routes: [
+      { method: "GET", path: "/api/advisor/settings" },
+      { method: "PUT", path: "/api/advisor/settings" },
+    ],
+    flags: [{ name: "--json", value: "boolean", summary: "Emit advisor settings as JSON." }],
+    mutates: true,
+    json: "payload",
+    details: [
+      "`status` (the default) reads the resolved settings; `on`/`off` toggle the sidecar; `set` updates model, effort, policy, or timeout.",
+      "The advisor model may be any routable model string: a bare native model, an explicit `provider/model`, or an account-qualified native model.",
+      "`policy: preflight` makes OpenCodex guarantee at least one automatic consultation per task; `policy: manual` consults only when the worker calls the synthetic `advisor` tool.",
+    ],
+  },
   ...INTEGRATION_CAPABILITIES,
   ...OBSERVE_SYSTEM_CAPABILITIES,
   ...ACCESS_REMOTE_CAPABILITIES,

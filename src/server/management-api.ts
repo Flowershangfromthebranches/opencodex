@@ -74,6 +74,7 @@ import { handleDecisionRoutes } from "./management/decision-routes";
 import { handleSystemRoutes } from "./management/system-routes";
 import { handleSidebarRoutes } from "./management/sidebar-routes";
 import { handleUsageTimelineRoutes } from "./management/usage-timeline-routes";
+import { handleAdvisorRoutes } from "./management/advisor-routes";
 import { handleCompanionRoutes } from "./management/companion-routes";
 import { handleCodexPromptRoutes } from "./management/codex-prompt-routes";
 import { handleIntegrationRoutes } from "./management/integration-routes";
@@ -366,6 +367,7 @@ export async function handleManagementAPI(
     ??     (await handleSystemRoutes(ctx))
     ??     (await handleLabRoutesOnDemand(ctx))
       ?? (await handleUsageTimelineRoutes(ctx))
+      ?? (await handleAdvisorRoutes(ctx))
       ?? (await handleCompanionRoutes(ctx))
       ?? (await handleSidebarRoutes(ctx));
   } catch (error) {

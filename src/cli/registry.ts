@@ -378,6 +378,17 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
     summary: "Alias of ocx models.",
   },
   {
+    name: "advisor",
+    usage: "ocx advisor <status|on|off|set> ...",
+    summary: "Inspect and configure the advisor sidecar (expert consultation for routed workers).",
+    details: [
+      "ocx advisor and ocx advisor status read the resolved settings; use --json for machine-readable output.",
+      "ocx advisor on / ocx advisor off toggle the sidecar.",
+      "ocx advisor set updates --model, --effort, --policy and --timeout-ms; the model may be any routable model string (bare native, provider/model, or account-qualified).",
+      "policy manual consults only when the worker calls the synthetic advisor tool; policy preflight also guarantees one automatic consultation per task.",
+    ],
+  },
+  {
     name: "companion",
     usage: "ocx companion <show|set|reset|usage|timeline> ...",
     summary: "Inspect companion settings, filtered usage and timeline, or change preferences.",
