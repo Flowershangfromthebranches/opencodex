@@ -146,7 +146,9 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
       // settles it too: a task the worker already had advised does not need a preflight attempt.
       if (reason === "manual") {
         const key = taskKey(parsed);
-        if (key) ledger.complete(key, now());
+        // A manual consultation owns no preflight claim; this records the FACT that the task was
+        // advised, which is true whichever consultation produced the advice.
+        if (key) ledger.markAdvised(key, now());
       }
       return {
         ok: true,
@@ -180,9 +182,11 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
     // suppression it gets — fail-open, so two independent identity-less conversations can never
     // suppress each other through a shared guess.
     const key = taskKey(parsed);
+    let claimToken: string | undefined;
     if (key) {
       const claim = ledger.claim(key, now());
-      if (claim !== "claimed") return false;
+      if (claim.state !== "claimed") return false;
+      claimToken = claim.token;
     }
     preflightUsed = true;
 
@@ -190,7 +194,7 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
     try {
       outcome = await runConsultation(parsed, "preflight", undefined);
     } catch (error) {
-      if (key) ledger.fail(key, now());
+      if (key && claimToken) ledger.fail(key, claimToken, now());
       console.warn(`[advisor] consultation failed trigger=preflight worker=${deps.workerModelId} error=plan_threw`);
       parsed.context.messages = [
         ...parsed.context.messages,
@@ -205,14 +209,14 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
     }
 
     if (outcome.ok) {
-      if (key) ledger.complete(key, now());
+      if (key && claimToken) ledger.complete(key, claimToken, now());
     } else if (outcome.cancelled) {
       // Client cancellation is not a provider failure: no cooldown, the task may retry later.
-      if (key) ledger.release(key, now());
+      if (key && claimToken) ledger.release(key, claimToken, now());
       // Nothing to inject — the caller is gone or aborting; do not add noise to a live turn.
       return false;
     } else {
-      if (key) ledger.fail(key, now());
+      if (key && claimToken) ledger.fail(key, claimToken, now());
     }
 
     parsed.context.messages = [
