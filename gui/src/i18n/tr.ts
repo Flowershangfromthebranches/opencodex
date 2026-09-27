@@ -117,6 +117,7 @@ export const tr: Record<TKey, string> = {
   "advisor.policy": "Politika",
   "advisor.policy.manual": "Manuel — yalnızca worker istediğinde",
   "advisor.policy.preflight": "Preflight — yönelim kanıtı oluşunca otomatik danışma denemesi",
+  "advisor.policy.adaptive": "Uyarlanabilir — yinelenen hatalar veya doğrulanmamış değişikliklerde danış",
   "advisor.timeout": "Zaman aşımı (ms)",
   "advisor.save": "Danışman ayarlarını kaydet",
   "advisor.saved": "Danışman ayarları kaydedildi.",

@@ -67,7 +67,7 @@ describe("resolveAdvisorSettings", () => {
     expect(isValidAdvisorEffort("max")).toBe(true);
     expect(isValidAdvisorEffort("minimal")).toBe(false);
     expect(isValidAdvisorPolicy("preflight")).toBe(true);
-    expect(isValidAdvisorPolicy("adaptive")).toBe(false);
+    expect(isValidAdvisorPolicy("adaptive")).toBe(true);
   });
 
   test("timeoutMs is bounded to a sane window", () => {

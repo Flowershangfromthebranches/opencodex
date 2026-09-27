@@ -117,6 +117,7 @@ export const ja: Record<TKey, string> = {
   "advisor.policy": "ポリシー",
   "advisor.policy.manual": "手動 — Worker が要求したときのみ",
   "advisor.policy.preflight": "Preflight — 方向性の証拠が出たら自動相談を試みる",
+  "advisor.policy.adaptive": "Adaptive — 検証失敗や未検証の変更が続いたら相談",
   "advisor.timeout": "タイムアウト (ms)",
   "advisor.save": "アドバイザー設定を保存",
   "advisor.saved": "アドバイザー設定を保存しました。",

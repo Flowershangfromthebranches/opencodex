@@ -69,8 +69,8 @@ The consultation payload is built from the parsed conversation the worker model 
 allowed to see: the user task, the conversation, tool calls and their results, the worker's tool
 catalog, and both model identities. The advisor returns prose advice, re-injected as identifiable
 `<opencodex_advisor>`-wrapped content with no system authority. Chain-of-thought is never
-transferred, encrypted provider content is never decrypted, and no credentials or environment
-secrets ride the payload.
+transferred and encrypted provider content is never decrypted; the proxy injects none of its own
+credentials, but task content itself is forwarded as-is (see the cross-provider notice above).
 
 ## Cost and accounting
 
@@ -82,9 +82,10 @@ provable from the logs.
 ## Failure behavior
 
 The advisor fails open: if the expert model is unavailable, misconfigured, or times out, the
-worker receives a short, non-misleading "advisor unavailable" context (or nothing, for preflight)
-and continues the task. An advisor failure never fails the coding request, and a consultation
-never switches the session's main model.
+worker receives a short, non-misleading "advisor unavailable" notice (a `<opencodex_advisor_unavailable>`
+message for preflight, an error tool result for manual) and continues the task. Only a
+CANCELLED consultation injects nothing, because the caller is gone. An advisor failure never
+fails the coding request, and a consultation never switches the session's main model.
 
 ## PR1 limitations
 
