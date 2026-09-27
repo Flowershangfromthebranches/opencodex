@@ -28,8 +28,8 @@ code on the request path. The guard is applied by `adapter-delivery.ts` through 
   assistant-toolCall/toolResult message pair, and worker re-dispatch through the same
   continuation machinery the terminal guard uses (`adapter-continuation.ts`). Consultations are
   bounded per request; past the bound the worker receives an explicit limit-reached result.
-- Run-turn adapters: preflight support only — the guaranteed pre-dispatch consultation applies,
-  but the synthetic tool is never injected because the run-turn loop cannot intercept it.
+- Run-turn adapters: preflight support only — the automatic pre-dispatch consultation attempt
+  applies, but the synthetic tool is never injected because the run-turn loop cannot intercept it.
 - Native OpenAI passthrough: no advisor support in PR1. The request path is byte-identical to a
   proxy without the advisor; the limitation is documented, not silently degraded.
 - Turns claimed by the web-search or image/video sidecar loops keep the advisor tool un-injected;
