@@ -1,6 +1,6 @@
 ---
 title: Conseiller
-description: Le sidecar de consultation experte d'OpenCodex — un modèle expert configuré conseille les workers routés, avec les politiques manual et preflight.
+description: Le sidecar de consultation experte d'OpenCodex — un modèle expert configuré conseille les workers routés, avec les politiques manual, preflight et adaptive.
 ---
 
 Le conseiller est un modèle expert indépendant qui examine la tâche du worker et renvoie des
@@ -32,11 +32,11 @@ sidecar côté proxy invisible du client — même un worker qui ne spawn jamais
 | `enabled?` | `boolean` | `false` | Interrupteur principal. Désactivé : aucun comportement conseiller sur le chemin de requête. |
 | `model?` | `string` | — | Le modèle expert. Toute chaîne de modèle acceptée par le routeur : modèle natif seul (`gpt-6-astra`), `provider/model` explicite (`anthropic/claude-sonnet-4-6`, `xai/grok-...`) ou modèle natif qualifié par compte. Inter-fournisseurs entièrement pris en charge. |
 | `effort?` | `string` | `"max"` | Intensité de raisonnement de l'appel conseiller (`low`–`ultra`). |
-| `policy?` | `"manual" \| "preflight"` | `"manual"` | Quand consulter le conseiller. |
+| `policy?` | `"manual" \| "preflight" \| "adaptive"` | `"manual"` | Quand consulter le conseiller. |
 | `timeoutMs?` | `number` | `120000` | Délai de la consultation en boucle locale. |
 
 Gérez-le via la page **Advisor** du tableau de bord ou
-`ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight>`.
+`ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight|adaptive>`.
 
 ## Politiques
 
@@ -90,7 +90,21 @@ codage, et une consultation ne change jamais le modèle principal de la session.
 - Les tours natifs OpenAI en passthrough (workers du pool ChatGPT) ne reçoivent pas l'outil
   synthétique ; le conseiller couvre les fournisseurs routés (traduits). La consultation
   preflight s'applique aux adaptateurs run-turn ; l'outil non.
-- Pas de déclencheur adaptatif : pas de détection de blocage, d'analyse d'échecs répétés, de
-  niveaux d'escalade, de conseillers multiples ni de vote. `manual` et `preflight` seulement.
 - Le registre de déduplication preflight vit dans le processus ; après un redémarrage du proxy,
   une tâche en cours peut recevoir une tentative preflight de plus.
+
+## Adaptive
+
+Adaptive inclut la consultation preflight initiale, puis n'escalade que pour une classe limitée de non-convergence observable : un échec de validation explicite, une modification de réparation, puis un nouvel échec de la même validation. Il ne détecte ni un worker bloqué, ni une confusion sémantique, ni une cause racine incertaine.
+
+```sh
+ocx advisor set --policy adaptive
+```
+
+La seule raison automatique est `repair_failed`. Une suite de modifications sans échec préalable ne consulte pas. Deux échecs de validation sans modification entre eux ne consultent pas. Un échec de suivi sur une validation différente ne consulte pas et ouvre un nouveau cycle d'échec. Adaptive n'escalade que lorsque les deux échecs de validation ont des empreintes stables et que ces empreintes coïncident. Si l'une des validations ne peut pas être identifiée de façon fiable, OpenCodex n'escalade pas à partir de ce cycle de réparation. Adaptive préfère volontairement moins de déclenchements à une consultation spéculative.
+
+Les observations viennent d'outils terminés. Le classifieur ne lit pas la prose des journaux de test. Les commandes de diagnostic (`git diff`, `git status`, recherche, lecture de fichier) ne sont pas des validations, même si le résultat est négatif. Une validation réussie réinitialise le cycle. Les commandes shell composées — affectations d'environnement, `&&`, tubes, redirections et listes — restent non classées : une validation cachée dedans peut ne pas être observée.
+
+Adaptive reprend la même première consultation preflight que `preflight`, sans seconde consultation dans ce tour. Après cette base, des modifications répétées, une modification suivie d'un test réussi, et des diagnostics distincts ne provoquent aucune escalade supplémentaire. Un test en échec, puis une modification, puis le même test en échec consulte, et le conseil revient au même worker. Un conseil manuel et une consultation adaptive réussie réinitialisent tous deux le cycle. Une nouvelle escalade exige un nouvel échec, une nouvelle réparation, puis un nouvel échec. Les pannes du fournisseur conservent le délai d'une minute déjà en place. Une annulation libère la réservation et ne démarre pas ce délai.
+
+Seul un client doté d'une identité de tâche stable accumule les observations adaptive. L'état vit dans le processus, borné à 512 tâches pendant 24 heures, avec 2 048 identifiants de résultat et 128 appels en attente par tâche. La saturation saute l'escalade. Un redémarrage, l'expiration ou une compaction peut effacer les preuves. Au plus 128 messages récents sont lus par requête. Aucune détection sémantique de blocage, aucun multi-conseiller, aucun vote ni changement de modèle n'est ajouté. Le conseil automatique utilise toujours l'injection en rôle developer, avec la même limite de confiance et la même divulgation inter-fournisseurs que preflight.

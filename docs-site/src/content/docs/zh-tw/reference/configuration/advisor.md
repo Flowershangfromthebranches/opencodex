@@ -1,6 +1,6 @@
 ---
 title: 顧問
-description: OpenCodex 自有的專家諮詢 sidecar — 設定的專家模型為路由 Worker 提供建議，支援 manual 與 preflight 兩種策略。
+description: OpenCodex 自有的專家諮詢 sidecar — 設定的專家模型為路由 Worker 提供建議，支援 manual、preflight 與 adaptive 三種策略。
 ---
 
 顧問是一個獨立的專家模型，審閱 Worker 的任務並返回建議。OpenCodex 端到端地擁有整個諮詢過程：代理向 Worker 的回合注入合成的 `advisor` 工具，自己透過正常路由權威執行諮詢，並回注建議使原 Worker 繼續。Worker 無需委託、無需 spawn 任何東西、也不攜帶 provider 憑證。
@@ -25,10 +25,10 @@ description: OpenCodex 自有的專家諮詢 sidecar — 設定的專家模型�
 | `enabled?` | `boolean` | `false` | 總開關。關閉時請求路徑上沒有任何 advisor 行為。 |
 | `model?` | `string` | — | 專家模型。任何路由權威接受的模型字串：裸原生模型（`gpt-6-astra`）、明確 `provider/model`（`anthropic/claude-sonnet-4-6`、`xai/grok-...`）或帳戶限定的原生模型。完整支援跨 provider：Worker 與 Advisor 無需同屬一個 provider。 |
 | `effort?` | `string` | `"max"` | Advisor 呼叫的推理強度（`low` 至 `ultra`）。 |
-| `policy?` | `"manual" \| "preflight"` | `"manual"` | 何時諮詢顧問。 |
+| `policy?` | `"manual" \| "preflight" \| "adaptive"` | `"manual"` | 何時諮詢顧問。 |
 | `timeoutMs?` | `number` | `120000` | 回環諮詢逾時。 |
 
-透過儀表板的 **Advisor** 頁面或 `ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight>` 管理。
+透過儀表板的 **Advisor** 頁面或 `ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight|adaptive>` 管理。
 
 ## 策略
 
@@ -54,5 +54,20 @@ Advisor 失敗是 fail-open 的：已經發出的諮詢若失敗（模型不可�
 ## PR1 限制
 
 - 原生 OpenAI passthrough 回合（ChatGPT 池 Worker）不會獲得合成工具；advisor 支援覆蓋路由（translated）provider。preflight 諮詢適用於 run-turn 介面卡；工具不適用。
-- 無自適應觸發：沒有卡住偵測、重複失敗分析、升級分層、多 Advisor 或投票。`manual` 與 `preflight` 是僅有的策略。
 - preflight 去重帳本是行程內的；代理重啟後，進行中的任務可能再收到一次 preflight 諮詢。
+
+## Adaptive
+
+Adaptive 包含首次 preflight 諮詢，隨後只對一類有限的、可觀察的不收斂做升級：一次明確的驗證失敗、一次修復性修改，以及同一次驗證的再次失敗。它不判斷 Worker 是否卡住，也不做語義混亂或根因不明的偵測。
+
+```sh
+ocx advisor set --policy adaptive
+```
+
+唯一的自動原因是 `repair_failed`。沒有先前失敗的一連串修改不會諮詢。兩次驗證失敗之間如果沒有修改，也不會諮詢。另一次不同驗證的失敗不會諮詢，而是開始新的失敗週期。只有兩次失敗的驗證都有穩定指紋且指紋相同，才會升級。若其中任一驗證無法可靠識別，OpenCodex 不會從這一修復週期升級。Adaptive 有意偏向少觸發，而不是推測性諮詢。
+
+觀察來自已完成的工具。分類器不閱讀測試日誌裡的自然語言。診斷命令（`git diff`、`git status`、搜尋、讀檔案）即使結果為負，也不是驗證。驗證成功會重設這一輪。環境變數賦值、`&&`、管線、重定向和命令列表這類複合 shell 不予分類，因此藏在其中的驗證可能觀察不到。
+
+Adaptive 使用與 `preflight` 相同的第一次 preflight 諮詢，並且不會在同一次回合裡再諮詢第二次。基線之後，反覆修改、修改後測試通過，以及彼此不同的診斷實驗都不會額外升級。測試失敗、然後修改、然後同一次測試再次失敗，才會諮詢，建議仍回到原來的 Worker。手動建議和一次成功的 adaptive 諮詢都會重設這一輪。下一次升級需要新的失敗、新的修復和新的失敗。提供者失敗沿用已有的一分鐘冷卻。取消會釋放聲明，並且不會開始這段冷卻。
+
+只有帶有穩定任務身分的客戶端才會累積 adaptive 觀察。狀態位於行程內，上限為 512 個任務、24 小時，每個任務 2,048 個結果識別和 128 個待處理呼叫。表滿時跳過升級。重新啟動、過期或壓縮都可能清掉證據。每個請求最多讀取最近 128 則訊息。不增加語義停滯偵測、多顧問、投票或模型切換。自動建議仍使用 developer 角色注入，信任限制和跨提供者披露與 preflight 相同。

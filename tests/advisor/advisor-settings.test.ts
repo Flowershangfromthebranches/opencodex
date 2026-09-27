@@ -68,7 +68,7 @@ describe("resolveAdvisorSettings", () => {
     expect(isValidAdvisorEffort("max")).toBe(true);
     expect(isValidAdvisorEffort("minimal")).toBe(false);
     expect(isValidAdvisorPolicy("preflight")).toBe(true);
-    expect(isValidAdvisorPolicy("adaptive")).toBe(false);
+    expect(isValidAdvisorPolicy("adaptive")).toBe(true);
   });
 
   test("timeoutMs is bounded to a sane window", () => {
@@ -105,4 +105,14 @@ describe("ocx advisor set — clearing the model", () => {
     // Not one of them reached the settings route.
     expect(requests).toHaveLength(0);
   });
+});
+
+test("CLI forwards --policy adaptive to the settings API", async () => {
+  const bodies: unknown[] = [];
+  const result = await handleAdvisorCommand(["set", "--policy", "adaptive", "--json"], {
+    baseUrl: "http://proxy.test",
+    fetchImpl: async (_input, init) => { bodies.push(JSON.parse(String(init?.body))); return Response.json({ settings: { policy: "adaptive" } }); },
+  });
+  expect(result).toBe(0);
+  expect(bodies).toEqual([{ policy: "adaptive" }]);
 });

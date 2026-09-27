@@ -28,7 +28,7 @@ Persisted config, the Codex home it writes into, and the model catalog it publis
 | [`codex-home.md`](codex-home.md) | CODEX_HOME resolution, the files opencodex manages there, and Codex-home diagnostics. |
 | [`catalog.md`](catalog.md) | Shared Codex catalog assembly, account namespaces, pool rotation, and effort ladders. |
 | [`subagents.md`](subagents.md) | Multi-agent surface mode and subagent roster ordering. |
-| [`advisor.md`](advisor.md) | The OpenCodex-owned expert consultation sidecar: synthetic advisor tool, preflight policy, loopback consultation through the routing authority, and the optional-subsystem seam. |
+| [`advisor.md`](advisor.md) | The expert consultation sidecar: manual, preflight and adaptive decision policies, shared consultation authority, bounded observations, and optional-subsystem seam. |
 | [`config-proxy.md`](config-proxy.md) | Global proxy activation, start flags, and credential-safe CLI output. |
 
 ### Tier 3 — Data planes and transports

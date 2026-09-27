@@ -1,5 +1,4 @@
 # Config Surface
-
 Quota activation reuses the existing next-reset fields without adding a polling configuration key. See the [quota activation contract](providers/openai-tiers.md#public-provider-contract).
 
 Native function-result injection follows [the separate opt-in control contract](transports/streaming-health.md#experimental-native-function-result-injection); this surface does not infer upstream support or alter its defaults.
@@ -598,3 +597,4 @@ so wrong types and unknown nested fields are rejected rather than silently saved
 Stored Direct substitution follows the [credential identity contract](providers/openai-accounts.md#sidecars-management-and-ui): both synchronous and asynchronous materializers discard the caller account header before applying the stored credential; ordinary native Direct passthrough is unchanged.
 
 Proxy activation and credential-safe CLI output follow [Proxy Configuration](config-proxy.md).
+Advisor policy accepts `manual`, `preflight`, and `adaptive`; [trigger semantics](advisor.md#adaptive-trigger-engine) owns escalation and consultation authority.

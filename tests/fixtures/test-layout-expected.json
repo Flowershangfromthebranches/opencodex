@@ -1807,5 +1807,8 @@
   "advisor-plan.test.ts": "advisor",
   "advisor-responses-wiring.test.ts": "advisor",
   "advisor-routes.test.ts": "server",
-  "advisor-internal-authority.test.ts": "advisor"
+  "advisor-internal-authority.test.ts": "advisor",
+  "advisor-trigger-policy.test.ts": "advisor",
+  "advisor-trigger-classification.test.ts": "advisor",
+  "advisor-adaptive-runtime.test.ts": "advisor"
 }

@@ -154,7 +154,7 @@
       "path": "advisor.md",
       "tier": 2,
       "title": "Advisor Sidecar",
-      "scope": "The OpenCodex-owned expert consultation sidecar: synthetic advisor tool, preflight policy, loopback consultation through the routing authority, and the optional-subsystem seam.",
+      "scope": "The expert consultation sidecar: manual, preflight and adaptive decision policies, shared consultation authority, bounded observations, and optional-subsystem seam.",
       "documents": [
         "src/advisor/",
         "src/server/responses/advisor-slot.ts"

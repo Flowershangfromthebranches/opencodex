@@ -14,7 +14,7 @@ interface AdvisorSettings {
   enabled: boolean;
   model: string;
   effort: string;
-  policy: "manual" | "preflight";
+  policy: "manual" | "preflight" | "adaptive";
   timeoutMs: number;
 }
 
@@ -132,10 +132,11 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             id="advisor-policy"
             value={draft.policy}
             disabled={saving}
-            onChange={event => edit({ policy: event.target.value === "preflight" ? "preflight" : "manual" })}
+            onChange={event => edit({ policy: event.target.value === "adaptive" ? "adaptive" : event.target.value === "preflight" ? "preflight" : "manual" })}
           >
             <option value="manual">{t("advisor.policy.manual")}</option>
             <option value="preflight">{t("advisor.policy.preflight")}</option>
+            <option value="adaptive">{t("advisor.policy.adaptive")}</option>
           </select>
         </div>
         <div style={rowStyle}>
@@ -181,6 +182,7 @@ export default function Advisor({ apiBase }: { apiBase: string }) {
     <section className="panel">
       {heading}
       <p className="muted">{t("advisor.description")}</p>
+      <p className="muted">{t("advisor.adaptiveDescription")}</p>
       <Notice tone="warn">{t("advisor.costNote")}</Notice>
       <Notice tone="warn">{t("advisor.privacyNote")}</Notice>
       {state.showSkeleton && <Notice tone="warn">{t("common.loading")}</Notice>}

@@ -1,6 +1,6 @@
 ---
 title: Advisor
-description: The OpenCodex-owned expert consultation sidecar — a configured expert model advises routed workers, with manual and preflight policies.
+description: The OpenCodex-owned expert consultation sidecar — a configured expert model advises routed workers, with manual, preflight and adaptive policies.
 ---
 
 The advisor is an independent expert model that reviews the worker's task and returns advice.
@@ -32,11 +32,11 @@ never sees — even a worker that never spawns anything can be advised.
 | `enabled?` | `boolean` | `false` | Master switch. Disabled means zero advisor behavior on the request path. |
 | `model?` | `string` | — | The expert model. Any model string the router accepts: a bare native model (`gpt-6-astra`), an explicit `provider/model` (`anthropic/claude-sonnet-4-6`, `xai/grok-...`), or an account-qualified native model. Cross-provider is fully supported: the worker and the advisor do not need to share a provider. |
 | `effort?` | `string` | `"max"` | Reasoning effort for the advisor call (`low` through `ultra`). |
-| `policy?` | `"manual" \| "preflight"` | `"manual"` | When the advisor is consulted. |
+| `policy?` | `"manual" \| "preflight" \| "adaptive"` | `"manual"` | When the advisor is consulted. |
 | `timeoutMs?` | `number` | `120000` | Loopback consultation timeout. |
 
 Manage it with the dashboard **Advisor** page or
-`ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight>`.
+`ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight|adaptive>`.
 
 ## Policies
 
@@ -96,7 +96,21 @@ consultation never switches the session's main model.
 - Native OpenAI passthrough turns (ChatGPT-pool workers) do not get the synthetic tool; advisor
   support covers routed (translated) providers. Preflight consultation applies to run-turn
   adapters; the tool does not.
-- No adaptive trigger: no stuck detection, repeated-failure analysis, escalation tiers, multiple
-  advisors, or advisor voting. `manual` and `preflight` are the only policies.
 - The preflight dedup ledger is process-local; after a proxy restart, a task in progress may
   receive one more preflight attempt.
+
+## Adaptive
+
+Adaptive includes the preflight baseline, then escalates only for a limited class of observable non-convergence: an explicit validation failure, a repair edit, and a follow-up failure of that same validation. It does not detect a stuck worker, semantic confusion, or an unclear root cause.
+
+```sh
+ocx advisor set --policy adaptive
+```
+
+The only automatic reason is `repair_failed`. A sequence of edits with no prior failure does not consult. Two validation failures with no edit between them do not consult. A follow-up failure of a different validation does not consult and starts a new failure cycle instead. Adaptive escalates only when both failed validation attempts have stable fingerprints and those fingerprints match. If either validation cannot be identified reliably, OpenCodex does not escalate from that repair cycle. Adaptive intentionally prefers under-triggering over speculative consultation.
+
+Observations come from completed tools. The classifier does not read test-log prose. Diagnostic commands (`git diff`, `git status`, search, and file reads) are not validation, even when the result is negative. A passing validation resets the cycle. Compound shell commands — environment assignments, `&&`, pipes, redirections, and command lists — are left unclassified, so a validation hidden inside one may not be observed.
+
+Adaptive uses the same first preflight consultation as `preflight`, and does not consult a second time on that turn. After the baseline, repeated edits, an edit followed by a passing test, and separate diagnostic experiments cause no extra escalation. A failing test, then an edit, then the same failing test consults, and the advice reaches the same worker. Manual advice and a successful adaptive consultation both reset the cycle. Another escalation needs a new failure, a new repair, and a new failure. Provider failures keep the existing one-minute cooldown. Cancellation releases the claim and does not start that cooldown.
+
+Only a client with a stable task identity accumulates adaptive observations. State is process-local, bounded to 512 tasks for 24 hours, with 2,048 result ids and 128 pending calls per task. Saturation skips escalation. Restart, expiry, or compaction can clear the evidence. At most 128 recent messages are read per request. No semantic stuck detection, multiple advisors, voting, or model switching is added. Automatic advice still uses the developer-role injection, with the same trust limitation and cross-provider disclosure as preflight.

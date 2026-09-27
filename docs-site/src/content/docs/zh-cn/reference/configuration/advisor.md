@@ -1,6 +1,6 @@
 ---
 title: 顾问
-description: OpenCodex 自有的专家咨询 sidecar — 配置的专家模型为路由 Worker 提供建议，支持 manual 与 preflight 两种策略。
+description: OpenCodex 自有的专家咨询 sidecar — 配置的专家模型为路由 Worker 提供建议，支持 manual、preflight 与 adaptive 三种策略。
 ---
 
 顾问是一个独立的专家模型，审阅 Worker 的任务并返回建议。OpenCodex 端到端地拥有整个咨询过程：代理向 Worker 的回合注入合成的 `advisor` 工具，自己通过正常路由权威执行咨询，并回注建议使原 Worker 继续。Worker 无需委托、无需 spawn 任何东西、也不携带 provider 凭据。
@@ -25,10 +25,10 @@ description: OpenCodex 自有的专家咨询 sidecar — 配置的专家模型�
 | `enabled?` | `boolean` | `false` | 总开关。关闭时请求路径上没有任何 advisor 行为。 |
 | `model?` | `string` | — | 专家模型。任何路由权威接受的模型字符串：裸原生模型（`gpt-6-astra`）、显式 `provider/model`（`anthropic/claude-sonnet-4-6`、`xai/grok-...`）或账户限定的原生模型。完整支持跨 provider：Worker 与 Advisor 无需同属一个 provider。 |
 | `effort?` | `string` | `"max"` | Advisor 调用的推理强度（`low` 至 `ultra`）。 |
-| `policy?` | `"manual" \| "preflight"` | `"manual"` | 何时咨询顾问。 |
+| `policy?` | `"manual" \| "preflight" \| "adaptive"` | `"manual"` | 何时咨询顾问。 |
 | `timeoutMs?` | `number` | `120000` | 回环咨询超时。 |
 
-通过仪表盘的 **Advisor** 页面或 `ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight>` 管理。
+通过仪表盘的 **Advisor** 页面或 `ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight|adaptive>` 管理。
 
 ## 策略
 
@@ -54,5 +54,20 @@ Advisor 失败是 fail-open 的：已经发出的咨询若失败（模型不可�
 ## PR1 限制
 
 - 原生 OpenAI passthrough 回合（ChatGPT 池 Worker）不会获得合成工具；advisor 支持覆盖路由（translated）provider。preflight 咨询适用于 run-turn 适配器；工具不适用。
-- 无自适应触发：没有卡住检测、重复失败分析、升级分层、多 Advisor 或投票。`manual` 与 `preflight` 是仅有的策略。
 - preflight 去重账本是进程内的；代理重启后，进行中的任务可能再收到一次 preflight 咨询。
+
+## Adaptive
+
+Adaptive 包含首次 preflight 咨询，随后只对一类有限的、可观察的不收敛做升级：一次明确的验证失败、一次修复性修改，以及同一次验证的再次失败。它不判断 Worker 是否卡住，也不做语义混乱或根因不明的检测。
+
+```sh
+ocx advisor set --policy adaptive
+```
+
+唯一的自动原因是 `repair_failed`。没有先前失败的一连串修改不会咨询。两次验证失败之间如果没有修改，也不会咨询。另一次不同验证的失败不会咨询，而是开始新的失败周期。只有两次失败的验证都有稳定指纹且指纹相同，才会升级。若其中任一验证无法可靠识别，OpenCodex 不会从这一修复周期升级。Adaptive 有意偏向少触发，而不是推测性咨询。
+
+观察来自已完成的工具。分类器不阅读测试日志里的自然语言。诊断命令（`git diff`、`git status`、搜索、读文件）即使结果为负，也不是验证。验证成功会重置这一轮。环境变量赋值、`&&`、管道、重定向和命令列表这类复合 shell 不予分类，因此藏在其中的验证可能观察不到。
+
+Adaptive 使用与 `preflight` 相同的第一次 preflight 咨询，并且不会在同一次回合里再咨询第二次。基线之后，反复修改、修改后测试通过，以及彼此不同的诊断实验都不会额外升级。测试失败、然后修改、然后同一次测试再次失败，才会咨询，建议仍回到原来的 Worker。手动建议和一次成功的 adaptive 咨询都会重置这一轮。下一次升级需要新的失败、新的修复和新的失败。提供者失败沿用已有的一分钟冷却。取消会释放声明，并且不会开始这段冷却。
+
+只有带有稳定任务身份的客户端才会累积 adaptive 观察。状态位于进程内，上限为 512 个任务、24 小时，每个任务 2,048 个结果标识和 128 个待处理调用。表满时跳过升级。重启、过期或压缩都可能清掉证据。每个请求最多读取最近 128 条消息。不增加语义停滞检测、多顾问、投票或模型切换。自动建议仍使用 developer 角色注入，信任限制和跨提供者披露与 preflight 相同。

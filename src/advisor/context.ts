@@ -24,7 +24,7 @@ export interface AdvisorContextInput {
   /** Advisor model string as configured (verbatim; identity shown to both sides). */
   advisorModel: string;
   /** Why this consultation is happening. */
-  reason: "manual" | "preflight";
+  reason: "manual" | "preflight" | "adaptive";
   /** Optional worker-supplied focus question (synthetic tool argument). */
   question?: string;
 }
@@ -124,7 +124,7 @@ export function buildAdvisorUserPrompt(input: AdvisorContextInput): string {
   const focus = input.question ? clip(input.question, MAX_QUESTION_CHARS) : "";
   return [
     `# Worker identity\n${input.workerIdentity}`,
-    `# Advisor identity\n${input.advisorModel} (independent expert advisor, consulted ${input.reason === "manual" ? "at the worker's explicit request" : "automatically before the worker's first substantive turn"})`,
+    `# Advisor identity\n${input.advisorModel} (independent expert advisor, consulted ${input.reason === "manual" ? "at the worker's explicit request" : input.reason === "adaptive" ? "automatically after observable non-convergence: a failed repair of an explicit validation" : "automatically before the worker's first substantive turn"})`,
     `# Current task (latest user request)\n${latestUserTask(input.parsed)}`,
     ...(focus ? [`# Worker's focus question\n${focus}`] : []),
     `# Tools available to the worker\n${toolCatalog(input.parsed)}`,
@@ -176,7 +176,7 @@ export function neutralizeAdvisorMarkers(text: string): string {
  * detector (`historyHasAdvisorResult`) must not treat it as one. Upstream error text is untrusted
  * and is neutralized so it cannot forge a genuine marker either.
  */
-export function formatAdvisorUnavailable(kind: "preflight" | "manual" | "limit", error: string): string {
+export function formatAdvisorUnavailable(kind: "preflight" | "manual" | "adaptive" | "limit", error: string): string {
   const lead = kind === "limit"
     ? "Advisor consultation limit reached for this request; no further advice is available."
     : "The advisor was consulted but is currently unavailable, so this consultation produced no advice.";

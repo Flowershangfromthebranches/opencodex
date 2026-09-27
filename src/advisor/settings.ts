@@ -7,12 +7,12 @@
  */
 import type { OcxConfig } from "../types";
 
-export type AdvisorPolicy = "manual" | "preflight";
+export type AdvisorPolicy = "manual" | "preflight" | "adaptive";
 
 export const ADVISOR_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
 export type AdvisorEffort = (typeof ADVISOR_EFFORTS)[number];
 
-export const ADVISOR_POLICIES = ["manual", "preflight"] as const;
+export const ADVISOR_POLICIES = ["manual", "preflight", "adaptive"] as const;
 
 export interface AdvisorSettings {
   enabled: boolean;

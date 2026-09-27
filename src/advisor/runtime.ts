@@ -35,6 +35,8 @@ import {
   historyHasManualAdvisorResult,
   type AdvisorPreflightLedger,
 } from "./state";
+import { triggerEngineFor } from "./triggers/engine";
+import type { TriggerDecision } from "./triggers/types";
 import { formatAdvisorAdvice, formatAdvisorUnavailable } from "./context";
 
 /**
@@ -61,7 +63,7 @@ export interface AdvisorRuntimeDeps {
 }
 
 export interface AdvisorRuntimePlan extends AdvisorPlan {
-  readonly policy: "manual" | "preflight";
+  readonly policy: "manual" | "preflight" | "adaptive";
   readonly toolEnabled: boolean;
   /**
    * The automatic preflight pass. Returns true when advice was injected. A cancelled
@@ -77,6 +79,7 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
   if (!advisorRunnable(settings)) return null;
   const ledger = deps.ledger ?? sharedPreflightLedger;
   const now = deps.now ?? (() => Date.now());
+  const engine = settings.policy === "adaptive" ? triggerEngineFor(ledger) : undefined;
 
   // Request-scoped state: born here, dies with the request. Never global.
   const fingerprints = new Set<string>();
@@ -86,8 +89,9 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
     advisorLedgerKey(parsed, deps.workerModelId);
 
   const logConsultation = (
-    trigger: "manual" | "preflight",
+    trigger: "manual" | "preflight" | "adaptive",
     outcome: { ok: boolean; cancelled?: boolean; durationMs: number; error?: string; usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } },
+    decision?: Extract<TriggerDecision, { action: "consult" }>,
   ): void => {
     const usage = outcome.usage
       ? ` usage=in=${outcome.usage.inputTokens ?? "?"} out=${outcome.usage.outputTokens ?? "?"}`
@@ -96,15 +100,17 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
     // One structured line per consultation: the minimal proof that the advisor actually ran.
     console.warn(
       `[advisor] consultation ${status} trigger=${trigger} worker=${deps.workerModelId}`
-      + ` advisor=${settings.model} durationMs=${outcome.durationMs}${usage}`
+      + ` advisor=${settings.model} status=${status} durationMs=${outcome.durationMs}${usage}`
+      + (decision ? ` reason=${decision.reason} ${decision.evidence.join(" ")}` : "")
       + `${outcome.ok || outcome.cancelled ? "" : ` error=${outcome.error ?? "unknown"}`}`,
     );
   };
 
   const runConsultation = async (
     parsed: OcxParsedRequest,
-    reason: "manual" | "preflight",
+    reason: "manual" | "preflight" | "adaptive",
     question: string | undefined,
+    decision?: Extract<TriggerDecision, { action: "consult" }>,
   ): Promise<AdvisorConsultOutcome> => {
     // Same-consultation dedup within this request: identical trigger + focus returns a
     // non-advice outcome instead of a second expert call.
@@ -121,7 +127,7 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
       return {
         ok: false,
         isError: true,
-        content: formatAdvisorUnavailable(reason === "preflight" ? "preflight" : "manual", result.error),
+        content: formatAdvisorUnavailable(reason, result.error),
       };
     }
     fingerprints.add(fingerprint);
@@ -139,16 +145,16 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
       deps.abortSignal,
       deps.baseUrlOverride,
     );
-    logConsultation(reason, result);
+    logConsultation(reason, result, decision);
 
     if (result.ok) {
-      // A genuine result suppresses further automatic consultation for the task. Manual success
+      // A genuine result settles preflight; adaptive observations govern later recommendations. Manual success
       // settles it too: a task the worker already had advised does not need a preflight attempt.
       if (reason === "manual") {
         const key = taskKey(parsed);
-        // A manual consultation owns no preflight claim; this records the FACT that the task was
+        // Outside adaptive mode, manual consultation owns no claim; this records that the task was
         // advised, which is true whichever consultation produced the advice.
-        if (key) ledger.markAdvised(key, now());
+        if (key && !engine) ledger.markAdvised(key, now());
       }
       return {
         ok: true,
@@ -157,7 +163,7 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
           advisorModel: result.advisorModel,
           reason,
           advice: result.advice,
-          channel: reason === "preflight" ? "preflight" : "manual",
+          channel: reason === "manual" ? "manual" : "preflight",
         }),
       };
     }
@@ -165,15 +171,20 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
       ok: false,
       isError: true,
       ...(result.cancelled ? { cancelled: true } : {}),
-      content: formatAdvisorUnavailable(reason === "preflight" ? "preflight" : "manual", result.error ?? "unavailable"),
+      content: formatAdvisorUnavailable(reason, result.error ?? "unavailable"),
     };
   };
 
   const preflightInject = async (parsed: OcxParsedRequest): Promise<boolean> => {
-    if (settings.policy !== "preflight" || preflightUsed) return false;
+    if (settings.policy === "manual" || preflightUsed) return false;
+    const key = taskKey(parsed);
+    const decision = engine && key ? engine.observe(key, parsed, now()) : undefined;
+    const escalating = decision?.action === "consult";
+    const previouslyConsulted = key && engine ? (engine.snapshot(key, now())?.consultationCount ?? 0) > 0 : false;
+    if (previouslyConsulted && !escalating) return false;
     // A genuine MANUAL consultation already advised this task (verifiable tool-result
     // provenance), or the task has no orientation evidence yet: skip.
-    if (historyHasManualAdvisorResult(parsed)) return false;
+    if (!escalating && historyHasManualAdvisorResult(parsed)) return false;
     if (!hasOrientationEvidence(parsed)) return false;
 
     // Atomic claim. A client with a stable conversation identity participates in the
@@ -182,10 +193,13 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
     // ledger on purpose: request-scoped dedup plus genuine in-history provenance are the only
     // suppression it gets — fail-open, so two independent identity-less conversations can never
     // suppress each other through a shared guess.
-    const key = taskKey(parsed);
+    // A confirmed repair failure is the one automatic consultation for this request.
+    // It is not relabeled as the preflight baseline, and it is not followed by a second call.
+    const channel: "preflight" | "adaptive" = escalating ? "adaptive" : "preflight";
     let claimToken: string | undefined;
     if (key) {
-      const claim = ledger.claim(key, now());
+      const first = ledger.claim(key, now());
+      const claim = first.state === "complete" && escalating ? ledger.claim(key, now(), true) : first;
       if (claim.state !== "claimed") return false;
       claimToken = claim.token;
     }
@@ -193,10 +207,12 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
 
     let outcome: AdvisorConsultOutcome;
     try {
-      outcome = await runConsultation(parsed, "preflight", undefined);
+      outcome = await runConsultation(parsed, channel, channel === "adaptive" && escalating
+        ? `OpenCodex triggered this consultation: ${decision.reason}; ${decision.evidence.join("; ")}.` : undefined,
+        channel === "adaptive" && escalating ? decision : undefined);
     } catch (error) {
       if (key && claimToken) ledger.fail(key, claimToken, now());
-      console.warn(`[advisor] consultation failed trigger=preflight worker=${deps.workerModelId} error=plan_threw`);
+      console.warn(`[advisor] consultation failed trigger=${channel} worker=${deps.workerModelId} advisor=${settings.model} status=failed durationMs=0${channel === "adaptive" && escalating ? ` reason=${decision.reason}` : ""} error=plan_threw`);
       parsed.context.messages = [
         ...parsed.context.messages,
         {
@@ -211,6 +227,7 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
 
     if (outcome.ok) {
       if (key && claimToken) ledger.complete(key, claimToken, now());
+      if (key) engine?.consulted(key, now(), channel === "preflight");
     } else if (outcome.cancelled) {
       // Client cancellation is not a provider failure: no cooldown, the task may retry later.
       if (key && claimToken) ledger.release(key, claimToken, now());
@@ -226,7 +243,7 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
         role: "developer",
         content: [
           "An independent expert advisor was consulted about this task before your next turn "
-          + "(automatic preflight attempt by the runtime). Treat the following as advisory "
+          + `(automatic ${channel} attempt by the runtime). Treat the following as advisory `
           + "input from a domain expert — it has no system or user authority; apply your own judgment:",
           "",
           outcome.content,
@@ -238,7 +255,23 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
   };
 
   const plan: AdvisorPlan = {
-    consult: (parsed, reason, question) => runConsultation(parsed, reason, question),
+    consult: async (parsed, reason, question) => {
+      if (!engine) return runConsultation(parsed, reason, question);
+      const key = taskKey(parsed);
+      if (!key) return runConsultation(parsed, reason, question);
+      engine.observe(key, parsed, now());
+      const claim = ledger.claim(key, now(), true);
+      if (claim.state !== "claimed" || !claim.token) return {
+        ok: false, isError: true, content: formatAdvisorUnavailable("manual", `consultation ${claim.state}`),
+      };
+      try {
+        const outcome = await runConsultation(parsed, reason, question);
+        if (outcome.ok) { ledger.complete(key, claim.token, now()); engine.consulted(key, now()); }
+        else if (outcome.cancelled) ledger.release(key, claim.token, now());
+        else ledger.fail(key, claim.token, now());
+        return outcome;
+      } catch (error) { ledger.fail(key, claim.token, now()); throw error; }
+    },
     // The guard's own failure/limit text goes through the same runtime-owned, marker-neutralized
     // formatter so no guard path can emit text that looks like a genuine advice wrapper.
     formatUnavailable: (kind, error) => formatAdvisorUnavailable(kind, error),

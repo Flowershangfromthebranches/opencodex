@@ -1496,9 +1496,11 @@ export interface OcxAdvisorConfig {
    * When the advisor is consulted. "manual" (default): only when the worker explicitly calls the
    * synthetic `advisor` tool. "preflight": OpenCodex additionally attempts one automatic
    * consultation per task once the task has produced orientation evidence (an assistant tool call
-   * or a tool result after the latest user message).
+   * or a tool result after the latest user message). "adaptive": the same preflight baseline,
+   * then one more consultation after an explicit validation failure, a repair edit, and a
+   * follow-up failure of that validation. Edits alone do not consult.
    */
-  policy?: "manual" | "preflight";
+  policy?: "manual" | "preflight" | "adaptive";
   /** Advisor fetch timeout (ms). Default 120000. */
   timeoutMs?: number;
 }
