@@ -15,6 +15,7 @@ import { handleChatCompletions } from "../../src/server/chat-completions";
 import { collectSse } from "../helpers/responses-conformance";
 import { fakeChatGptJwt } from "../helpers/fake-chatgpt-jwt";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
+import { internalCallCapability } from "../../src/lib/local-internal-call-capability";
 import type { OcxConfig } from "../../src/types";
 
 const originalFetch = globalThis.fetch;
@@ -46,10 +47,18 @@ function workerProviderFetch(legs: unknown[][], captured: string[]) {
   let leg = 0;
   return (async (_input: RequestInfo | URL, init?: RequestInit) => {
     captured.push(String(init?.body));
+    recordHeaders(providerSeenHeaders.worker, init);
     const events = legs[Math.min(leg, legs.length - 1)]!;
     leg += 1;
     return sse(events);
   }) as typeof fetch;
+}
+
+/** Headers each provider actually received, so forwarding can be asserted. */
+const providerSeenHeaders: { worker: Record<string, string>[]; expert: Record<string, string>[] } = { worker: [], expert: [] };
+
+function recordHeaders(bucket: Record<string, string>[], init?: RequestInit): void {
+  bucket.push(Object.fromEntries(new Headers(init?.headers).entries()));
 }
 
 function advisorConfig(advisor: OcxConfig["advisor"], workerFetch: typeof fetch): OcxConfig {
@@ -68,7 +77,10 @@ function advisorConfig(advisor: OcxConfig["advisor"], workerFetch: typeof fetch)
         baseUrl: "https://expert.test/v1",
         apiKey: "expert-key",
         models: ["gpt-6-astra"],
-        fetch: (async () => chatCompletion(ADVISOR_ADVICE)) as typeof fetch,
+        fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+          recordHeaders(providerSeenHeaders.expert, init);
+          return chatCompletion(ADVISOR_ADVICE);
+        }) as typeof fetch,
       },
     },
     ...(advisor ? { advisor } : {}),
@@ -308,5 +320,35 @@ describe("advisor responses wiring (end-to-end)", () => {
     const expertBody = JSON.parse(chatRequests[0]!) as { model: string; tools?: unknown[] };
     expect(expertBody.model).toBe("expert/gpt-6-astra");
     expect(expertBody.tools ?? []).toHaveLength(0);
+  });
+
+  test("the internal capability never reaches an upstream provider", async () => {
+    releaseSpendHome = acquireOwnedSpendHome();
+    providerSeenHeaders.worker.length = 0;
+    providerSeenHeaders.expert.length = 0;
+    const workerBodies: string[] = [];
+    const chatRequests: string[] = [];
+    const workerFetch = workerProviderFetch([
+      advisorCallFrames,
+      plainFrames("done with advice"),
+    ], workerBodies);
+    const config = advisorConfig(
+      { enabled: true, model: "expert/gpt-6-astra", policy: "manual" },
+      workerFetch,
+    );
+    loopbackInterceptor(config, { chatRequests });
+
+    const response = await handleResponses(workerRequest("Fix the failing auth tests"), config, logCtx);
+    expect(response.status).toBe(200);
+    await collectSse(response.body!);
+
+    // The advisor really ran (its loopback carry the capability), and neither the worker nor the
+    // expert provider ever saw it: the fence value is an internal header, not a forwarded one.
+    expect(chatRequests).toHaveLength(1);
+    const capability = internalCallCapability();
+    for (const headers of [...providerSeenHeaders.worker, ...providerSeenHeaders.expert]) {
+      expect(headers["x-opencodex-advisor-internal"]).toBeUndefined();
+      for (const value of Object.values(headers)) expect(value).not.toContain(capability);
+    }
   });
 });

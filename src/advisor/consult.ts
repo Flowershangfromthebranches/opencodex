@@ -21,10 +21,18 @@ import { localAdmissionToken, localInferenceDestination } from "../lib/local-des
 import { signalWithTimeout, cancelBodyOnAbort } from "../lib/abort";
 import { redactSecretString } from "../lib/redact";
 import { sidecarEnter } from "../lib/sidecar-tracker";
+import {
+  ADVISOR_INTERNAL_CAPABILITY_HEADER,
+  internalCallCapability,
+} from "../lib/local-internal-call-capability";
 import { configuredPort } from "../server/auth-cors";
 import { ADVISOR_SYSTEM_INSTRUCTION, buildAdvisorUserPrompt, type AdvisorContextInput } from "./context";
 
-export const ADVISOR_INTERNAL_HEADER = "x-opencodex-advisor-internal";
+/**
+ * The header the advisor presents on its own loopback request. Its VALUE is this process's
+ * internal-call capability — never a literal, and never trusted from an inbound caller.
+ */
+export { ADVISOR_INTERNAL_CAPABILITY_HEADER as ADVISOR_INTERNAL_HEADER } from "../lib/local-internal-call-capability";
 
 /** Bound the loopback JSON response; advice is prose, not data dumps. */
 const MAX_ADVISOR_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -109,7 +117,7 @@ export async function consultAdvisor(
   const t0 = Date.now();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    [ADVISOR_INTERNAL_HEADER]: "1",
+    [ADVISOR_INTERNAL_CAPABILITY_HEADER]: internalCallCapability(),
   };
   // Admission ladder identical to the vision sidecar: env token || service token file || first
   // configured API key, sent as `x-opencodex-api-key` — never Authorization. Loopback binds that

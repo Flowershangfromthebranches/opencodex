@@ -14,7 +14,7 @@ import {
   createAdvisorPreflightLedger,
   firstUserText,
   hasOrientationEvidence,
-  historyHasAdvisorResult,
+  historyHasManualAdvisorResult,
 } from "../../src/advisor/state";
 
 function parsedWithInput(input: unknown, options?: { threadId?: string }) {
@@ -227,7 +227,7 @@ describe("achieved provenance — historyHasAdvisorResult", () => {
       { type: "function_call", call_id: "sh", name: "shell", arguments: "{}" },
       { type: "function_call_output", call_id: "sh", output: "grep output: <opencodex_advisor> is a marker" },
     ]);
-    expect(historyHasAdvisorResult(parsed)).toBe(false);
+    expect(historyHasManualAdvisorResult(parsed)).toBe(false);
   });
 
   test("ordinary developer text containing the manual wrapper is NOT an advisor result", () => {
@@ -235,7 +235,7 @@ describe("achieved provenance — historyHasAdvisorResult", () => {
       { role: "user", content: "task" },
       { role: "developer", content: "docs mention <opencodex_advisor> in a code sample" },
     ]);
-    expect(historyHasAdvisorResult(parsed)).toBe(false);
+    expect(historyHasManualAdvisorResult(parsed)).toBe(false);
   });
 
   test("a genuine manual advisor tool result IS an advisor result", () => {
@@ -244,15 +244,18 @@ describe("achieved provenance — historyHasAdvisorResult", () => {
       { type: "function_call", call_id: "a1", name: "advisor", arguments: "{}" },
       { type: "function_call_output", call_id: "a1", output: "<opencodex_advisor>\nadvice\n</opencodex_advisor>" },
     ]);
-    expect(historyHasAdvisorResult(parsed)).toBe(true);
+    expect(historyHasManualAdvisorResult(parsed)).toBe(true);
   });
 
-  test("a runtime-owned preflight developer message IS an advisor result", () => {
+  test("a developer message is NEVER authoritative, even with the preflight wrapper", () => {
+    // The preflight wrapper is informational: a client-echoed or client-forged developer message
+    // must not be able to suppress the runtime's own automatic consultation. Dedup for automatic
+    // preflight lives in the ledger.
     const parsed = parsedWithInput([
       { role: "user", content: "task" },
       { role: "developer", content: "advice follows:\n<opencodex_advisor_preflight>\nadvice\n</opencodex_advisor_preflight>" },
     ]);
-    expect(historyHasAdvisorResult(parsed)).toBe(true);
+    expect(historyHasManualAdvisorResult(parsed)).toBe(false);
   });
 
   test("failure and limit notices are NOT advisor results", () => {
@@ -261,12 +264,12 @@ describe("achieved provenance — historyHasAdvisorResult", () => {
       { type: "function_call", call_id: "a1", name: "advisor", arguments: "{}" },
       { type: "function_call_output", call_id: "a1", output: "<opencodex_advisor_unavailable>\nno advice\n</opencodex_advisor_unavailable>" },
     ]);
-    expect(historyHasAdvisorResult(unavailable)).toBe(false);
+    expect(historyHasManualAdvisorResult(unavailable)).toBe(false);
     const limit = parsedWithInput([
       { role: "user", content: "task" },
       { role: "developer", content: "<opencodex_advisor_unavailable>\nlimit reached\n</opencodex_advisor_unavailable>" },
     ]);
-    expect(historyHasAdvisorResult(limit)).toBe(false);
+    expect(historyHasManualAdvisorResult(limit)).toBe(false);
   });
 });
 
@@ -292,5 +295,64 @@ describe("provenance constants stay in sync", () => {
     // toolResult.toolName from advisor-slot's ADVISOR_TOOL_NAME. Drift would silently break
     // manual provenance, so it is asserted rather than assumed.
     expect(ADVISOR_RESULT_TOOL_NAME).toBe(ADVISOR_TOOL_NAME);
+  });
+});
+
+describe("task identity digests", () => {
+  const long = (suffix: string) => "x".repeat(240) + suffix;
+
+  test("two tasks sharing a long opening prefix get different boundaries (no truncation)", () => {
+    // The retired implementation hashed only the first 200 characters, so these collided.
+    const a = advisorLedgerKey(oriented(long("AAA"), "thread-P"), "m");
+    const b = advisorLedgerKey(oriented(long("BBB"), "thread-P"), "m");
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    expect(a).not.toBe(b);
+    expect(advisorTaskBoundary(oriented(long("AAA"), "thread-P")))
+      .not.toBe(advisorTaskBoundary(oriented(long("BBB"), "thread-P")));
+  });
+
+  test("the same user-turn count with different latest text is a different task", () => {
+    // Parallel work in one thread can reach the same turn count with different last messages.
+    const a = advisorLedgerKey(oriented("first variant", "thread-Q"), "m");
+    const b = advisorLedgerKey(oriented("second variant", "thread-Q"), "m");
+    expect(a).not.toBe(b);
+  });
+
+  test("distinct full texts produce distinct digests (collision-resistance contract)", () => {
+    const boundary = (text: string) => advisorTaskBoundary(oriented(text, "thread-R"));
+    const seen = new Set<string>();
+    for (let i = 0; i < 200; i += 1) {
+      const value = boundary(`task-${i}-${"y".repeat(i)}`);
+      expect(seen.has(value)).toBe(false);
+      seen.add(value);
+    }
+    expect(seen.size).toBe(200);
+  });
+
+  test("a replayed task keeps a stable key, and the key carries no raw text", () => {
+    const first = advisorLedgerKey(oriented("stable task text", "thread-S"), "m")!;
+    const replay = advisorLedgerKey(oriented("stable task text", "thread-S"), "m")!;
+    expect(replay).toBe(first);
+    // SHA-256-derived, fixed width, and the raw prompt never appears in the key.
+    expect(first).toMatch(/^ak-[0-9a-f]{40}$/);
+    expect(first).not.toContain("stable");
+    expect(first).not.toContain("thread-S");
+  });
+
+  test("a new user turn in the same thread moves the key", () => {
+    const task1 = advisorLedgerKey(oriented("first task", "thread-U"), "m");
+    const twoTurns = parseRequest({
+      model: "worker/deepseek-v4",
+      stream: false,
+      input: [
+        { role: "user", content: "first task" },
+        { type: "function_call", call_id: "c1", name: "shell", arguments: "{}" },
+        { type: "function_call_output", call_id: "c1", output: "ok" },
+        { role: "user", content: "first task appended" },
+      ],
+    } as never);
+    twoTurns._codexOwnThreadId = "thread-U";
+    expect(advisorLedgerKey(twoTurns, "m")).not.toBe(task1);
   });
 });
