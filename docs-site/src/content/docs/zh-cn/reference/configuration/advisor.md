@@ -49,7 +49,7 @@ OpenCodex 不会把自己的凭据注入负载（不含 provider API key、Autho
 
 ## 失败行为
 
-Advisor 失败是 fail-open 的：如果专家模型不可用、配置错误或超时，已经发出的咨询若失败（模型不可用、配置错误、超时），Worker 会收到简短、无误导性的"advisor 不可用"通知（preflight 为 `<opencodex_advisor_unavailable>` 消息，manual 为错误工具结果）并继续任务；只有咨询被取消时才什么都不注入，而计划根本未发起咨询（未启用或未配置模型）时也不会发送通知。Advisor 失败不会让编码请求失败，咨询也不会切换会话的主模型。
+Advisor 失败是 fail-open 的：已经发出的咨询若失败（模型不可用、配置错误、超时），Worker 会收到简短、无误导性的"advisor 不可用"通知（preflight 为 `<opencodex_advisor_unavailable>` 消息，manual 为错误工具结果）并继续任务；只有咨询被取消时才什么都不注入，而计划根本未发起咨询（未启用或未配置模型）时也不会发送通知。Advisor 失败不会让编码请求失败，咨询也不会切换会话的主模型。
 
 ## PR1 限制
 

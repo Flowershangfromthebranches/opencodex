@@ -78,8 +78,7 @@ utilisation : un appel conseiller est toujours prouvable depuis les journaux.
 
 ## Comportement en cas d'échec
 
-Le conseiller échoue ouvertement : si le modèle expert est indisponible, mal configuré ou expire,
-une consultation déjà envoyée qui échoue (modèle indisponible, configuration erronée, délai
+Le conseiller échoue ouvertement : une consultation déjà envoyée qui échoue (modèle indisponible, configuration erronée, délai
 dépassé) donne au worker un court avis « conseiller indisponible », non trompeur (un message
 `<opencodex_advisor_unavailable>` pour preflight, un résultat d'outil en erreur pour manual), et
 la tâche continue ; rien n'est injecté uniquement quand la consultation est annulée, et un plan

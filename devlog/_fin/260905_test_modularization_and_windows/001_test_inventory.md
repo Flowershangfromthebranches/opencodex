@@ -283,9 +283,9 @@ Sum of the table: **1061**. Zero leftover.
 
 ### 2.D Full membership (every `*.test.ts`)
 
-#### `tests/advisor/` (7)
+#### `tests/advisor/` (8)
 
-`advisor-context.test.ts`, `advisor-consult.test.ts`, `advisor-guard.test.ts`, `advisor-plan.test.ts`, `advisor-responses-wiring.test.ts`, `advisor-settings.test.ts`, `advisor-state.test.ts`
+`advisor-context.test.ts`, `advisor-consult.test.ts`, `advisor-guard.test.ts`, `advisor-internal-authority.test.ts`, `advisor-plan.test.ts`, `advisor-responses-wiring.test.ts`, `advisor-settings.test.ts`, `advisor-state.test.ts`
 
 Additional server-domain coverage: `tests/server/advisor-routes.test.ts`.
 
