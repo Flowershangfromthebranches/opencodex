@@ -117,6 +117,8 @@ export const zh: Record<TKey, string> = {
   "advisor.policy": "策略",
   "advisor.policy.manual": "手动 — 仅在 Worker 主动请求时",
   "advisor.policy.preflight": "Preflight — 出现方向性证据后自动尝试咨询",
+  "advisor.policy.adaptive": "自适应",
+  "advisor.adaptiveDescription": "包含首次预检咨询，并在反复验证失败或多次未验证修改后自动咨询已配置的顾问。验证成功会重置升级计数。",
   "advisor.timeout": "超时（毫秒）",
   "advisor.save": "保存顾问设置",
   "advisor.saved": "顾问设置已保存。",

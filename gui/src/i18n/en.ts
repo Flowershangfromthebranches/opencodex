@@ -118,6 +118,8 @@ export const en = {
   "advisor.policy": "Policy",
   "advisor.policy.manual": "Manual — only when the worker asks",
   "advisor.policy.preflight": "Preflight — automatic consultation attempt once orientation evidence exists",
+  "advisor.policy.adaptive": "Adaptive",
+  "advisor.adaptiveDescription": "Includes preflight, then automatically consults the configured Advisor after repeated validation failures or repeated unvalidated changes. Successful validation resets escalation.",
   "advisor.timeout": "Timeout (ms)",
   "advisor.save": "Save advisor settings",
   "advisor.saved": "Advisor settings saved.",

@@ -86,7 +86,8 @@ export interface AdvisorPreflightLedger {
    * task (with the ownership token) until a matching settlement releases it, so two concurrent
    * requests cannot both consult.
    */
-  claim(key: string, now?: number): AdvisorClaim;
+  /** Adaptive/manual recurrence may bypass success, never in-flight or failure suppression. */
+  claim(key: string, now?: number, repeatAfterSuccess?: boolean): AdvisorClaim;
   /**
    * Settle a claim the caller owns. A settlement whose token does not match the current entry
    * is a no-op: the entry now belongs to a successor claim (the caller's in-flight window
@@ -166,12 +167,12 @@ export function createAdvisorPreflightLedger(): AdvisorPreflightLedger {
   };
 
   return {
-    claim(key, now = Date.now()) {
+    claim(key, now = Date.now(), repeatAfterSuccess = false) {
       const entry = liveEntry(key, now);
-      if (entry?.state === "success") return { state: "complete" };
+      if (entry?.state === "success" && !repeatAfterSuccess) return { state: "complete" };
       if (entry?.state === "failed") return { state: "cooldown" };
       if (entry?.state === "inflight") return { state: "inflight" };
-      if (!makeRoom(now)) return { state: "saturated" };
+      if (!entry && !makeRoom(now)) return { state: "saturated" };
       claimSequence += 1;
       const token = `claim-${claimSequence.toString(36)}`;
       set(key, "inflight", now, token);

@@ -508,3 +508,10 @@ keep their existing no-catalog-refresh behavior. The regression suite is
 > Decision record: [Durable provider PATCH](decisions/ADR-0104-durable-provider-patch.md)
 
 > Decision record: [Publication-aware rollback](decisions/ADR-0120-provider-patch-publication-boundary.md)
+
+## Advisor adaptive policy
+
+The `advisor.policy` setting accepts `manual`, `preflight`, and `adaptive` through the CLI,
+management settings route and Advisor dashboard. Adaptive includes the preflight baseline plus
+observable escalation; [Advisor trigger semantics](advisor.md#adaptive-trigger-engine) owns the
+thresholds, progress reset and shared consultation authority.

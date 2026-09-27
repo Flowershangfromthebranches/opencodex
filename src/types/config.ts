@@ -1498,7 +1498,8 @@ export interface OcxAdvisorConfig {
    * consultation per task once the task has produced orientation evidence (an assistant tool call
    * or a tool result after the latest user message).
    */
-  policy?: "manual" | "preflight";
+  /** Adaptive includes preflight plus deterministic escalation from completed tool results. */
+  policy?: "manual" | "preflight" | "adaptive";
   /** Advisor fetch timeout (ms). Default 120000. */
   timeoutMs?: number;
 }

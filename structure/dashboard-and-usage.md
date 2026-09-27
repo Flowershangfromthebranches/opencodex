@@ -1,5 +1,4 @@
 # Dashboard Surfaces And Usage
-
 Dashboard page contracts, usage accounting and request metrics, and the management settings that
 back individual dashboard surfaces. Serving, authentication boundaries, and `/api/*` ownership are
 in [GUI and management API](gui-and-management-api.md).
@@ -598,3 +597,4 @@ Cursor Claude Fast pricing applies the published Fast tuples to Opus 4.8, Opus 5
 Explicit `-fast` model IDs use the Fast tuple directly; a Cursor variant tier outcome applies
 the same 2x multiplier to a base model estimate. Opus 4.7 remains standard-priced because its
 upstream Fast mode is unavailable. Configured model prices retain precedence over compiled rows.
+Advisor policy accepts `manual`, `preflight`, and `adaptive`; [trigger semantics](advisor.md#adaptive-trigger-engine) owns escalation and consultation authority.

@@ -107,7 +107,7 @@ describe("PUT /api/advisor/settings", () => {
   test("invalid values are refused with a named field and nothing is saved", async () => {
     for (const bad of [
       { effort: "ultra-plus" },
-      { policy: "adaptive" },
+      { policy: "semantic" },
       { model: 42 },
       { enabled: "yes" },
       { unknown: true },
@@ -217,4 +217,13 @@ describe("parseAdvisorSettingsPatch (strict validation)", () => {
     const okCtx = makeCtx(baseConfig(), "PUT", { model: "m".repeat(200) }).ctx;
     expect((await handleAdvisorRoutes(okCtx))!.status).toBe(200);
   });
+});
+
+test("adaptive policy persists through the management API", async () => {
+  const config = baseConfig();
+  const { ctx, saved } = makeCtx(config, "PUT", { policy: "adaptive" });
+  const response = await handleAdvisorRoutes(ctx);
+  expect(response!.status).toBe(200);
+  expect((await response!.json() as { settings: { policy: string } }).settings.policy).toBe("adaptive");
+  expect(saved).toHaveLength(1);
 });

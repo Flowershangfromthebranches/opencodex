@@ -25,10 +25,10 @@ Bu, alt ajan yüzeyinden farklıdır (bkz. [Ajan yapılandırması](/tr/referenc
 | `enabled?` | `boolean` | `false` | Ana anahtar. Kapalıyken istek yolunda hiçbir danışman davranışı olmaz. |
 | `model?` | `string` | — | Uzman model. Yönlendiricinin kabul ettiği herhangi bir model dizisi: çıplak yerel model (`gpt-6-astra`), açık `provider/model` (`anthropic/claude-sonnet-4-6`, `xai/grok-...`) veya hesap nitelemeli yerel model. Sağlayıcılar arası tam desteklenir. |
 | `effort?` | `string` | `"max"` | Danışman çağrısının muhakeme düzeyi (`low`–`ultra`). |
-| `policy?` | `"manual" \| "preflight"` | `"manual"` | Ne zaman danışılır. |
+| `policy?` | `"manual" \| "preflight" \| "adaptive"` | `"manual"` | Ne zaman danışılır. |
 | `timeoutMs?` | `number` | `120000` | Loopback danışma zaman aşımı. |
 
-Panodaki **Advisor** sayfası veya `ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight>` ile yönetin.
+Panodaki **Advisor** sayfası veya `ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight|adaptive>` ile yönetin.
 
 ## Politikalar
 
@@ -54,5 +54,34 @@ Danışman fail-open davranır: gönderilmiş bir danışma başarısız olursa 
 ## PR1 sınırlamaları
 
 - Yerel OpenAI passthrough turları (ChatGPT havuzu worker'ları) sentetik aracı almaz; danışman desteği yönlendirilen (çevrilen) sağlayıcıları kapsar. Preflight danışması run-turn bağdaştırıcılarına uygulanır; araç uygulanmaz.
-- Uyarlanabilir tetikleyici yok: takılma algılama, tekrarlayan başarısızlık analizi, yükseltme katmanları, çoklu danışman veya oylama yok. Yalnızca `manual` ve `preflight`.
 - Preflight tekilleştirme defteri süreç içindedir; proxy yeniden başlatıldıktan sonra devam eden bir görev bir preflight danışması daha alabilir.
+
+## Adaptive
+
+Adaptive, ilk preflight danışmasını ve sonraki deterministik yükseltmeleri içerir; anlamsal takılma algılamaz.
+
+```sh
+ocx advisor set --policy adaptive
+```
+
+The internal defaults are two consecutive explicit validation failures, three successful edits
+without successful validation, or three equivalent failed validation actions. The three-edit
+threshold tolerates a patch split across two tools. These are completed-tool observations, not
+an analysis of hidden reasoning or test-log prose. Different diagnostics do not count as failed
+validation; unknown command outcomes are not failures. A successful validation resets the signals.
+
+Adaptive performs the same first preflight consultation as `preflight`, with no duplicate first
+call. Afterwards, `edit → test PASS` and different diagnostic experiments cause **zero extra
+escalations**. `edit → test FAIL → edit → test FAIL` triggers consultation and advice reaches the
+same worker. After manual advice or an adaptive escalation, another escalation requires a fresh
+mutation followed by validation and the rule threshold. This cooldown does not block the first
+escalation after the preflight baseline. Advisor provider failures retain the existing one-minute
+failure cooldown; cancellation releases the claim without a failure cooldown.
+
+Only clients with stable task identity accumulate adaptive observations. State is process-local,
+bounded to 512 tasks for 24 hours, with 2,048 result IDs and 128 pending calls per task. Saturation
+skips escalation; restart, expiry or compaction can reset evidence. At most 128 recent messages
+are projected per request. Provider-private tool activity and complex shell expressions are not
+classified. No semantic stuck detection, multiple advisors, voting or model switching is added.
+Automatic advice uses the existing developer-role injection, with the same trust limitation and
+cross-provider task-content disclosure as preflight.

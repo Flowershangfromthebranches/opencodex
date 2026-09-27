@@ -352,3 +352,38 @@ describe("advisor responses wiring (end-to-end)", () => {
     }
   });
 });
+
+test("adaptive: real Responses routing consults expert after edit/fail/edit/fail and resumes same worker", async () => {
+  releaseSpendHome = acquireOwnedSpendHome();
+  const workerBodies: string[] = [], chatRequests: string[] = [];
+  const config = advisorConfig({ enabled: true, model: "expert/gpt-6-astra", policy: "adaptive" },
+    workerProviderFetch([plainFrames("Continuing the implementation.")], workerBodies));
+  loopbackInterceptor(config, { chatRequests });
+  const input: unknown[] = [{ role: "user", content: "Adaptive acceptance task" }];
+  function append(id: string, name: string, args: object, output: string) {
+    input.push({ type: "function_call", call_id: id, name, arguments: JSON.stringify(args) },
+      { type: "function_call_output", call_id: id, output });
+  }
+  async function turn() {
+    const response = await handleResponses(workerRequest(input, "adaptive-e2e-acceptance"), config, logCtx);
+    expect(response.status).toBe(200);
+    const frames = await collectSse(response.body!);
+    expect(frames.some(frame => frame.event === "response.completed")).toBe(true);
+    expect(JSON.stringify(frames)).toContain("Continuing the implementation");
+  }
+  append("orient", "read_file", { path: "a.ts" }, "orientation");
+  await turn(); // One shared PR1 preflight baseline.
+  expect(chatRequests).toHaveLength(1);
+  append("edit-1", "write_file", { path: "a.ts", content: "first attempt" }, "written");
+  append("test-1", "shell", { cmd: "bun test a.test.ts" }, '{"exit_code":1}');
+  await turn();
+  expect(chatRequests).toHaveLength(1);
+  append("edit-2", "write_file", { path: "a.ts", content: "second attempt" }, "written");
+  append("test-2", "shell", { cmd: "bun test a.test.ts" }, '{"exit_code":1}');
+  await turn();
+  expect(chatRequests).toHaveLength(2);
+  expect(chatRequests[1]).toContain("repeated_validation_failure");
+  expect(JSON.parse(chatRequests[1]!).model).toBe("expert/gpt-6-astra");
+  expect(workerBodies.at(-1)).toContain(ADVISOR_ADVICE);
+  expect(JSON.parse(workerBodies.at(-1)!).model).toBe("deepseek-v4");
+});

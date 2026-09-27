@@ -117,6 +117,8 @@ export const ko: Record<TKey, string> = {
   "advisor.policy": "정책",
   "advisor.policy.manual": "수동 — Worker가 요청할 때만",
   "advisor.policy.preflight": "Preflight — 방향 증거가 생기면 자동 상담 시도",
+  "advisor.policy.adaptive": "적응형",
+  "advisor.adaptiveDescription": "초기 자문을 포함하며 검증 실패나 미검증 변경이 반복되면 설정된 Advisor에 자문합니다. 검증 성공 시 카운터가 초기화됩니다.",
   "advisor.timeout": "타임아웃 (ms)",
   "advisor.save": "어드바이저 설정 저장",
   "advisor.saved": "어드바이저 설정이 저장되었습니다.",

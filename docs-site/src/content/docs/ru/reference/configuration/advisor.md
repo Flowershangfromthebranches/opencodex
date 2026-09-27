@@ -25,10 +25,10 @@ description: Принадлежащий OpenCodex sidecar экспертных �
 | `enabled?` | `boolean` | `false` | Главный выключатель. Выключено — ноль поведения консультанта на пути запроса. |
 | `model?` | `string` | — | Экспертная модель. Любая строка модели, которую принимает роутер: «голая» нативная модель (`gpt-6-astra`), явный `provider/model` (`anthropic/claude-sonnet-4-6`, `xai/grok-...`) или модель с квалификацией аккаунта. Полная поддержка межпровайдерных сценариев. |
 | `effort?` | `string` | `"max"` | Интенсивность рассуждений вызова консультанта (`low`–`ultra`). |
-| `policy?` | `"manual" \| "preflight"` | `"manual"` | Когда консультировать. |
+| `policy?` | `"manual" \| "preflight" \| "adaptive"` | `"manual"` | Когда консультировать. |
 | `timeoutMs?` | `number` | `120000` | Тайм-аут loopback-консультации. |
 
-Управляйте через страницу **Advisor** на дашборде или `ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight>`.
+Управляйте через страницу **Advisor** на дашборде или `ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight|adaptive>`.
 
 ## Политики
 
@@ -54,5 +54,34 @@ OpenCodex никогда не внедряет в нагрузку свои со
 ## Ограничения PR1
 
 - Нативные passthrough-ходы OpenAI (воркеры пула ChatGPT) не получают синтетический инструмент; поддержка консультанта покрывает маршрутизируемых (переведённых) провайдеров. Preflight-консультация применяется к run-turn-адаптерам; инструмент — нет.
-- Нет адаптивного триггера: нет детекции застревания, анализа повторных сбоев, уровней эскалации, нескольких консультантов или голосования. Только `manual` и `preflight`.
 - Учётная книга дедупликации preflight живёт в процессе; после перезапуска прокси задача в работе может получить ещё одну preflight-консультацию.
+
+## Adaptive
+
+Adaptive включает начальную preflight-консультацию и последующую детерминированную эскалацию, без семантического определения затруднений.
+
+```sh
+ocx advisor set --policy adaptive
+```
+
+The internal defaults are two consecutive explicit validation failures, three successful edits
+without successful validation, or three equivalent failed validation actions. The three-edit
+threshold tolerates a patch split across two tools. These are completed-tool observations, not
+an analysis of hidden reasoning or test-log prose. Different diagnostics do not count as failed
+validation; unknown command outcomes are not failures. A successful validation resets the signals.
+
+Adaptive performs the same first preflight consultation as `preflight`, with no duplicate first
+call. Afterwards, `edit → test PASS` and different diagnostic experiments cause **zero extra
+escalations**. `edit → test FAIL → edit → test FAIL` triggers consultation and advice reaches the
+same worker. After manual advice or an adaptive escalation, another escalation requires a fresh
+mutation followed by validation and the rule threshold. This cooldown does not block the first
+escalation after the preflight baseline. Advisor provider failures retain the existing one-minute
+failure cooldown; cancellation releases the claim without a failure cooldown.
+
+Only clients with stable task identity accumulate adaptive observations. State is process-local,
+bounded to 512 tasks for 24 hours, with 2,048 result IDs and 128 pending calls per task. Saturation
+skips escalation; restart, expiry or compaction can reset evidence. At most 128 recent messages
+are projected per request. Provider-private tool activity and complex shell expressions are not
+classified. No semantic stuck detection, multiple advisors, voting or model switching is added.
+Automatic advice uses the existing developer-role injection, with the same trust limitation and
+cross-provider task-content disclosure as preflight.

@@ -4,7 +4,7 @@ const USAGE = `Usage:
   ocx advisor status [--json]
   ocx advisor on [--json]
   ocx advisor off [--json]
-  ocx advisor set [--model <model>] [--effort <effort>] [--policy <manual|preflight>] [--timeout-ms <ms>] [--json]`;
+  ocx advisor set [--model <model>] [--effort <effort>] [--policy <manual|preflight|adaptive>] [--timeout-ms <ms>] [--json]`;
 
 const VALUED_FLAGS = new Set(["--model", "--effort", "--policy", "--timeout-ms"]);
 

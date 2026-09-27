@@ -117,6 +117,8 @@ export const ru: Record<TKey, string> = {
   "advisor.policy": "Политика",
   "advisor.policy.manual": "Вручную — только по запросу воркера",
   "advisor.policy.preflight": "Preflight — автоматическая попытка при появлении ориентационного свидетельства",
+  "advisor.policy.adaptive": "Адаптивная",
+  "advisor.adaptiveDescription": "Включает начальную консультацию и повторное обращение к Advisor при ошибках проверки или непроверенных изменениях. Успешная проверка сбрасывает счётчики.",
   "advisor.timeout": "Тайм-аут (мс)",
   "advisor.save": "Сохранить настройки консультанта",
   "advisor.saved": "Настройки консультанта сохранены.",

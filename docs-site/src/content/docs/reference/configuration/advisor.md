@@ -1,6 +1,6 @@
 ---
 title: Advisor
-description: The OpenCodex-owned expert consultation sidecar — a configured expert model advises routed workers, with manual and preflight policies.
+description: The OpenCodex-owned expert consultation sidecar — a configured expert model advises routed workers, with manual, preflight and adaptive policies.
 ---
 
 The advisor is an independent expert model that reviews the worker's task and returns advice.
@@ -32,11 +32,11 @@ never sees — even a worker that never spawns anything can be advised.
 | `enabled?` | `boolean` | `false` | Master switch. Disabled means zero advisor behavior on the request path. |
 | `model?` | `string` | — | The expert model. Any model string the router accepts: a bare native model (`gpt-6-astra`), an explicit `provider/model` (`anthropic/claude-sonnet-4-6`, `xai/grok-...`), or an account-qualified native model. Cross-provider is fully supported: the worker and the advisor do not need to share a provider. |
 | `effort?` | `string` | `"max"` | Reasoning effort for the advisor call (`low` through `ultra`). |
-| `policy?` | `"manual" \| "preflight"` | `"manual"` | When the advisor is consulted. |
+| `policy?` | `"manual" \| "preflight" \| "adaptive"` | `"manual"` | When the advisor is consulted. |
 | `timeoutMs?` | `number` | `120000` | Loopback consultation timeout. |
 
 Manage it with the dashboard **Advisor** page or
-`ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight>`.
+`ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight|adaptive>`.
 
 ## Policies
 
@@ -96,7 +96,35 @@ consultation never switches the session's main model.
 - Native OpenAI passthrough turns (ChatGPT-pool workers) do not get the synthetic tool; advisor
   support covers routed (translated) providers. Preflight consultation applies to run-turn
   adapters; the tool does not.
-- No adaptive trigger: no stuck detection, repeated-failure analysis, escalation tiers, multiple
-  advisors, or advisor voting. `manual` and `preflight` are the only policies.
 - The preflight dedup ledger is process-local; after a proxy restart, a task in progress may
   receive one more preflight attempt.
+
+## Adaptive
+
+Adaptive includes the preflight baseline and later deterministic escalation. It does not detect semantic confusion or root-cause uncertainty.
+
+```sh
+ocx advisor set --policy adaptive
+```
+
+The internal defaults are two consecutive explicit validation failures, three successful edits
+without successful validation, or three equivalent failed validation actions. The three-edit
+threshold tolerates a patch split across two tools. These are completed-tool observations, not
+an analysis of hidden reasoning or test-log prose. Different diagnostics do not count as failed
+validation; unknown command outcomes are not failures. A successful validation resets the signals.
+
+Adaptive performs the same first preflight consultation as `preflight`, with no duplicate first
+call. Afterwards, `edit → test PASS` and different diagnostic experiments cause **zero extra
+escalations**. `edit → test FAIL → edit → test FAIL` triggers consultation and advice reaches the
+same worker. After manual advice or an adaptive escalation, another escalation requires a fresh
+mutation followed by validation and the rule threshold. This cooldown does not block the first
+escalation after the preflight baseline. Advisor provider failures retain the existing one-minute
+failure cooldown; cancellation releases the claim without a failure cooldown.
+
+Only clients with stable task identity accumulate adaptive observations. State is process-local,
+bounded to 512 tasks for 24 hours, with 2,048 result IDs and 128 pending calls per task. Saturation
+skips escalation; restart, expiry or compaction can reset evidence. At most 128 recent messages
+are projected per request. Provider-private tool activity and complex shell expressions are not
+classified. No semantic stuck detection, multiple advisors, voting or model switching is added.
+Automatic advice uses the existing developer-role injection, with the same trust limitation and
+cross-provider task-content disclosure as preflight.

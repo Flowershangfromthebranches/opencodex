@@ -25,10 +25,10 @@ description: OpenCodex가 소유한 전문가 상담 사이드카 — 구성된 
 | `enabled?` | `boolean` | `false` | 마스터 스위치. 비활성화 시 요청 경로에 어드바이저 동작이 전혀 없습니다. |
 | `model?` | `string` | — | 전문가 모델. 라우터가 허용하는 모든 모델 문자열: 네이티브 모델(`gpt-6-astra`), 명시적 `provider/model`(`anthropic/claude-sonnet-4-6`, `xai/grok-...`), 계정 한정 네이티브 모델. 크로스 프로바이더를 완전히 지원합니다. |
 | `effort?` | `string` | `"max"` | 어드바이저 호출의 추론 강도(`low`~`ultra`). |
-| `policy?` | `"manual" \| "preflight"` | `"manual"` | 상담 시점. |
+| `policy?` | `"manual" \| "preflight" \| "adaptive"` | `"manual"` | 상담 시점. |
 | `timeoutMs?` | `number` | `120000` | 루프백 상담 타임아웃. |
 
-대시보드 **Advisor** 페이지 또는 `ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight>`로 관리합니다.
+대시보드 **Advisor** 페이지 또는 `ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight|adaptive>`로 관리합니다.
 
 ## 정책
 
@@ -54,5 +54,34 @@ OpenCodex는 자체 자격 증명을 페이로드에 주입하지 않습니다(�
 ## PR1 제한
 
 - 네이티브 OpenAI 패스스루 턴(ChatGPT 풀 워커)에는 합성 도구가 주입되지 않습니다. 어드바이저는 라우팅(번역) 제공자를 대상으로 합니다. preflight 상담은 run-turn 어댑터에 적용되지만 도구는 적용되지 않습니다.
-- 적응형 트리거가 없습니다: 막힘 감지, 반복 실패 분석, 에스컬레이션 계층, 다중 어드바이저, 투표가 없습니다. `manual`과 `preflight`만 있습니다.
 - preflight 중복 제거 원장은 프로세스 내에 있습니다. 프록시 재시작 후 진행 중인 작업은 preflight 상담을 한 번 더 받을 수 있습니다.
+
+## Adaptive
+
+Adaptive는 초기 preflight 자문과 이후의 결정적 에스컬레이션을 포함합니다. 의미적 혼란이나 근본 원인 불확실성을 감지하지 않습니다.
+
+```sh
+ocx advisor set --policy adaptive
+```
+
+The internal defaults are two consecutive explicit validation failures, three successful edits
+without successful validation, or three equivalent failed validation actions. The three-edit
+threshold tolerates a patch split across two tools. These are completed-tool observations, not
+an analysis of hidden reasoning or test-log prose. Different diagnostics do not count as failed
+validation; unknown command outcomes are not failures. A successful validation resets the signals.
+
+Adaptive performs the same first preflight consultation as `preflight`, with no duplicate first
+call. Afterwards, `edit → test PASS` and different diagnostic experiments cause **zero extra
+escalations**. `edit → test FAIL → edit → test FAIL` triggers consultation and advice reaches the
+same worker. After manual advice or an adaptive escalation, another escalation requires a fresh
+mutation followed by validation and the rule threshold. This cooldown does not block the first
+escalation after the preflight baseline. Advisor provider failures retain the existing one-minute
+failure cooldown; cancellation releases the claim without a failure cooldown.
+
+Only clients with stable task identity accumulate adaptive observations. State is process-local,
+bounded to 512 tasks for 24 hours, with 2,048 result IDs and 128 pending calls per task. Saturation
+skips escalation; restart, expiry or compaction can reset evidence. At most 128 recent messages
+are projected per request. Provider-private tool activity and complex shell expressions are not
+classified. No semantic stuck detection, multiple advisors, voting or model switching is added.
+Automatic advice uses the existing developer-role injection, with the same trust limitation and
+cross-provider task-content disclosure as preflight.

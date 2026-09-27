@@ -32,11 +32,11 @@ sidecar côté proxy invisible du client — même un worker qui ne spawn jamais
 | `enabled?` | `boolean` | `false` | Interrupteur principal. Désactivé : aucun comportement conseiller sur le chemin de requête. |
 | `model?` | `string` | — | Le modèle expert. Toute chaîne de modèle acceptée par le routeur : modèle natif seul (`gpt-6-astra`), `provider/model` explicite (`anthropic/claude-sonnet-4-6`, `xai/grok-...`) ou modèle natif qualifié par compte. Inter-fournisseurs entièrement pris en charge. |
 | `effort?` | `string` | `"max"` | Intensité de raisonnement de l'appel conseiller (`low`–`ultra`). |
-| `policy?` | `"manual" \| "preflight"` | `"manual"` | Quand consulter le conseiller. |
+| `policy?` | `"manual" \| "preflight" \| "adaptive"` | `"manual"` | Quand consulter le conseiller. |
 | `timeoutMs?` | `number` | `120000` | Délai de la consultation en boucle locale. |
 
 Gérez-le via la page **Advisor** du tableau de bord ou
-`ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight>`.
+`ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight|adaptive>`.
 
 ## Politiques
 
@@ -90,7 +90,35 @@ codage, et une consultation ne change jamais le modèle principal de la session.
 - Les tours natifs OpenAI en passthrough (workers du pool ChatGPT) ne reçoivent pas l'outil
   synthétique ; le conseiller couvre les fournisseurs routés (traduits). La consultation
   preflight s'applique aux adaptateurs run-turn ; l'outil non.
-- Pas de déclencheur adaptatif : pas de détection de blocage, d'analyse d'échecs répétés, de
-  niveaux d'escalade, de conseillers multiples ni de vote. `manual` et `preflight` seulement.
 - Le registre de déduplication preflight vit dans le processus ; après un redémarrage du proxy,
   une tâche en cours peut recevoir une tentative preflight de plus.
+
+## Adaptive
+
+Adaptive inclut la consultation preflight initiale et une escalade déterministe ultérieure ; il ne détecte pas la confusion sémantique.
+
+```sh
+ocx advisor set --policy adaptive
+```
+
+The internal defaults are two consecutive explicit validation failures, three successful edits
+without successful validation, or three equivalent failed validation actions. The three-edit
+threshold tolerates a patch split across two tools. These are completed-tool observations, not
+an analysis of hidden reasoning or test-log prose. Different diagnostics do not count as failed
+validation; unknown command outcomes are not failures. A successful validation resets the signals.
+
+Adaptive performs the same first preflight consultation as `preflight`, with no duplicate first
+call. Afterwards, `edit → test PASS` and different diagnostic experiments cause **zero extra
+escalations**. `edit → test FAIL → edit → test FAIL` triggers consultation and advice reaches the
+same worker. After manual advice or an adaptive escalation, another escalation requires a fresh
+mutation followed by validation and the rule threshold. This cooldown does not block the first
+escalation after the preflight baseline. Advisor provider failures retain the existing one-minute
+failure cooldown; cancellation releases the claim without a failure cooldown.
+
+Only clients with stable task identity accumulate adaptive observations. State is process-local,
+bounded to 512 tasks for 24 hours, with 2,048 result IDs and 128 pending calls per task. Saturation
+skips escalation; restart, expiry or compaction can reset evidence. At most 128 recent messages
+are projected per request. Provider-private tool activity and complex shell expressions are not
+classified. No semantic stuck detection, multiple advisors, voting or model switching is added.
+Automatic advice uses the existing developer-role injection, with the same trust limitation and
+cross-provider task-content disclosure as preflight.
