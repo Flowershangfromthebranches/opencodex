@@ -32,7 +32,7 @@ import {
   advisorLedgerKey,
   createAdvisorPreflightLedger,
   hasOrientationEvidence,
-  historyHasAdvisorResult,
+  historyHasManualAdvisorResult,
   type AdvisorPreflightLedger,
 } from "./state";
 import { formatAdvisorAdvice, formatAdvisorUnavailable } from "./context";
@@ -171,8 +171,9 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
 
   const preflightInject = async (parsed: OcxParsedRequest): Promise<boolean> => {
     if (settings.policy !== "preflight" || preflightUsed) return false;
-    // Already advised (genuine provenance) or no qualifying orientation evidence: skip.
-    if (historyHasAdvisorResult(parsed)) return false;
+    // A genuine MANUAL consultation already advised this task (verifiable tool-result
+    // provenance), or the task has no orientation evidence yet: skip.
+    if (historyHasManualAdvisorResult(parsed)) return false;
     if (!hasOrientationEvidence(parsed)) return false;
 
     // Atomic claim. A client with a stable conversation identity participates in the

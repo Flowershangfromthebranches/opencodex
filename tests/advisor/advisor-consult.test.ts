@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { consultAdvisor, ADVISOR_INTERNAL_HEADER, advisorDestinationOrigin } from "../../src/advisor/consult";
+import { internalCallCapability } from "../../src/lib/local-internal-call-capability";
 import type { OcxParsedRequest } from "../../src/types";
 import { parseRequest } from "../../src/responses/parser";
 
@@ -43,7 +44,9 @@ describe("consultAdvisor", () => {
     expect(result.usage?.inputTokens).toBe(120);
     expect(result.usage?.outputTokens).toBe(40);
     expect(seenUrl).toBe("http://advisor.test/v1/chat/completions");
-    expect(seenHeaders[ADVISOR_INTERNAL_HEADER]).toBe("1");
+    // The fence header carries this process's server-owned capability, never a literal.
+    expect(seenHeaders[ADVISOR_INTERNAL_HEADER]).toBe(internalCallCapability());
+    expect(seenHeaders[ADVISOR_INTERNAL_HEADER]).not.toBe("1");
     expect(seenBody.model).toBe("gpt-6-astra");
     expect(seenBody.stream).toBe(false);
     expect(seenBody.reasoning_effort).toBe("max");

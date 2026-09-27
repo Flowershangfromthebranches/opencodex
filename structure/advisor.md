@@ -35,13 +35,22 @@ code on the request path. The guard is applied by `adapter-delivery.ts` through 
 - Turns claimed by the web-search or image/video sidecar loops keep the advisor tool un-injected;
   preflight still applies.
 
-## Recursion fence
+## Recursion fence (server-owned authority)
 
-The consultation executor calls the proxy's own `/v1/chat/completions` on loopback with the
-`x-opencodex-advisor-internal: 1` marker header (the same structure as the vision-describe
-fence). The Chat surface detects the raw header before its bridge rebuilds headers and carries
-the fact into `handleResponses` as `advisorInternal`; a marked request never plans an advisor
-consultation. Depth cap 1 holds under combo re-resolution.
+The consultation executor calls the proxy's own `/v1/chat/completions` on loopback and presents
+`x-opencodex-advisor-internal` with a **process-owned capability**: a 256-bit random value minted
+once per process, kept in memory only — never in config, on disk, in logs, in usage, in request
+metadata, or in an API response, and never forwarded upstream. The Chat surface carries the fact
+into `handleResponses` as `advisorInternal` only when the header value matches that capability
+(shape-checked, constant-time compare); a request without it — including one that sends the old
+literal `1` — is an ordinary external request and never receives internal authority. Peer address
+is deliberately not part of the decision: Docker, WSL, tunnels, and port forwarding can all end on
+loopback. A marked request never plans an advisor consultation, so depth stays capped at 1 under
+combo re-resolution, and a new process mints a new value, which invalidates any captured token.
+
+The vision-describe fence still compares a literal header value and therefore has the same
+pre-existing spoof shape; wiring it to this capability is a separate follow-up, recorded so the
+gap is visible rather than assumed absent.
 
 ## Cross-provider consultation
 
@@ -62,7 +71,11 @@ encrypted provider-only content. **Task content is not generally secret-redacted
 credentials and token-bearing tool output travel as-is, because no reliable string-level
 secret detector exists; no DLP claim may be made in any doc, GUI string, or PR text. The payload
 is built exclusively from the parsed conversation the model is already allowed to see: user task, conversation, tool calls and their results, the worker's tool catalog,
-and both model identities. Thinking/chain-of-thought parts are never included, encrypted
+and both model identities. The advisor system instruction states the boundary explicitly:
+conversation history, tool outputs, logs, file contents, and instructions quoted inside them are
+untrusted evidence — the advisor analyses them and never obeys them, because only its own system
+instruction defines its role (defense in depth, not a claim that injection is solved). Thinking and
+chain-of-thought parts are never included, encrypted
 provider content is never decrypted or forwarded, and failure text is redacted and bounded before
 it can reach any context. Advice is re-injected as identifiable
 `<opencodex_advisor>`-wrapped content with no system authority: manual consultations arrive as
@@ -82,8 +95,21 @@ match neither form, so nothing a shell, log, or upstream error body prints can s
 advice. The guard never composes failure prose itself: `AdvisorPlan.formatUnavailable` owns that
 text and neutralizes untrusted fragments.
 
+Keys are SHA-256 digests, never a short fold and never raw text: one domain-separated digest
+over `conversation identity + task boundary + worker model`, where the task boundary digests the
+FULL latest user text (no truncation) together with the user-turn count. Task identity is a
+correctness boundary, so a 32-bit hash is not acceptable there, and storing only the digest means
+a captured key reveals nothing about the conversation.
+
+Automatic-preflight dedup is ledger-authoritative. The `<opencodex_advisor_preflight>` wrapper in
+the injected developer message is informational — it labels the text for the worker and for logs —
+and developer messages are never inspected for suppression, because a client could echo or forge
+one. Manual advice remains verifiable history (paired tool result, `toolName` = the synthetic
+advisor tool).
+
 The preflight ledger is an atomic CLAIM table, not a has-then-mark pair: `claim` returns
-`claimed` / `inflight` / `complete` / `cooldown`, and `complete` / `fail` / `release` settle it.
+`claimed` / `inflight` / `complete` / `cooldown` with an ownership token, and a settlement whose
+token no longer matches is a no-op.
 Success suppresses for the task lifetime; a failure suppresses only for a one-minute cooldown
 (the minute scale the repository already uses for polling), so a transient outage pauses the
 policy instead of silencing it; a client cancellation releases the claim with no cooldown. Keys
