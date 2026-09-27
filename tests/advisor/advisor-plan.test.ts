@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { createAdvisorRuntimePlan } from "../../src/advisor/runtime";
 import { formatAdvisorUnavailable } from "../../src/advisor/context";
+import { historyHasAdvisorResult } from "../../src/advisor/state";
 import type { OcxConfig, OcxParsedRequest } from "../../src/types";
 import { parseRequest } from "../../src/responses/parser";
 
@@ -248,5 +249,10 @@ describe("createAdvisorRuntimePlan — consultation dedup", () => {
     // The wrapper text survives only inside the unavailable envelope, where the scanner
     // does not look; the bare advice marker never appears.
     expect(String(last.content).includes("<opencodex_advisor_unavailable>")).toBe(true);
+    // The regression this pins: even with the marker present in the upstream error body, the
+    // bare advice marker must not survive into the injected context, and the failure must not
+    // read as an advised conversation.
+    expect(String(last.content)).not.toContain("<opencodex_advisor>");
+    expect(historyHasAdvisorResult(parsed)).toBe(false);
   });
 });

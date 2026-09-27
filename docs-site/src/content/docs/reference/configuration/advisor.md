@@ -56,9 +56,11 @@ Manage it with the dashboard **Advisor** page or
 **Cross-provider data transfer:** when the advisor provider differs from the worker's provider,
 the consultation payload sends the task conversation and tool results to a second model
 provider. Do not enable the advisor with a provider you do not trust with this task content.
-The payload contains no credentials, no authorization or OAuth material, and no environment
-secrets; chain-of-thought is never transferred; encrypted provider-only content is never
-decrypted or forwarded.
+The proxy never injects credentials, authorization or OAuth material, or environment secrets
+into the payload; chain-of-thought is never transferred; encrypted provider-only content is
+never decrypted or forwarded. Task content itself — including anything the task text or tool
+results contain — is forwarded as-is: do not enable the advisor on tasks whose content is too
+sensitive for the advisor provider.
 
 The consultation payload is built from the parsed conversation the worker model is already
 allowed to see: the user task, the conversation, tool calls and their results, the worker's tool
