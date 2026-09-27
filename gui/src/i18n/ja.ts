@@ -110,7 +110,7 @@ export const ja: Record<TKey, string> = {
   "nav.subagents": "サブエージェント",
 
   "nav.advisor": "アドバイザー",
-  "advisor.description": "Worker のタスクをレビューし助言を返す独立したエキスパートモデル。相談は OpenCodex 自身が実行します。Worker は合成 advisor ツールを呼び出せて、preflight ポリシーはタスクが方向性の証拠（最新のユーザーメッセージ以降のアシスタントのツール呼び出しまたはツール結果）を出した後に 1 回の自動相談を試みます（Worker の協力は不要）。この試行は、安定した会話識別子を持つクライアントではタスクごとに重複排除されますが、識別子を持たないクライアントではもう一度発生することがあります。",
+  "advisor.description": "Worker のタスクをレビューし助言を返す独立したエキスパートモデル。相談は OpenCodex 自身が実行します。Worker は合成 advisor ツールを呼び出せて、preflight ポリシーはタスクが方向性の証拠（最新のユーザーメッセージ以降のアシスタントのツール呼び出しまたはツール結果）を出した後に 1 回の自動相談を試みます（Worker の協力は不要）。この試行は、安定した会話識別子を持つクライアントではタスクごとに重複排除されますが、識別子を持たないクライアントではこの重複排除が行われず、条件を満たすリクエストごとに相談が再度発生することがあります。",
   "advisor.enabled": "アドバイザーを有効化",
   "advisor.model": "エキスパートモデル",
   "advisor.modelPlaceholder": "例: gpt-6-astra または anthropic/claude-sonnet-4-6",
