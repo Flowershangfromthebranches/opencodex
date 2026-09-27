@@ -175,6 +175,7 @@ export default function Advisor({ apiBase }: { apiBase: string }) {
       {heading}
       <p className="muted">{t("advisor.description")}</p>
       <Notice tone="warn">{t("advisor.costNote")}</Notice>
+      <Notice tone="warn">{t("advisor.privacyNote")}</Notice>
       {state.showSkeleton && <Notice tone="warn">{t("common.loading")}</Notice>}
       {state.showError && !state.showSkeleton && (
         <Notice tone="err">

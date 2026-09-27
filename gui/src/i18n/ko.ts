@@ -133,6 +133,7 @@ export const ko: Record<TKey, string> = {
   "advisor.loadFailed": "어드바이저 설정을 불러올 수 없습니다. 프록시가 실행 중인지 확인하세요.",
   "advisor.warning.noModel": "활성화되었지만 전문가 모델이 설정되지 않았습니다 — 상담이 실패합니다.",
   "advisor.costNote": "상담은 실제 추가 모델 호출이며, Worker가 아닌 어드바이저 모델의 사용량으로 기록됩니다.",
+  "advisor.privacyNote": "크로스 프로바이더 안내: 상담 시 작업 대화와 도구 결과가 설정된 어드바이저 프로바이더(워커의 프로바이더와 다를 수 있음)로 전송됩니다. 이 작업 내용을 맡길 수 없는 프로바이더에서는 어드바이저를 활성화하지 마세요.",
   // routing intelligence
   "routing.title": "라우팅 인텔리전스 (beta)",
   "routing.subtitle": "정책 프로필, 드라이런 평가, 소스 기반 라우팅 분석.",

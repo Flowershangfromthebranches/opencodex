@@ -53,6 +53,13 @@ Manage it with the dashboard **Advisor** page or
 
 ## What the advisor sees
 
+**Cross-provider data transfer:** when the advisor provider differs from the worker's provider,
+the consultation payload sends the task conversation and tool results to a second model
+provider. Do not enable the advisor with a provider you do not trust with this task content.
+The payload contains no credentials, no authorization or OAuth material, and no environment
+secrets; chain-of-thought is never transferred; encrypted provider-only content is never
+decrypted or forwarded.
+
 The consultation payload is built from the parsed conversation the worker model is already
 allowed to see: the user task, the conversation, tool calls and their results, the worker's tool
 catalog, and both model identities. The advisor returns prose advice, re-injected as identifiable

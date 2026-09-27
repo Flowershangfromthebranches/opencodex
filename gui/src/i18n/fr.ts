@@ -131,6 +131,7 @@ export const fr: Record<TKey, string> = {
   "advisor.loadFailed": "Impossible de charger les réglages du conseiller. Le proxy tourne-t-il ?",
   "advisor.warning.noModel": "Activé mais aucun modèle expert configuré — les consultations échoueront.",
   "advisor.costNote": "Les consultations sont de véritables appels de modèle supplémentaires, comptés dans l'usage sous le modèle conseiller, pas le modèle worker.",
+  "advisor.privacyNote": "Avis multi-fournisseurs : les consultations envoient la conversation de tâche et les résultats d'outils au fournisseur conseiller configuré, qui peut différer de celui du worker. N'activez pas le conseiller avec un fournisseur auquel vous ne confiez pas ce contenu.",
   "nav.logs": "Journaux et débogage",
   "nav.usage": "Utilisation",
   "common.github": "GitHub",

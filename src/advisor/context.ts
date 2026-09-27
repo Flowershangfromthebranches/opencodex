@@ -143,14 +143,17 @@ export function formatAdvisorAdvice(input: { advisorModel: string; reason: strin
  * Deliberately NOT wrapped in `<opencodex_advisor>`: that wrapper is the single marker
  * `historyHasAdvisorResult` treats as "this task already has advice". A failure is not advice —
  * wrapping it there would permanently suppress preflight retries for the whole conversation
- * even after the failure ledger entry expires.
+ * even after the failure ledger entry expires. Upstream error text is untrusted: any occurrence
+ * of the advice marker inside it is neutralized so a hostile or broken advisor response cannot
+ * forge an "already advised" state through the failure path.
  */
 export function formatAdvisorUnavailable(reason: string, error: string): string {
+  const safeError = error.replaceAll("opencodex_advisor", "opencodex_advisor(unavailable)");
   return [
     "<opencodex_advisor_unavailable>",
     "The advisor was consulted but is currently unavailable, so this consultation produced no advice.",
     `consultation reason: ${reason}`,
-    `failure: ${error}`,
+    `failure: ${safeError}`,
     "",
     "Continue the task with your own judgment. This is not advice.",
     "</opencodex_advisor_unavailable>",
