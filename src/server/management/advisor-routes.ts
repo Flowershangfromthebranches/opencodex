@@ -73,7 +73,7 @@ export function parseAdvisorSettingsPatch(body: unknown): ParsedPatch {
   }
   if (body.policy !== undefined) {
     if (!isValidAdvisorPolicy(body.policy)) {
-      return { ok: false, code: "invalid_policy", message: 'policy must be "manual", "preflight", or "adaptive"' };
+      return { ok: false, code: "invalid_policy", message: 'policy must be "manual" or "preflight"' };
     }
     patch.policy = body.policy;
   }

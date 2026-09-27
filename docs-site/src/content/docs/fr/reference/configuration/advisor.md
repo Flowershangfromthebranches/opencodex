@@ -77,9 +77,11 @@ utilisation : un appel conseiller est toujours prouvable depuis les journaux.
 ## Comportement en cas d'échec
 
 Le conseiller échoue ouvertement : si le modèle expert est indisponible, mal configuré ou expire,
-le worker reçoit un court avis « conseiller indisponible », non trompeur (un message
+une consultation déjà envoyée qui échoue (modèle indisponible, configuration erronée, délai
+dépassé) donne au worker un court avis « conseiller indisponible », non trompeur (un message
 `<opencodex_advisor_unavailable>` pour preflight, un résultat d'outil en erreur pour manual), et
-poursuit la tâche. Rien n'est injecté uniquement quand la consultation est annulée. Un échec de consultation ne fait jamais échouer la requête de
+la tâche continue ; rien n'est injecté uniquement quand la consultation est annulée, et un plan
+qui ne démarre aucune consultation (désactivé ou sans modèle) n'envoie aucun avis. Un échec de consultation ne fait jamais échouer la requête de
 codage, et une consultation ne change jamais le modèle principal de la session.
 
 ## Limitations PR1
