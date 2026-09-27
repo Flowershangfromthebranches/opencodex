@@ -68,7 +68,9 @@ the advisor on tasks whose content is too sensitive for the advisor provider.
 The consultation payload is built from the parsed conversation the worker model is already
 allowed to see: the user task, the conversation, tool calls and their results, the worker's tool
 catalog, and both model identities. The advisor returns prose advice, re-injected as identifiable
-`<opencodex_advisor>`-wrapped content with no system authority. Chain-of-thought is never
+wrapper-tagged content with no system authority: MANUAL advice arrives as a paired tool result
+carrying the `<opencodex_advisor>` wrapper, and AUTOMATIC preflight advice as a developer message
+carrying the `<opencodex_advisor_preflight>` wrapper. Chain-of-thought is never
 transferred and encrypted provider content is never decrypted; the proxy injects none of its own
 credentials, but task content itself is forwarded as-is (see the cross-provider notice above).
 

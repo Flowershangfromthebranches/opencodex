@@ -1,9 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { handleAdvisorRoutes, parseAdvisorSettingsPatch } from "../../src/server/management/advisor-routes";
-import type { ManagementContext } from "../../src/server/management/context";
+import type { ManagementApiDeps, ManagementContext } from "../../src/server/management/context";
 import type { OcxConfig } from "../../src/types";
 
-function makeCtx(config: OcxConfig, method: string, body?: unknown): { ctx: ManagementContext; saved: OcxConfig[] } {
+/**
+ * One complete `ManagementContext` for the route tests. Direct dispatch means the untrusted
+ * admin-token case (`trustedLoopbackIngress: false`, no GUI session), and the two required
+ * convergence seams are stubbed: the advisor routes never call them, but the fixture must still
+ * satisfy the interface.
+ */
+function makeCtx(
+  config: OcxConfig,
+  method: string,
+  body?: unknown,
+  deps: ManagementApiDeps = {},
+): { ctx: ManagementContext; saved: OcxConfig[] } {
   const saved: OcxConfig[] = [];
   const ctx: ManagementContext = {
     req: new Request("http://localhost/api/advisor/settings", {
@@ -16,8 +27,13 @@ function makeCtx(config: OcxConfig, method: string, body?: unknown): { ctx: Mana
       saveConfigPreservingClaudeCode: cfg => {
         saved.push(cfg);
       },
+      ...deps,
     },
     version: "test",
+    trustedLoopbackIngress: false,
+    guiSessionIssuance: null,
+    convergeCodexCatalog: async () => ({ status: "skipped", reason: "not-requested", retryable: false }),
+    syncClaudeAgentDefsBestEffort: async () => {},
   };
   return { ctx, saved };
 }
@@ -109,23 +125,11 @@ describe("PUT /api/advisor/settings", () => {
   test("a failed save restores the in-memory snapshot", async () => {
     const config = baseConfig();
     (config as { advisor?: unknown }).advisor = { enabled: false };
-    const saved: OcxConfig[] = [];
-    const ctx: ManagementContext = {
-      req: new Request("http://localhost/api/advisor/settings", {
-        method: "PUT",
-        body: JSON.stringify({ enabled: true }),
-        headers: { "content-type": "application/json" },
-      }),
-      url: new URL("http://localhost/api/advisor/settings"),
-      config,
-      deps: {
-        saveConfigPreservingClaudeCode: () => {
-          throw new Error("disk full");
-        },
+    const { ctx } = makeCtx(config, "PUT", { enabled: true }, {
+      saveConfigPreservingClaudeCode: () => {
+        throw new Error("disk full");
       },
-      version: "test",
-    };
-    void saved;
+    });
     const response = await handleAdvisorRoutes(ctx);
     expect(response!.status).toBe(500);
     expect((config as { advisor?: { enabled?: boolean } }).advisor?.enabled).toBe(false);
