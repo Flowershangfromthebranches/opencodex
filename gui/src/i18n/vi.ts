@@ -117,6 +117,7 @@ export const vi: Record<TKey, string> = {
   "advisor.policy": "Chính sách",
   "advisor.policy.manual": "Thủ công — chỉ khi worker yêu cầu",
   "advisor.policy.preflight": "Preflight — tự động thử tư vấn khi có bằng chứng định hướng",
+  "advisor.policy.adaptive": "Thích ứng — tham vấn khi kiểm tra thất bại hoặc thay đổi chưa xác minh lặp lại",
   "advisor.timeout": "Thời gian chờ (ms)",
   "advisor.save": "Lưu cài đặt cố vấn",
   "advisor.saved": "Đã lưu cài đặt cố vấn.",

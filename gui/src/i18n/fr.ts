@@ -116,6 +116,7 @@ export const fr: Record<TKey, string> = {
   "advisor.policy": "Politique",
   "advisor.policy.manual": "Manuel — uniquement à la demande du worker",
   "advisor.policy.preflight": "Preflight — tentative automatique dès qu'une preuve d'orientation existe",
+  "advisor.policy.adaptive": "Adaptatif — consulter après des échecs ou changements non validés répétés",
   "advisor.timeout": "Délai (ms)",
   "advisor.save": "Enregistrer les réglages du conseiller",
   "advisor.saved": "Réglages du conseiller enregistrés.",

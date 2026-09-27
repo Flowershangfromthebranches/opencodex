@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseRequest } from "../../src/responses/parser";
+import { expandPreviousResponseInput, rememberResponseState } from "../../src/responses/state";
 import { ADVISOR_TOOL_NAME } from "../../src/server/responses/advisor-slot";
 import { ADVISOR_RESULT_TOOL_NAME } from "../../src/advisor/state";
 import {
@@ -129,20 +130,38 @@ describe("advisor task identity", () => {
     expect(advisorLedgerKey(first, "m")).toBe(advisorLedgerKey(resent, "m"));
   });
 
-  test("a previous_response_id expansion of the same turn keeps the same key", () => {
-    // Expansion replays the same user turn and its tool results, so the boundary is unchanged
-    // and the continuation dedups instead of re-consulting.
-    const plain = oriented("continued task", "thread-A");
-    const expanded = parseRequest({
-      model: "deepseek/deepseek-v4",
+  test("a REAL previous_response_id expansion of the same turn keeps the same key", () => {
+    // The real pipeline stores the first turn, then expands the next request's
+    // `previous_response_id` before parsing (src/server/responses/core-combo.ts calls
+    // expandPreviousResponseInput). Reproduce exactly that order here so a regression in the
+    // expansion path cannot escape the test.
+    const firstTurnBody = {
+      model: "worker/deepseek-v4",
       stream: false,
+      input: [{ role: "user", content: "continued task" }],
+    };
+    rememberResponseState(firstTurnBody, {
+      id: "resp_advisor_1",
+      output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "oriented" }] }],
+      status: "completed",
+    });
+
+    const nextRequestBody = {
+      model: "worker/deepseek-v4",
+      stream: false,
+      previous_response_id: "resp_advisor_1",
       input: [
-        { role: "user", content: "continued task" },
         { type: "function_call", call_id: "c1", name: "shell", arguments: "{}" },
         { type: "function_call_output", call_id: "c1", output: "ok" },
       ],
-    } as never);
+    };
+    const expandedBody = expandPreviousResponseInput(nextRequestBody) as typeof nextRequestBody;
+    // The expansion really did replay the stored user turn.
+    expect(JSON.stringify(expandedBody.input)).toContain("continued task");
+    const expanded = parseRequest(expandedBody as never);
     expanded._codexOwnThreadId = "thread-A";
+
+    const plain = oriented("continued task", "thread-A");
     expect(advisorLedgerKey(expanded, "m")).toBe(advisorLedgerKey(plain, "m"));
   });
 

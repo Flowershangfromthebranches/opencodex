@@ -63,8 +63,9 @@ que le modèle du worker a déjà le droit de voir : la tâche utilisateur, la c
 appels d'outils et leurs résultats, le catalogue d'outils du worker et l'identité des deux
 modèles. Le conseiller renvoie des conseils en prose, réinjectés dans une enveloppe identifiable
 `<opencodex_advisor>` sans autorité système. La chaîne de raisonnement n'est jamais transférée,
-le contenu chiffré du fournisseur n'est jamais déchiffré, et aucun identifiant ni secret
-d'environnement ne voyage dans la charge utile.
+le contenu chiffré du fournisseur n'est jamais déchiffré, et le proxy n'injecte aucun de ses propres
+identifiants, mais le contenu de tâche lui-même est transmis tel quel (voir l'avis
+multi-fournisseurs ci-dessus).
 
 ## Coût et comptabilité
 
@@ -76,8 +77,9 @@ utilisation : un appel conseiller est toujours prouvable depuis les journaux.
 ## Comportement en cas d'échec
 
 Le conseiller échoue ouvertement : si le modèle expert est indisponible, mal configuré ou expire,
-le worker reçoit un court contexte « conseiller indisponible », non trompeur (ou rien, pour
-preflight), et poursuit la tâche. Un échec de consultation ne fait jamais échouer la requête de
+le worker reçoit un court avis « conseiller indisponible », non trompeur (un message
+`<opencodex_advisor_unavailable>` pour preflight, un résultat d'outil en erreur pour manual), et
+poursuit la tâche. Rien n'est injecté uniquement quand la consultation est annulée. Un échec de consultation ne fait jamais échouer la requête de
 codage, et une consultation ne change jamais le modèle principal de la session.
 
 ## Limitations PR1
