@@ -118,7 +118,6 @@ export const de: Record<TKey, string> = {
   "advisor.policy": "Richtlinie",
   "advisor.policy.manual": "Manuell — nur wenn der Worker fragt",
   "advisor.policy.preflight": "Preflight — automatischer Konsultationsversuch, sobald Orientierungsbelege vorliegen",
-  "advisor.policy.adaptive": "Adaptiv — Beratung bei wiederholten Fehlern oder ungeprüften Änderungen",
   "advisor.timeout": "Zeitlimit (ms)",
   "advisor.save": "Beratereinstellungen speichern",
   "advisor.saved": "Beratereinstellungen gespeichert.",
