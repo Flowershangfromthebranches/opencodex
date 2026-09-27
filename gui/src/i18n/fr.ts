@@ -116,7 +116,7 @@ export const fr: Record<TKey, string> = {
   "advisor.policy.manual": "Manuel — uniquement à la demande du worker",
   "advisor.policy.preflight": "Preflight — tentative automatique dès qu'une preuve d'orientation existe",
   "advisor.policy.adaptive": "Adaptatif",
-  "advisor.adaptiveDescription": "Inclut la consultation preflight initiale. Ensuite, ne consulte à nouveau qu'après un échec de validation explicite, une modification de réparation, puis un nouvel échec de la même validation. Des modifications seules ne consultent pas. Une validation réussie réinitialise le cycle.",
+  "advisor.adaptiveDescription": "Inclut la consultation preflight initiale. Ensuite, ne consulte à nouveau qu'après un échec de validation clair, une réparation, puis le nouvel échec de la même validation observable. Des modifications seules ne consultent pas. Une validation réussie réinitialise le cycle.",
   "advisor.timeout": "Délai (ms)",
   "advisor.save": "Enregistrer les réglages du conseiller",
   "advisor.saved": "Réglages du conseiller enregistrés.",

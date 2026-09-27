@@ -118,7 +118,7 @@ export const ja: Record<TKey, string> = {
   "advisor.policy.manual": "手動 — Worker が要求したときのみ",
   "advisor.policy.preflight": "Preflight — 方向性の証拠が出たら自動相談を試みる",
   "advisor.policy.adaptive": "適応型",
-  "advisor.adaptiveDescription": "初回の preflight 相談を含みます。その後は、明示的な検証失敗、修復のための変更、同じ検証の再失敗が揃ったときだけ再相談します。変更だけでは相談しません。検証成功でこの周期はリセットされます。",
+  "advisor.adaptiveDescription": "初回の preflight 相談を含みます。その後は、明確な検証失敗、修復、同じ観測できる検証の再失敗が揃ったときだけ再相談します。変更だけでは相談しません。検証成功でこの周期はリセットされます。",
   "advisor.timeout": "タイムアウト (ms)",
   "advisor.save": "アドバイザー設定を保存",
   "advisor.saved": "アドバイザー設定を保存しました。",

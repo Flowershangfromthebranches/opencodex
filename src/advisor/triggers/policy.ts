@@ -1,4 +1,4 @@
-import type { AdaptiveTriggerState, AdvisorTriggerEvent, SameValidationEvidence, TriggerDecision } from "./types";
+import type { AdaptiveTriggerState, AdvisorTriggerEvent, TriggerDecision } from "./types";
 
 export function initialTriggerState(taskKey: string): AdaptiveTriggerState {
   return { taskKey, phase: "normal", mutationsAfterFailure: 0, consultationCount: 0, baselineOnly: false };
@@ -19,11 +19,9 @@ function noteFailure(state: AdaptiveTriggerState, fingerprint: string | undefine
   else delete state.lastFailedValidationFingerprint;
 }
 
-function sameValidationEvidence(previous: string | undefined, next: string | undefined): SameValidationEvidence | "different" {
-  if (typeof previous === "string" && typeof next === "string") {
-    return previous === next ? "true" : "different";
-  }
-  return "unknown";
+/** True only when both attempts produced a fingerprint and those fingerprints match. */
+function sameValidation(previous?: string, next?: string): boolean {
+  return typeof previous === "string" && typeof next === "string" && previous === next;
 }
 
 export function reduceTriggerEvent(previous: AdaptiveTriggerState, event: AdvisorTriggerEvent): AdaptiveTriggerState {
@@ -48,12 +46,12 @@ export function reduceTriggerEvent(previous: AdaptiveTriggerState, event: Adviso
     return state;
   }
   if (state.phase === "repair_attempted" && state.mutationsAfterFailure > 0) {
-    const relation = sameValidationEvidence(state.lastFailedValidationFingerprint, event.fingerprint);
-    if (relation === "different") {
-      noteFailure(state, event.fingerprint);
+    if (sameValidation(state.lastFailedValidationFingerprint, event.fingerprint)) {
+      state.repairFailed = { repairMutations: state.mutationsAfterFailure };
       return state;
     }
-    state.repairFailed = { sameValidation: relation, repairMutations: state.mutationsAfterFailure };
+    // A different or unidentified follow-up is a new failure, not a confirmed repair failure.
+    noteFailure(state, event.fingerprint);
     return state;
   }
   noteFailure(state, event.fingerprint);
@@ -71,7 +69,7 @@ export function evaluateAdaptiveTrigger(state: AdaptiveTriggerState, event: Advi
       "previous_validation_failed=true",
       `repair_mutations=${repair.repairMutations}`,
       "followup_validation_failed=true",
-      `same_validation=${repair.sameValidation}`,
+      "same_validation=true",
     ],
   };
 }

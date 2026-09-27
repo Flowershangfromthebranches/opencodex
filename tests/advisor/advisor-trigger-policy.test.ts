@@ -42,13 +42,21 @@ test("a different follow-up validation does not consult", () => {
   expect(decide([fail("test:a"), edit, fail("build:b")])).toEqual({ action: "continue" });
   expect(state([fail("test:a"), edit, fail("build:b")])).toMatchObject({ phase: "failure_observed", lastFailedValidationFingerprint: "build:b", mutationsAfterFailure: 0 });
 });
-test("a missing fingerprint consults without claiming the validations were the same", () => {
+test("missing validation identity does not consult", () => {
   const bare: AdvisorTriggerEvent = { type: "tool_completed", semanticClass: "validation", success: false };
-  for (const events of [[bare, edit, bare], [fail(), edit, bare]] as const) {
-    const decision = decide([...events]);
-    expect(decision.action).toBe("consult");
-    if (decision.action === "consult") expect(decision.evidence).toContain("same_validation=unknown");
+  for (const events of [[bare, edit, bare], [fail(), edit, bare], [bare, edit, fail()]]) {
+    expect(decide(events)).toEqual({ action: "continue" });
   }
+  expect(state([bare, edit, bare])).toMatchObject({ phase: "failure_observed", mutationsAfterFailure: 0 });
+  expect(state([bare, edit, bare]).lastFailedValidationFingerprint).toBeUndefined();
+  expect(state([fail(), edit, bare]).lastFailedValidationFingerprint).toBeUndefined();
+  expect(state([bare, edit, fail()]).lastFailedValidationFingerprint).toBe("test:a");
+  expect(decide([fail(), edit, bare, edit, bare])).toEqual({ action: "continue" });
+});
+test("a different validation opens a new cycle that can still repair-fail", () => {
+  const other = fail("build:b");
+  expect(decide([fail(), edit, other, edit, other])).toMatchObject({ action: "consult", reason: "repair_failed" });
+  expect(state([fail(), edit, other])).toMatchObject({ phase: "failure_observed", lastFailedValidationFingerprint: "build:b", mutationsAfterFailure: 0 });
 });
 test("an unreadable validation result is neither failure nor progress", () => {
   const unread: AdvisorTriggerEvent = { type: "tool_completed", semanticClass: "validation", success: undefined, fingerprint: "test:a" };

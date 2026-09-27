@@ -5,10 +5,7 @@ export type AdvisorTriggerEvent =
   | { type: "tool_completed"; semanticClass: ToolSemanticClass; fingerprint?: string; success?: boolean }
   | { type: "worker_turn_completed" }
   | { type: "advisor_consulted"; baseline?: boolean };
-/** Same-validation evidence. `unknown` means a fingerprint was missing, not that the commands matched. */
-export type SameValidationEvidence = "true" | "unknown";
 export interface RepairFailedObservation {
-  sameValidation: SameValidationEvidence;
   repairMutations: number;
 }
 export interface AdaptiveTriggerState {

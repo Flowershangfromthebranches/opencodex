@@ -64,7 +64,7 @@ Adaptive, ilk preflight danışmasını içerir ve ardından yalnızca gözlemle
 ocx advisor set --policy adaptive
 ```
 
-Tek otomatik gerekçe `repair_failed` değeridir. Öncesinde hata olmayan bir dizi düzenleme danışma başlatmaz. Arada düzenleme olmayan iki doğrulama hatası da başlatmaz. Farklı bir doğrulamanın sonraki hatası danışmaz ve yeni bir hata döngüsü açar. Bir doğrulama sonucunun kararlı parmak izi yoksa aynı biçim yine danışabilir; kanıt iki doğrulamanın aynı olduğunu iddia etmez ve `same_validation=unknown` yazar.
+Tek otomatik gerekçe `repair_failed` değeridir. Öncesinde hata olmayan bir dizi düzenleme danışma başlatmaz. Arada düzenleme olmayan iki doğrulama hatası da başlatmaz. Farklı bir doğrulamanın sonraki hatası danışmaz ve yeni bir hata döngüsü açar. Yükseltme yalnızca her iki doğrulama hatasının da kararlı parmak izi olduğu ve bu izler eşleştiği zaman olur. Doğrulamalardan biri güvenilir biçimde tanımlanamıyorsa OpenCodex o onarım döngüsünden yükseltmez. Adaptive, spekülatif danışma yerine bilerek daha az tetiklemeyi tercih eder.
 
 Gözlemler tamamlanmış araçlardan gelir. Sınıflandırıcı test günlüğü düzyazısını okumaz. Tanı komutları (`git diff`, `git status`, arama, dosya okuma) sonuç olumsuz olsa bile doğrulama değildir. Başarılı doğrulama döngüyü sıfırlar. Ortam atamaları, `&&`, borular, yönlendirmeler ve komut listeleri gibi bileşik kabuk komutları sınıflandırılmaz; içine gizlenmiş bir doğrulama gözlemlenmeyebilir.
 

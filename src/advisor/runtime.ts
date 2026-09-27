@@ -193,13 +193,13 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
     // ledger on purpose: request-scoped dedup plus genuine in-history provenance are the only
     // suppression it gets — fail-open, so two independent identity-less conversations can never
     // suppress each other through a shared guess.
-    let channel: "preflight" | "adaptive" = previouslyConsulted && escalating ? "adaptive" : "preflight";
+    // A confirmed repair failure is the one automatic consultation for this request.
+    // It is not relabeled as the preflight baseline, and it is not followed by a second call.
+    const channel: "preflight" | "adaptive" = escalating ? "adaptive" : "preflight";
     let claimToken: string | undefined;
     if (key) {
-      const baseline = ledger.claim(key, now());
-      // Baseline wins when not yet attempted: only one first-consultation path.
-      const claim = baseline.state === "complete" && escalating ? ledger.claim(key, now(), true) : baseline;
-      if (baseline.state === "complete" && escalating) channel = "adaptive";
+      const first = ledger.claim(key, now());
+      const claim = first.state === "complete" && escalating ? ledger.claim(key, now(), true) : first;
       if (claim.state !== "claimed") return false;
       claimToken = claim.token;
     }

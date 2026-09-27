@@ -101,7 +101,7 @@ Adaptive inclut la consultation preflight initiale, puis n'escalade que pour une
 ocx advisor set --policy adaptive
 ```
 
-La seule raison automatique est `repair_failed`. Une suite de modifications sans échec préalable ne consulte pas. Deux échecs de validation sans modification entre eux ne consultent pas. Un échec de suivi sur une validation différente ne consulte pas et ouvre un nouveau cycle d'échec. Lorsqu'un résultat de validation n'a pas d'empreinte stable, la même forme peut encore consulter, et la preuve indique `same_validation=unknown` au lieu d'affirmer que les deux validations étaient identiques.
+La seule raison automatique est `repair_failed`. Une suite de modifications sans échec préalable ne consulte pas. Deux échecs de validation sans modification entre eux ne consultent pas. Un échec de suivi sur une validation différente ne consulte pas et ouvre un nouveau cycle d'échec. Adaptive n'escalade que lorsque les deux échecs de validation ont des empreintes stables et que ces empreintes coïncident. Si l'une des validations ne peut pas être identifiée de façon fiable, OpenCodex n'escalade pas à partir de ce cycle de réparation. Adaptive préfère volontairement moins de déclenchements à une consultation spéculative.
 
 Les observations viennent d'outils terminés. Le classifieur ne lit pas la prose des journaux de test. Les commandes de diagnostic (`git diff`, `git status`, recherche, lecture de fichier) ne sont pas des validations, même si le résultat est négatif. Une validation réussie réinitialise le cycle. Les commandes shell composées — affectations d'environnement, `&&`, tubes, redirections et listes — restent non classées : une validation cachée dedans peut ne pas être observée.
 

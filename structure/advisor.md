@@ -157,8 +157,9 @@ Only `src/advisor/runtime.ts` can dispatch, through the same PR1 consultation an
 `adaptive` includes the existing preflight baseline, then escalates only on `repair_failed`:
 an explicit validation failure, at least one substantive mutation after it, then a follow-up
 failure of that same validation. Edits with no prior failure do not consult. Two failures with
-no mutation between them do not consult. A follow-up failure whose fingerprint differs does not
-consult; a missing fingerprint may consult with `same_validation=unknown`. Manual and preflight
+no mutation between them do not consult. A follow-up failure consults only when both attempts
+have stable fingerprints and those fingerprints match. A different or missing fingerprint starts
+a new failure cycle and does not consult. Adaptive prefers under-triggering. Manual and preflight
 policies do not allocate or invoke a trigger engine. There is no semantic stuck detection.
 No thresholds are public config fields.
 

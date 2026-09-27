@@ -107,7 +107,7 @@ Adaptive includes the preflight baseline, then escalates only for a limited clas
 ocx advisor set --policy adaptive
 ```
 
-The only automatic reason is `repair_failed`. A sequence of edits with no prior failure does not consult. Two validation failures with no edit between them do not consult. A follow-up failure of a different validation does not consult and starts a new failure cycle instead. When a validation result has no stable fingerprint, that same shape can still consult, and the evidence records `same_validation=unknown` rather than claiming the two validations were the same.
+The only automatic reason is `repair_failed`. A sequence of edits with no prior failure does not consult. Two validation failures with no edit between them do not consult. A follow-up failure of a different validation does not consult and starts a new failure cycle instead. Adaptive escalates only when both failed validation attempts have stable fingerprints and those fingerprints match. If either validation cannot be identified reliably, OpenCodex does not escalate from that repair cycle. Adaptive intentionally prefers under-triggering over speculative consultation.
 
 Observations come from completed tools. The classifier does not read test-log prose. Diagnostic commands (`git diff`, `git status`, search, and file reads) are not validation, even when the result is negative. A passing validation resets the cycle. Compound shell commands — environment assignments, `&&`, pipes, redirections, and command lists — are left unclassified, so a validation hidden inside one may not be observed.
 

@@ -118,7 +118,7 @@ export const de: Record<TKey, string> = {
   "advisor.policy.manual": "Manuell — nur wenn der Worker fragt",
   "advisor.policy.preflight": "Preflight — automatischer Konsultationsversuch, sobald Orientierungsbelege vorliegen",
   "advisor.policy.adaptive": "Adaptiv",
-  "advisor.adaptiveDescription": "Enthält die erste Preflight-Beratung. Danach wird nur erneut beraten, wenn eine ausdrückliche Validierung fehlschlägt, eine Reparaturänderung folgt und dieselbe Validierung erneut fehlschlägt. Änderungen allein lösen keine Beratung aus. Eine erfolgreiche Validierung setzt den Zyklus zurück.",
+  "advisor.adaptiveDescription": "Enthält die erste Preflight-Beratung. Danach wird nur erneut beraten, wenn eine klare Validierung fehlschlägt, eine Reparatur folgt und dieselbe beobachtbare Validierung erneut fehlschlägt. Änderungen allein lösen keine Beratung aus. Eine erfolgreiche Validierung setzt den Zyklus zurück.",
   "advisor.timeout": "Zeitlimit (ms)",
   "advisor.save": "Beratereinstellungen speichern",
   "advisor.saved": "Beratereinstellungen gespeichert.",

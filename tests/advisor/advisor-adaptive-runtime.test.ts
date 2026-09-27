@@ -135,6 +135,57 @@ test("baseline does not block the first repair failure", async () => {
   expect(JSON.stringify(s.calls[1])).toContain("same_validation=true");
   expect(await s.plan().preflightInject(parsed([read, fail, edit, fail, edit, fail]))).toBe(false);
 });
+function promptOf(call: Record<string, unknown> | undefined): string {
+  return JSON.stringify(call);
+}
+test("repair evidence before any baseline success is one adaptive consultation", async () => {
+  const s = setup();
+  const logs: string[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => { logs.push(args.map(String).join(" ")); warn(...args); };
+  try {
+    const request = parsed([read, fail, edit, fail]);
+    expect(await s.plan().preflightInject(request)).toBe(true);
+  } finally {
+    console.warn = warn;
+  }
+  expect(s.calls).toHaveLength(1);
+  const prompt = promptOf(s.calls[0]);
+  expect(prompt).toContain("observable non-convergence");
+  expect(prompt).toContain("repair_failed");
+  expect(prompt).not.toContain("before the worker's first substantive turn");
+  expect(logs.some(line => line.includes("trigger=adaptive") && line.includes("reason=repair_failed"))).toBe(true);
+  expect(logs.some(line => line.includes("trigger=preflight"))).toBe(false);
+});
+test("orientation without a repair failure stays a preflight consultation", async () => {
+  const s = setup();
+  const logs: string[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => { logs.push(args.map(String).join(" ")); warn(...args); };
+  try {
+    expect(await s.baseline()).toBe(true);
+  } finally {
+    console.warn = warn;
+  }
+  expect(s.calls).toHaveLength(1);
+  expect(promptOf(s.calls[0])).toContain("before the worker's first substantive turn");
+  expect(promptOf(s.calls[0])).not.toContain("repair_failed");
+  expect(logs.some(line => line.includes("trigger=preflight"))).toBe(true);
+});
+test("a failed preflight retries the next eligible repair as adaptive", async () => {
+  const s = setup();
+  s.fail(true);
+  expect(await s.baseline()).toBe(false);
+  expect(s.calls).toHaveLength(1);
+  expect(promptOf(s.calls[0])).toContain("before the worker's first substantive turn");
+  s.advance();
+  s.fail(false);
+  expect(await s.plan().preflightInject(parsed([read, fail, edit, fail]))).toBe(true);
+  expect(s.calls).toHaveLength(2);
+  expect(promptOf(s.calls[1])).toContain("repair_failed");
+  expect(promptOf(s.calls[1])).toContain("observable non-convergence");
+  expect(promptOf(s.calls[1])).not.toContain("before the worker's first substantive turn");
+});
 test("a different follow-up validation does not escalate", async () => {
   const s = setup(); await s.baseline();
   const build = { name: "shell", args: { cmd: "npm run build" }, exit: 1 };

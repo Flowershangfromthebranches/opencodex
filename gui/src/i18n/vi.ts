@@ -117,7 +117,7 @@ export const vi: Record<TKey, string> = {
   "advisor.policy.manual": "Thủ công — chỉ khi worker yêu cầu",
   "advisor.policy.preflight": "Preflight — tự động thử tư vấn khi có bằng chứng định hướng",
   "advisor.policy.adaptive": "Thích ứng",
-  "advisor.adaptiveDescription": "Bao gồm lần tư vấn preflight đầu. Sau đó chỉ tư vấn lại khi có một lỗi kiểm tra rõ ràng, một sửa đổi để khắc phục, rồi lỗi tiếp theo của cùng kiểm tra đó. Chỉ sửa file thì không tư vấn. Kiểm tra thành công đặt lại chu kỳ.",
+  "advisor.adaptiveDescription": "Bao gồm lần tư vấn preflight đầu. Sau đó chỉ tư vấn lại khi có một lỗi kiểm tra rõ, một sửa chữa, rồi cùng lần kiểm tra quan sát được đó thất bại lần nữa. Chỉ sửa file thì không tư vấn. Kiểm tra thành công đặt lại chu kỳ.",
   "advisor.timeout": "Thời gian chờ (ms)",
   "advisor.save": "Lưu cài đặt cố vấn",
   "advisor.saved": "Đã lưu cài đặt cố vấn.",
