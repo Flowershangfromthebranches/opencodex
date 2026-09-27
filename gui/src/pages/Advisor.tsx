@@ -73,6 +73,14 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
     }
   }, [apiBase, draft]);
 
+  // Every field edit invalidates the previous failure notice: it describes the state that was
+  // submitted, and it must not outlive the field the operator is now correcting. A revert to the
+  // saved value would otherwise leave the notice with no way to clear at all.
+  const edit = useCallback((patch: Partial<AdvisorSettings>) => {
+    setSaveError("");
+    setDraft(current => ({ ...current, ...patch }));
+  }, []);
+
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   const modelMissing = draft.enabled && draft.model.trim() === "";
   const rowStyle = { display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.6rem 0" } as const;
@@ -89,7 +97,7 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
               checked={draft.enabled}
               disabled={saving}
               aria-label={t("advisor.enabled")}
-              onChange={event => setDraft({ ...draft, enabled: event.target.checked })}
+              onChange={event => edit({ enabled: event.target.checked })}
             />
             <span className="slider" aria-hidden="true" />
           </label>
@@ -102,7 +110,7 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             value={draft.model}
             disabled={saving}
             placeholder={t("advisor.modelPlaceholder")}
-            onChange={event => setDraft({ ...draft, model: event.target.value })}
+            onChange={event => edit({ model: event.target.value })}
           />
         </div>
         <div style={rowStyle}>
@@ -111,7 +119,7 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             id="advisor-effort"
             value={draft.effort}
             disabled={saving}
-            onChange={event => setDraft({ ...draft, effort: event.target.value })}
+            onChange={event => edit({ effort: event.target.value })}
           >
             {EFFORTS.map(effort => (
               <option key={effort} value={effort}>{t(`models.reasoningEffort.${effort}` as TKey)}</option>
@@ -124,7 +132,7 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             id="advisor-policy"
             value={draft.policy}
             disabled={saving}
-            onChange={event => setDraft({ ...draft, policy: event.target.value === "preflight" ? "preflight" : "manual" })}
+            onChange={event => edit({ policy: event.target.value === "preflight" ? "preflight" : "manual" })}
           >
             <option value="manual">{t("advisor.policy.manual")}</option>
             <option value="preflight">{t("advisor.policy.preflight")}</option>
@@ -139,7 +147,7 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             max={600000}
             value={draft.timeoutMs}
             disabled={saving}
-            onChange={event => setDraft({ ...draft, timeoutMs: Number(event.target.value) })}
+            onChange={event => edit({ timeoutMs: Number(event.target.value) })}
           />
         </div>
       </div>

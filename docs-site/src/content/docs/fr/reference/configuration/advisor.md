@@ -62,7 +62,9 @@ La charge utile de consultation est construite exclusivement à partir de la con
 que le modèle du worker a déjà le droit de voir : la tâche utilisateur, la conversation, les
 appels d'outils et leurs résultats, le catalogue d'outils du worker et l'identité des deux
 modèles. Le conseiller renvoie des conseils en prose, réinjectés dans une enveloppe identifiable
-`<opencodex_advisor>` sans autorité système. La chaîne de raisonnement n'est jamais transférée,
+sans autorité système : le conseil MANUAL arrive comme un résultat d'outil portant l'enveloppe
+`<opencodex_advisor>`, et le conseil preflight AUTOMATIQUE comme un message developer portant
+l'enveloppe `<opencodex_advisor_preflight>`. La chaîne de raisonnement n'est jamais transférée,
 le contenu chiffré du fournisseur n'est jamais déchiffré, et le proxy n'injecte aucun de ses propres
 identifiants, mais le contenu de tâche lui-même est transmis tel quel (voir l'avis
 multi-fournisseurs ci-dessus).

@@ -41,7 +41,7 @@ description: OpenCodex 自有的專家諮詢 sidecar — 設定的專家模型�
 
 OpenCodex 不會把自己的憑證注入負載（不含 provider API key、Authorization/OAuth 資訊、後端專用機密與環境變數）。思維鏈不會被轉移，加密的 provider 專用內容不會被解密或轉送。**任務內容通常不會做憑證脫敏**：貼進任務的憑證、或工具輸出裡列印的 token，都會按原樣轉送 —— OpenCodex 不會對會話執行 DLP。
 
-諮詢負載完全由 Worker 模型已被允許看到的已解析會話構成：使用者任務、會話、工具呼叫及其結果、Worker 的工具目錄，以及雙方模型身份。Advisor 返回散文式建議，以可識別的 `<opencodex_advisor>` 包裝回注，不具備 system 權限。思維鏈不會被轉移，加密的 provider 內容不會被解密。代理不會注入自己的憑證，但任務內容本身按原樣轉送（見上方跨 provider 提示）。
+諮詢負載完全由 Worker 模型已被允許看到的已解析會話構成：使用者任務、會話、工具呼叫及其結果、Worker 的工具目錄，以及雙方模型身份。Advisor 返回散文式建議，以可識別的包裝回注，不具備 system 權限：manual 建議以攜帶 `<opencodex_advisor>` 包裝的工具結果注入，自動 preflight 建議以攜帶 `<opencodex_advisor_preflight>` 包裝的 developer 訊息注入。思維鏈不會被轉移，加密的 provider 內容不會被解密。代理不會注入自己的憑證，但任務內容本身按原樣轉送（見上方跨 provider 提示）。
 
 ## 成本與記帳
 

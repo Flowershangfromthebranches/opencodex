@@ -83,16 +83,14 @@ tool results, preflight advice as a marked developer message.
 
 ## Provenance and the preflight claim
 
-"Already advised" is decided by PROVENANCE, never by scanning for a bare string:
-
-- manual: a `toolResult` whose `toolName` is the synthetic advisor tool and whose content carries
-  the `<opencodex_advisor>` wrapper;
-- preflight: a developer message carrying the runtime-owned `<opencodex_advisor_preflight>`
-  wrapper.
+"Already advised" is decided by PROVENANCE, never by scanning for a bare string — and only for
+MANUAL advice: a `toolResult` whose `toolName` is the synthetic advisor tool and whose content
+carries the `<opencodex_advisor>` wrapper. Automatic preflight is NOT decided from history at all;
+its dedup authority is the ledger (see "Provenance and the preflight claim" below), so a client
+cannot suppress the policy by echoing or forging a developer message.
 
 Ordinary tool output, developer text, user text, and failure notices (`<opencodex_advisor_unavailable>`)
-match neither form, so nothing a shell, log, or upstream error body prints can suppress or forge
-advice. The guard never composes failure prose itself: `AdvisorPlan.formatUnavailable` owns that
+match nothing, so nothing a shell, log, or upstream error body prints can suppress or forge advice. The guard never composes failure prose itself: `AdvisorPlan.formatUnavailable` owns that
 text and neutralizes untrusted fragments.
 
 Keys are SHA-256 digests, never a short fold and never raw text: one domain-separated digest
@@ -135,8 +133,8 @@ fail-open for correctness and only one extra expert call.
   first worker reasoning turn that arrives with orientation evidence — an assistant tool call OR
   a tool result — since the latest user message, unless the conversation already carries advisor
   advice. A failed attempt is recorded under its own ledger key (no retry storm within the TTL)
-  and injected with the `<opencodex_advisor_unavailable>` wrapper, which historyHasAdvisorResult
-  deliberately does not match: a failure is not advice and does not permanently suppress the
+  and injected with the `<opencodex_advisor_unavailable>` wrapper, which
+  historyHasManualAdvisorResult deliberately does not match: a failure is not advice and does not permanently suppress the
   policy. No semantic stagnation detection exists in PR1.
 
 ## Observability
