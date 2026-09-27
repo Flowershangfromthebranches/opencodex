@@ -37,6 +37,10 @@ Panodaki **Advisor** sayfası veya `ocx advisor status|on|off|set --model <model
 
 ## Danışmanın gördüğü şey
 
+**Sağlayıcılar arası veri aktarımı:** danışman sağlayıcısı worker'ın sağlayıcısından farklıysa, danışma yükü görev konuşmasını ve araç sonuçlarını ikinci bir model sağlayıcısına gönderir. Bu görev içeriğine güvenmediğiniz bir sağlayıcıda danışmanı etkinleştirmeyin.
+
+OpenCodex kendi kimlik bilgilerini yüke asla enjekte etmez (sağlayıcı API anahtarları, Authorization/OAuth bilgileri, arka uç sırları ve ortam değişkenleri dahil değildir). Düşünce zinciri aktarılmaz, şifreli sağlayıcıya özel içerik çözülmez veya iletilmez. **Görev içeriği genellikle sırlardan arındırılmaz**: göreve yapıştırılan bir kimlik bilgisi veya bir aracın yazdırdığı token olduğu gibi iletilir — OpenCodex konuşma üzerinde DLP çalıştırmaz.
+
 Danışma yükü, yalnızca worker modelinin zaten görmesine izin verilen ayrıştırılmış konuşmadan oluşur: kullanıcı görevi, konuşma, araç çağrıları ve sonuçları, worker'ın araç kataloğu ve iki tarafın model kimliği. Danışman düzyazı tavsiye döndürür; tanınabilir `<opencodex_advisor>` sarmalayıcısıyla geri enjekte edilir ve sistem yetkisi yoktur. Düşünce zinciri aktarılmaz, şifreli sağlayıcı içeriği çözülmez ve kimlik bilgileri ya da ortam sırları yüke binmez.
 
 ## Maliyet ve hesap

@@ -123,7 +123,7 @@ export const de: Record<TKey, string> = {
   "advisor.loadFailed": "Beratereinstellungen konnten nicht geladen werden. Läuft der Proxy?",
   "advisor.warning.noModel": "Aktiviert, aber kein Expertenmodell konfiguriert — Konsultationen schlagen fehl.",
   "advisor.costNote": "Konsultationen sind echte zusätzliche Modellaufrufe und erscheinen in der Nutzung unter dem Beratermodell, nicht dem Worker-Modell.",
-  "advisor.privacyNote": "Hinweis zu mehreren Anbietern: Konsultationen senden die Aufgabenkonversation und Tool-Ergebnisse an den konfigurierten Berater-Anbieter, der sich vom Worker-Anbieter unterscheiden kann. Aktivieren Sie den Berater nicht bei einem Anbieter, dem Sie diese Aufgabeninhalte nicht anvertrauen.",
+  "advisor.privacyNote": "Hinweis zu mehreren Anbietern: Konsultationen senden die Aufgabenkonversation und Tool-Ergebnisse an den konfigurierten Berater-Anbieter, der sich vom Worker-Anbieter unterscheiden kann. Aufgabeninhalte werden nicht von Geheimnissen bereinigt — aktivieren Sie den Berater nicht bei Aufgaben, deren Inhalte Sie diesem Anbieter nicht anvertrauen würden.",
   // routing intelligence
   "routing.title": "Routing-Intelligenz (beta)",
   "routing.subtitle": "Policy-Profile, Trockenlauf-Bewertung und routinggestützte Analysen.",

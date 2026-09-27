@@ -115,13 +115,15 @@ function loopbackInterceptor(config: OcxConfig, recorder: { chatRequests: string
   }) as typeof fetch;
 }
 
-function workerRequest(input: unknown) {
+function workerRequest(input: unknown, threadId?: string) {
   return new Request("http://localhost/v1/responses", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       authorization: `Bearer ${fakeChatGptJwt({ chatgpt_account_id: "acct-advisor" })}`,
       "chatgpt-account-id": "acct-advisor",
+      // Codex sends `thread-id`; it is the ledger's conversation identity.
+      ...(threadId ? { "thread-id": threadId } : {}),
     },
     body: JSON.stringify({ model: "worker/deepseek-v4", input, stream: true }),
   });
@@ -189,7 +191,7 @@ describe("advisor responses wiring (end-to-end)", () => {
       { role: "user", content: "Preflight task: repair the token store" },
       { type: "function_call", call_id: "c1", name: "shell", arguments: JSON.stringify({ command: ["bun", "test"] }) },
       { type: "function_call_output", call_id: "c1", output: "3 tests failed: stale expiry" },
-    ]), config, logCtx);
+    ], "thread-preflight-main"), config, logCtx);
     expect(second.status).toBe(200);
     const secondFrames = await collectSse(second.body!);
 
@@ -222,11 +224,40 @@ describe("advisor responses wiring (end-to-end)", () => {
       { type: "function_call_output", call_id: "c1", output: "failed" },
     ];
     for (let turn = 0; turn < 3; turn += 1) {
-      const response = await handleResponses(workerRequest(orientedInput), config, logCtx);
+      const response = await handleResponses(workerRequest(orientedInput, "thread-once-per-task"), config, logCtx);
       expect(response.status).toBe(200);
       await collectSse(response.body!);
     }
     expect(chatRequests).toHaveLength(1);
+  });
+
+  test("an identity-less client fails open: each request may attempt once, and no ledger entry is created", async () => {
+    releaseSpendHome = acquireOwnedSpendHome();
+    const workerBodies: string[] = [];
+    const chatRequests: string[] = [];
+    const workerFetch = workerProviderFetch([
+      plainFrames("working"), plainFrames("working"), plainFrames("working"),
+    ], workerBodies);
+    const config = advisorConfig(
+      { enabled: true, model: "expert/gpt-6-astra", policy: "preflight" },
+      workerFetch,
+    );
+    loopbackInterceptor(config, { chatRequests });
+
+    const orientedInput = [
+      { role: "user", content: "Identity-less: inspect the retry loop" },
+      { type: "function_call", call_id: "c1", name: "shell", arguments: "{}" },
+      { type: "function_call_output", call_id: "c1", output: "failed" },
+    ];
+    // No thread-id: the client has no stable identity, so the runtime deliberately stays out of
+    // the process-global ledger rather than risk suppressing a DIFFERENT conversation that opens
+    // with the same prompt. Each request may therefore attempt once (documented fail-open).
+    for (let turn = 0; turn < 3; turn += 1) {
+      const response = await handleResponses(workerRequest(orientedInput), config, logCtx);
+      expect(response.status).toBe(200);
+      await collectSse(response.body!);
+    }
+    expect(chatRequests).toHaveLength(3);
   });
 
   test("disabled: the worker request path carries no advisor machinery", async () => {

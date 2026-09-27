@@ -124,7 +124,7 @@ export const en = {
   "advisor.loadFailed": "Could not load advisor settings. Is the proxy running?",
   "advisor.warning.noModel": "Enabled but no expert model is configured yet — consultations will fail.",
   "advisor.costNote": "Consultations are real extra model calls. Each one appears in usage under the advisor model, not the worker model.",
-  "advisor.privacyNote": "Cross-provider notice: consultations send the task conversation and tool results to the configured advisor provider, which may differ from the worker's provider. Do not enable the advisor with a provider you do not trust with this task content.",
+  "advisor.privacyNote": "Cross-provider notice: consultations send the task conversation and tool results to the configured advisor provider, which may differ from the worker's provider. Task content is not secret-redacted — do not enable the advisor on tasks whose content you would not share with that provider.",
   "nav.logs": "Logs & Debug",
   "nav.usage": "Usage",
   "common.github": "GitHub",

@@ -125,35 +125,58 @@ export function buildAdvisorUserPrompt(input: AdvisorContextInput): string {
   ].join("\n\n");
 }
 
-/** Visible wrapper identifying advice inside the worker conversation (see reinjection). */
-export function formatAdvisorAdvice(input: { advisorModel: string; reason: string; advice: string }): string {
+/**
+ * Visible wrapper identifying advice inside the worker conversation (see reinjection).
+ *
+ * Two runtime-owned wrappers, one per reinjection channel, so provenance is never inferred from
+ * a bare string: the MANUAL channel writes `<opencodex_advisor>` inside a paired tool result
+ * whose toolName is the synthetic advisor tool; the PREFLIGHT channel writes
+ * `<opencodex_advisor_preflight>` inside a developer message. A shell result or ordinary
+ * developer text that happens to contain the manual wrapper is never mistaken for advice.
+ */
+export function formatAdvisorAdvice(input: {
+  advisorModel: string;
+  reason: string;
+  advice: string;
+  channel?: "manual" | "preflight";
+}): string {
+  const tag = input.channel === "preflight" ? "opencodex_advisor_preflight" : "opencodex_advisor";
   return [
-    "<opencodex_advisor>",
+    `<${tag}>`,
     `advisor model: ${input.advisorModel}`,
     `consultation reason: ${input.reason}`,
     "",
     input.advice,
-    "</opencodex_advisor>",
+    `</${tag}>`,
   ].join("\n");
+}
+
+/**
+ * Neutralize runtime-owned advisor markers inside UNTRUSTED text (upstream error bodies, thrown
+ * exception messages). Every marker the provenance detector accepts contains the literal
+ * `opencodex_advisor` fragment, so neutralizing that fragment makes it impossible for a hostile
+ * or broken advisor response to forge an "already advised" state through any failure path.
+ */
+export function neutralizeAdvisorMarkers(text: string): string {
+  return text.replaceAll("opencodex_advisor", "opencodex_advisor(neutralized)");
 }
 
 /**
  * Non-misleading, bounded context handed to the worker when the advisor itself failed.
  *
- * Deliberately NOT wrapped in `<opencodex_advisor>`: that wrapper is the single marker
- * `historyHasAdvisorResult` treats as "this task already has advice". A failure is not advice —
- * wrapping it there would permanently suppress preflight retries for the whole conversation
- * even after the failure ledger entry expires. Upstream error text is untrusted: any occurrence
- * of the advice marker inside it is neutralized so a hostile or broken advisor response cannot
- * forge an "already advised" state through the failure path.
+ * Deliberately NOT wrapped in either advice wrapper: a failure is not advice, and the provenance
+ * detector (`historyHasAdvisorResult`) must not treat it as one. Upstream error text is untrusted
+ * and is neutralized so it cannot forge a genuine marker either.
  */
-export function formatAdvisorUnavailable(reason: string, error: string): string {
-  const safeError = error.replaceAll("opencodex_advisor", "opencodex_advisor(unavailable)");
+export function formatAdvisorUnavailable(kind: "preflight" | "manual" | "limit", error: string): string {
+  const lead = kind === "limit"
+    ? "Advisor consultation limit reached for this request; no further advice is available."
+    : "The advisor was consulted but is currently unavailable, so this consultation produced no advice.";
   return [
     "<opencodex_advisor_unavailable>",
-    "The advisor was consulted but is currently unavailable, so this consultation produced no advice.",
-    `consultation reason: ${reason}`,
-    `failure: ${safeError}`,
+    lead,
+    `consultation kind: ${kind}`,
+    `failure: ${neutralizeAdvisorMarkers(error)}`,
     "",
     "Continue the task with your own judgment. This is not advice.",
     "</opencodex_advisor_unavailable>",
