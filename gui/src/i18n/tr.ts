@@ -118,7 +118,7 @@ export const tr: Record<TKey, string> = {
   "advisor.policy.manual": "Manuel — yalnızca worker istediğinde",
   "advisor.policy.preflight": "Preflight — yönelim kanıtı oluşunca otomatik danışma denemesi",
   "advisor.policy.adaptive": "Uyarlanabilir",
-  "advisor.adaptiveDescription": "İlk danışmayı içerir; yinelenen doğrulama hataları veya doğrulanmamış değişiklikler sonrası yapılandırılan Advisor’a danışır. Başarılı doğrulama sayaçları sıfırlar.",
+  "advisor.adaptiveDescription": "İlk preflight danışmasını içerir. Sonra yalnızca açık bir doğrulama hatası, bir onarım değişikliği ve aynı doğrulamanın yeniden başarısız olması durumunda yeniden danışır. Yalnızca düzenlemeler danışma başlatmaz. Başarılı doğrulama döngüyü sıfırlar.",
   "advisor.timeout": "Zaman aşımı (ms)",
   "advisor.save": "Danışman ayarlarını kaydet",
   "advisor.saved": "Danışman ayarları kaydedildi.",

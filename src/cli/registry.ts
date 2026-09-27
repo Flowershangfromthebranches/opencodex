@@ -333,7 +333,7 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
       "ocx advisor and ocx advisor status read the resolved settings; use --json for machine-readable output.",
       "ocx advisor on / ocx advisor off toggle the sidecar.",
       "ocx advisor set updates --model, --effort, --policy and --timeout-ms; the model may be any routable model string (bare native, provider/model, or account-qualified).",
-      "policy manual consults only when the worker calls the synthetic advisor tool; policy preflight also attempts one automatic consultation per task, once the task shows orientation evidence. Adaptive includes the preflight baseline and later consultations after repeated validation failures or unvalidated changes.",
+      "policy manual consults only when the worker calls the synthetic advisor tool; policy preflight also attempts one automatic consultation per task, once the task shows orientation evidence. Adaptive includes that baseline, then consults again only after an explicit validation failure, a repair edit, and a follow-up failure of that same validation. Edits alone do not consult.",
     ],
   },
   {

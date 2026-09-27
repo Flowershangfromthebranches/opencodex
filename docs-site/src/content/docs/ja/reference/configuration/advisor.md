@@ -1,6 +1,6 @@
 ---
 title: アドバイザー
-description: OpenCodex 自身のエキスパート相談サイドカー — 設定されたエキスパートモデルがルーティングされたワーカーに助言を返します。manual と preflight の 2 つのポリシーを提供します。
+description: OpenCodex 自身のエキスパート相談サイドカー — 設定されたエキスパートモデルがルーティングされたワーカーに助言を返します。manual、preflight、adaptive のポリシーを提供します。
 ---
 
 アドバイザーはワーカーのタスクをレビューし助言を返す独立したエキスパートモデルです。相談は OpenCodex がエンドツーエンドで所有します。プロキシはワーカーのターンに合成 `advisor` ツールを注入し、通常のルーティング権威を通じて相談を自ら実行し、助言を再注入して元のワーカーを継続させます。ワーカーは委譲も spawn もせず、プロバイダー資格情報も持ちません。
@@ -58,30 +58,16 @@ OpenCodex 自身の認証情報をペイロードへ注入することはあり�
 
 ## Adaptive
 
-Adaptive は初回 preflight 相談と、その後の決定的なエスカレーションを含みます。意味的な混乱や根本原因の不確実性は検出しません。
+Adaptive は初回の preflight 相談を含み、その後は観測できる非収束のうち限られた形だけを対象にエスカレーションします。明示的な検証失敗、修復のための変更、同じ検証の再失敗です。ワーカーが行き詰まっていること、意味的な混乱、原因の不明さは検出しません。
 
 ```sh
 ocx advisor set --policy adaptive
 ```
 
-The internal defaults are two consecutive explicit validation failures, three successful edits
-without successful validation, or three equivalent failed validation actions. The three-edit
-threshold tolerates a patch split across two tools. These are completed-tool observations, not
-an analysis of hidden reasoning or test-log prose. Different diagnostics do not count as failed
-validation; unknown command outcomes are not failures. A successful validation resets the signals.
+自動理由は `repair_failed` だけです。事前の失敗がない変更の連続では相談しません。間に変更がない二度の検証失敗でも相談しません。別の検証の再失敗では相談せず、新しい失敗周期を始めます。検証結果に安定したフィンガープリントがない場合、同じ形でも相談できますが、証拠は二つの検証が同一だと主張せず `same_validation=unknown` と記録します。
 
-Adaptive performs the same first preflight consultation as `preflight`, with no duplicate first
-call. Afterwards, `edit → test PASS` and different diagnostic experiments cause **zero extra
-escalations**. `edit → test FAIL → edit → test FAIL` triggers consultation and advice reaches the
-same worker. After manual advice or an adaptive escalation, another escalation requires a fresh
-mutation followed by validation and the rule threshold. This cooldown does not block the first
-escalation after the preflight baseline. Advisor provider failures retain the existing one-minute
-failure cooldown; cancellation releases the claim without a failure cooldown.
+観測は完了したツールから得ます。分類器はテストログの文章を読みません。診断コマンド（`git diff`、`git status`、検索、ファイル読み取り）は結果が否定的でも検証ではありません。検証成功はこの周期をリセットします。環境変数の代入、`&&`、パイプ、リダイレクト、コマンド列などの複合シェルは分類しないため、その中に隠れた検証は観測されないことがあります。
 
-Only clients with stable task identity accumulate adaptive observations. State is process-local,
-bounded to 512 tasks for 24 hours, with 2,048 result IDs and 128 pending calls per task. Saturation
-skips escalation; restart, expiry or compaction can reset evidence. At most 128 recent messages
-are projected per request. Provider-private tool activity and complex shell expressions are not
-classified. No semantic stuck detection, multiple advisors, voting or model switching is added.
-Automatic advice uses the existing developer-role injection, with the same trust limitation and
-cross-provider task-content disclosure as preflight.
+Adaptive は `preflight` と同じ最初の preflight 相談を行い、そのターンで二度目の相談はしません。基線のあと、変更の繰り返し、変更に続く成功したテスト、別々の診断実験は追加のエスカレーションを起こしません。テスト失敗、変更、同じテストの失敗では相談し、助言は同じワーカーに戻ります。手動の助言と成功した adaptive 相談はどちらも周期をリセットします。次のエスカレーションには新しい失敗、新しい修復、新しい失敗が必要です。プロバイダー障害は既存の 1 分のクールダウンを使います。キャンセルはクレームを解放し、そのクールダウンは始めません。
+
+安定したタスク識別子を持つクライアントだけが adaptive の観測を蓄積します。状態はプロセス内で、512 タスク・24 時間、タスクあたり結果 ID 2,048 と保留呼び出し 128 に制限されます。飽和するとエスカレーションを省略します。再起動、期限切れ、コンパクションで証拠が消えることがあります。1 リクエストで読む直近メッセージは最大 128 です。意味的な停滞検出、複数アドバイザー、投票、モデル切り替えは加えません。自動助言はこれまでどおり developer ロールへの注入で、preflight と同じ信頼上の制限とクロスプロバイダー開示が適用されます。

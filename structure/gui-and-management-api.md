@@ -512,6 +512,7 @@ keep their existing no-catalog-refresh behavior. The regression suite is
 ## Advisor adaptive policy
 
 The `advisor.policy` setting accepts `manual`, `preflight`, and `adaptive` through the CLI,
-management settings route and Advisor dashboard. Adaptive includes the preflight baseline plus
-observable escalation; [Advisor trigger semantics](advisor.md#adaptive-trigger-engine) owns the
-thresholds, progress reset and shared consultation authority.
+management settings route and Advisor dashboard. Adaptive includes the preflight baseline, then
+consults again only after a failed repair of an explicit validation.
+[Advisor trigger semantics](advisor.md#adaptive-trigger-engine) owns that rule, the cycle reset,
+and the shared consultation authority.

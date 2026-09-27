@@ -154,23 +154,25 @@ new core imports are added. Native passthrough and provider-private tool loops r
 `src/advisor/triggers/policy.ts` reduces events and evaluates deterministic, effect-free decisions.
 Only `src/advisor/runtime.ts` can dispatch, through the same PR1 consultation and ledger authority.
 
-`adaptive` includes the existing preflight baseline, then escalates on two consecutive explicit
-validation failures, three substantive successful mutations without successful validation, or
-three equivalent failed validations. Three edits tolerate a logical patch split into two calls.
-Equivalent failures take priority at three; otherwise two failures take priority over edits.
-Manual and preflight policies do not allocate or invoke a trigger engine. There is no semantic
-stuck detection. No thresholds are public config fields.
+`adaptive` includes the existing preflight baseline, then escalates only on `repair_failed`:
+an explicit validation failure, at least one substantive mutation after it, then a follow-up
+failure of that same validation. Edits with no prior failure do not consult. Two failures with
+no mutation between them do not consult. A follow-up failure whose fingerprint differs does not
+consult; a missing fingerprint may consult with `same_validation=unknown`. Manual and preflight
+policies do not allocate or invoke a trigger engine. There is no semantic stuck detection.
+No thresholds are public config fields.
 
 `src/advisor/triggers/classify-tool.ts` prefers existing structured tool flags, then exact known
 names and conservative shell command patterns. Compound shell commands and namespaced lookalikes
 stay unknown. A validation needs an explicit exit code, structured success/error, or tool error;
-unknown outcomes break escalation sequences conservatively. Successful validation clears all
-failure, mutation and repetition signals. Distinct command/target/working-directory digests are
-not merged. Edit bodies and stdout are never hashed or stored in trigger state.
+unknown outcomes are neither a failure nor progress. A passing validation clears the failure
+cycle. Distinct command/target/working-directory digests are not merged, and a different
+follow-up validation starts a new failure instead of consulting. Compound shell commands,
+including assignments, stay unclassified. Edit bodies and stdout are never hashed or stored.
 
-A successful consultation clears signals. After manual or adaptive advice, further escalation requires a new successful mutation
-followed by a validation attempt and the policy threshold. The first escalation after baseline
-preflight is exempt from this cooldown so unvalidated edits remain observable. Manual consultation uses the same
+A successful consultation, including the preflight baseline and a manual `advisor()` call,
+clears the failure cycle. Another escalation requires a new failure, a new repair, and a new
+failure. The baseline does not block that later cycle. Manual consultation uses the same
 claim in adaptive mode and resets observation state on success. `claim(..., repeatAfterSuccess)`
 permits a subsequent consultation while preserving in-flight exclusion, saturation, settlement
 tokens, cancellation release and provider-failure cooldown. Automatic advice uses the existing

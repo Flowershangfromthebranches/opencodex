@@ -101,30 +101,16 @@ consultation never switches the session's main model.
 
 ## Adaptive
 
-Adaptive includes the preflight baseline and later deterministic escalation. It does not detect semantic confusion or root-cause uncertainty.
+Adaptive includes the preflight baseline, then escalates only for a limited class of observable non-convergence: an explicit validation failure, a repair edit, and a follow-up failure of that same validation. It does not detect a stuck worker, semantic confusion, or an unclear root cause.
 
 ```sh
 ocx advisor set --policy adaptive
 ```
 
-The internal defaults are two consecutive explicit validation failures, three successful edits
-without successful validation, or three equivalent failed validation actions. The three-edit
-threshold tolerates a patch split across two tools. These are completed-tool observations, not
-an analysis of hidden reasoning or test-log prose. Different diagnostics do not count as failed
-validation; unknown command outcomes are not failures. A successful validation resets the signals.
+The only automatic reason is `repair_failed`. A sequence of edits with no prior failure does not consult. Two validation failures with no edit between them do not consult. A follow-up failure of a different validation does not consult and starts a new failure cycle instead. When a validation result has no stable fingerprint, that same shape can still consult, and the evidence records `same_validation=unknown` rather than claiming the two validations were the same.
 
-Adaptive performs the same first preflight consultation as `preflight`, with no duplicate first
-call. Afterwards, `edit → test PASS` and different diagnostic experiments cause **zero extra
-escalations**. `edit → test FAIL → edit → test FAIL` triggers consultation and advice reaches the
-same worker. After manual advice or an adaptive escalation, another escalation requires a fresh
-mutation followed by validation and the rule threshold. This cooldown does not block the first
-escalation after the preflight baseline. Advisor provider failures retain the existing one-minute
-failure cooldown; cancellation releases the claim without a failure cooldown.
+Observations come from completed tools. The classifier does not read test-log prose. Diagnostic commands (`git diff`, `git status`, search, and file reads) are not validation, even when the result is negative. A passing validation resets the cycle. Compound shell commands — environment assignments, `&&`, pipes, redirections, and command lists — are left unclassified, so a validation hidden inside one may not be observed.
 
-Only clients with stable task identity accumulate adaptive observations. State is process-local,
-bounded to 512 tasks for 24 hours, with 2,048 result IDs and 128 pending calls per task. Saturation
-skips escalation; restart, expiry or compaction can reset evidence. At most 128 recent messages
-are projected per request. Provider-private tool activity and complex shell expressions are not
-classified. No semantic stuck detection, multiple advisors, voting or model switching is added.
-Automatic advice uses the existing developer-role injection, with the same trust limitation and
-cross-provider task-content disclosure as preflight.
+Adaptive uses the same first preflight consultation as `preflight`, and does not consult a second time on that turn. After the baseline, repeated edits, an edit followed by a passing test, and separate diagnostic experiments cause no extra escalation. A failing test, then an edit, then the same failing test consults, and the advice reaches the same worker. Manual advice and a successful adaptive consultation both reset the cycle. Another escalation needs a new failure, a new repair, and a new failure. Provider failures keep the existing one-minute cooldown. Cancellation releases the claim and does not start that cooldown.
+
+Only a client with a stable task identity accumulates adaptive observations. State is process-local, bounded to 512 tasks for 24 hours, with 2,048 result ids and 128 pending calls per task. Saturation skips escalation. Restart, expiry, or compaction can clear the evidence. At most 128 recent messages are read per request. No semantic stuck detection, multiple advisors, voting, or model switching is added. Automatic advice still uses the developer-role injection, with the same trust limitation and cross-provider disclosure as preflight.

@@ -1,6 +1,6 @@
 ---
 title: 어드바이저
-description: OpenCodex가 소유한 전문가 상담 사이드카 — 구성된 전문가 모델이 라우팅된 워커에게 조언을 반환하며, manual과 preflight 정책을 제공합니다.
+description: OpenCodex가 소유한 전문가 상담 사이드카 — 구성된 전문가 모델이 라우팅된 워커에게 조언을 반환하며, manual, preflight, adaptive 정책을 제공합니다.
 ---
 
 어드바이저는 워커의 작업을 검토하고 조언을 반환하는 독립 전문가 모델입니다. 상담은 OpenCodex가 엔드투엔드로 소유합니다. 프록시가 워커 턴에 합성 `advisor` 도구를 주입하고, 정상적인 라우팅 권위를 통해 상담을 직접 실행하며, 조언을 재주입해 원래 워커가 계속 진행하게 합니다. 워커는 위임하지 않고, 아무것도 spawn하지 않으며, 제공자 자격 증명도 가지지 않습니다.
@@ -58,30 +58,16 @@ OpenCodex는 자체 자격 증명을 페이로드에 주입하지 않습니다(�
 
 ## Adaptive
 
-Adaptive는 초기 preflight 자문과 이후의 결정적 에스컬레이션을 포함합니다. 의미적 혼란이나 근본 원인 불확실성을 감지하지 않습니다.
+Adaptive는 초기 preflight 자문을 포함한 뒤, 관측 가능한 비수렴의 제한된 형태에서만 에스컬레이션합니다. 명시적 검증 실패, 수리 변경, 같은 검증의 재실패입니다. 워커가 막혔는지, 의미적 혼란, 불명확한 근본 원인은 감지하지 않습니다.
 
 ```sh
 ocx advisor set --policy adaptive
 ```
 
-The internal defaults are two consecutive explicit validation failures, three successful edits
-without successful validation, or three equivalent failed validation actions. The three-edit
-threshold tolerates a patch split across two tools. These are completed-tool observations, not
-an analysis of hidden reasoning or test-log prose. Different diagnostics do not count as failed
-validation; unknown command outcomes are not failures. A successful validation resets the signals.
+자동 이유는 `repair_failed`뿐입니다. 선행 실패가 없는 변경의 연속은 자문하지 않습니다. 사이에 변경이 없는 두 번의 검증 실패도 자문하지 않습니다. 다른 검증의 후속 실패는 자문하지 않고 새 실패 주기를 시작합니다. 검증 결과에 안정적인 지문이 없으면 같은 형태로 자문할 수 있지만, 증거는 두 검증이 같다고 주장하지 않고 `same_validation=unknown`으로 기록합니다.
 
-Adaptive performs the same first preflight consultation as `preflight`, with no duplicate first
-call. Afterwards, `edit → test PASS` and different diagnostic experiments cause **zero extra
-escalations**. `edit → test FAIL → edit → test FAIL` triggers consultation and advice reaches the
-same worker. After manual advice or an adaptive escalation, another escalation requires a fresh
-mutation followed by validation and the rule threshold. This cooldown does not block the first
-escalation after the preflight baseline. Advisor provider failures retain the existing one-minute
-failure cooldown; cancellation releases the claim without a failure cooldown.
+관측은 완료된 도구에서 옵니다. 분류기는 테스트 로그의 문장을 읽지 않습니다. 진단 명령(`git diff`, `git status`, 검색, 파일 읽기)은 결과가 부정적이어도 검증이 아닙니다. 검증 성공은 주기를 초기화합니다. 환경 변수 대입, `&&`, 파이프, 리다이렉션, 명령 나열 같은 복합 셸은 분류하지 않으므로 그 안에 숨은 검증은 관측되지 않을 수 있습니다.
 
-Only clients with stable task identity accumulate adaptive observations. State is process-local,
-bounded to 512 tasks for 24 hours, with 2,048 result IDs and 128 pending calls per task. Saturation
-skips escalation; restart, expiry or compaction can reset evidence. At most 128 recent messages
-are projected per request. Provider-private tool activity and complex shell expressions are not
-classified. No semantic stuck detection, multiple advisors, voting or model switching is added.
-Automatic advice uses the existing developer-role injection, with the same trust limitation and
-cross-provider task-content disclosure as preflight.
+Adaptive는 `preflight`와 같은 첫 preflight 자문을 하며, 그 턴에서 두 번째 자문은 하지 않습니다. 기준선 이후 반복 변경, 변경 뒤 통과한 테스트, 서로 다른 진단 실험은 추가 에스컬레이션을 만들지 않습니다. 테스트 실패, 변경, 같은 테스트 실패는 자문하고 조언은 같은 워커에게 돌아갑니다. 수동 조언과 성공한 adaptive 자문은 모두 주기를 초기화합니다. 다음 에스컬레이션에는 새 실패, 새 수리, 새 실패가 필요합니다. 제공자 장애는 기존의 1분 쿨다운을 유지합니다. 취소는 클레임을 해제하며 그 쿨다운을 시작하지 않습니다.
+
+안정적인 작업 신원이 있는 클라이언트만 adaptive 관측을 누적합니다. 상태는 프로세스 안에 있으며 512개 작업, 24시간, 작업당 결과 ID 2,048개와 대기 호출 128개로 제한됩니다. 포화되면 에스컬레이션을 건너뜁니다. 재시작, 만료, 컴팩션이 증거를 지울 수 있습니다. 요청마다 최근 메시지 최대 128개만 읽습니다. 의미적 정체 감지, 다중 어드바이저, 투표, 모델 전환은 추가하지 않습니다. 자동 조언은 기존 developer 역할 주입을 쓰며, preflight와 같은 신뢰 한계와 크로스 프로바이더 공개가 적용됩니다.

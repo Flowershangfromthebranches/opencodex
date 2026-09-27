@@ -44,7 +44,7 @@ test("adaptive includes exactly one preflight baseline then escalates without wo
   expect(await s.plan().preflightInject(next)).toBe(true);
   expect(s.calls).toHaveLength(2);
   expect(s.calls[1]?.model).toBe("expert/model");
-  expect(JSON.stringify(s.calls[1])).toContain("repeated_validation_failure");
+  expect(JSON.stringify(s.calls[1])).toContain("repair_failed");
   expect(String(next.context.messages.at(-1)?.content)).toContain("Run a discriminating experiment.");
   expect(next.modelId).toBe("worker");
   expect(await s.plan().preflightInject(parsed([read, edit, fail, edit, fail]))).toBe(false);
@@ -75,7 +75,7 @@ test("provider 503 uses PR1 cooldown and retry retains adaptive channel", async 
   expect(s.calls).toHaveLength(2);
   s.advance(); s.fail(false);
   expect(await s.plan().preflightInject(parsed(steps))).toBe(true);
-  expect(JSON.stringify(s.calls[2])).toContain("repeated_validation_failure");
+  expect(JSON.stringify(s.calls[2])).toContain("repair_failed");
 });
 test("concurrent adaptive and manual requests use one PR1 in-flight claim", async () => {
   for (const manual of [false, true]) {
@@ -108,25 +108,38 @@ test("observation state saturates without eviction, expires and stores no conten
   expect(engine.snapshot("overflow", 0)).toBeUndefined();
   expect(engine.size()).toBe(512);
   expect(JSON.stringify(engine.snapshot("0", 0))).not.toContain("private source");
-  expect(engine.snapshot("0", 24 * 60 * 60 * 1000 + 1)?.mutationsSinceSuccessfulValidation).toBe(0);
+  expect(engine.snapshot("0", 24 * 60 * 60 * 1000 + 1)?.phase).toBe("normal");
 });
 test("stable task key isolates new user tasks and full history replay deduplicates", () => {
   const engine = createTriggerEngine(); const request = parsed([fail]);
   const key = advisorLedgerKey(request, "worker")!;
   engine.observe(key, request, 0); engine.observe(key, request, 1);
-  expect(engine.snapshot(key, 1)?.consecutiveValidationFailures).toBe(1);
+  expect(engine.snapshot(key, 1)?.phase).toBe("failure_observed");
   request.context.messages.push({ role: "user", content: "new task", timestamp: 0 });
   const nextKey = advisorLedgerKey(request, "worker")!;
   expect(nextKey).not.toBe(key);
   expect(engine.observe(nextKey, request, 1).action).toBe("continue");
 });
 
-test("baseline does not block the first unvalidated-mutation escalation", async () => {
+test("edits without a prior failure do not escalate after the baseline", async () => {
   const s = setup(); await s.baseline();
-  expect(await s.plan().preflightInject(parsed([read, edit, edit]))).toBe(false);
-  expect(await s.plan().preflightInject(parsed([read, edit, edit, edit]))).toBe(true);
-  expect(JSON.stringify(s.calls[1])).toContain("repeated_mutation_without_validation");
-  expect(await s.plan().preflightInject(parsed([read, edit, edit, edit, edit, edit, edit]))).toBe(false);
+  const writes = [1, 2, 3, 4].map(i => ({ name: "write_file", args: { path: `src/f${i}.ts`, content: "x" }, output: "written" }));
+  expect(await s.plan().preflightInject(parsed([read, ...writes]))).toBe(false);
+  expect(s.calls).toHaveLength(1);
+});
+test("baseline does not block the first repair failure", async () => {
+  const s = setup(); await s.baseline();
+  expect(await s.plan().preflightInject(parsed([read, fail, edit]))).toBe(false);
+  expect(await s.plan().preflightInject(parsed([read, fail, edit, fail]))).toBe(true);
+  expect(JSON.stringify(s.calls[1])).toContain("repair_failed");
+  expect(JSON.stringify(s.calls[1])).toContain("same_validation=true");
+  expect(await s.plan().preflightInject(parsed([read, fail, edit, fail, edit, fail]))).toBe(false);
+});
+test("a different follow-up validation does not escalate", async () => {
+  const s = setup(); await s.baseline();
+  const build = { name: "shell", args: { cmd: "npm run build" }, exit: 1 };
+  expect(await s.plan().preflightInject(parsed([read, fail, edit, build]))).toBe(false);
+  expect(s.calls).toHaveLength(1);
 });
 test("adaptive cancellation releases the original claim and retries without failure cooldown", async () => {
   const s = setup(); await s.baseline();

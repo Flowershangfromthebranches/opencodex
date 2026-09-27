@@ -382,7 +382,7 @@ test("adaptive: real Responses routing consults expert after edit/fail/edit/fail
   append("test-2", "shell", { cmd: "bun test a.test.ts" }, '{"exit_code":1}');
   await turn();
   expect(chatRequests).toHaveLength(2);
-  expect(chatRequests[1]).toContain("repeated_validation_failure");
+  expect(chatRequests[1]).toContain("repair_failed");
   expect(JSON.parse(chatRequests[1]!).model).toBe("expert/gpt-6-astra");
   expect(workerBodies.at(-1)).toContain(ADVISOR_ADVICE);
   expect(JSON.parse(workerBodies.at(-1)!).model).toBe("deepseek-v4");

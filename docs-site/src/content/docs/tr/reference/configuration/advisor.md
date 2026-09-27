@@ -1,6 +1,6 @@
 ---
 title: Danışman
-description: OpenCodex'in sahibi olduğu uzman danışma sidecar'ı — yapılandırılan uzman model yönlendirilen worker'lara tavsiye döndürür; manual ve preflight politikaları.
+description: OpenCodex'in sahibi olduğu uzman danışma sidecar'ı — yapılandırılan uzman model yönlendirilen worker'lara tavsiye döndürür; manual, preflight ve adaptive politikaları.
 ---
 
 Danışman, worker'ın görevini inceleyen ve tavsiye döndüren bağımsız bir uzman modeldir. Danışmayı uçtan uca OpenCodex sahiplenir: proxy, worker'ın turuna sentetik `advisor` aracını enjekte eder, danışmayı normal yönlendirme otoritesi aracılığıyla kendisi yürütür ve tavsiyeyi geri enjekte ederek özgün worker'ın devam etmesini sağlar. Worker'ın bir şey devretmesine, spawn etmesine veya sağlayıcı kimlik bilgisi taşımasına gerek yoktur.
@@ -58,30 +58,16 @@ Danışman fail-open davranır: gönderilmiş bir danışma başarısız olursa 
 
 ## Adaptive
 
-Adaptive, ilk preflight danışmasını ve sonraki deterministik yükseltmeleri içerir; anlamsal takılma algılamaz.
+Adaptive, ilk preflight danışmasını içerir ve ardından yalnızca gözlemlenebilir yakınsamama durumunun sınırlı bir sınıfında yükselir: açık bir doğrulama hatası, bir onarım değişikliği ve aynı doğrulamanın yeniden başarısız olması. Worker'ın takıldığını, anlamsal karışıklığı veya belirsiz kök nedeni algılamaz.
 
 ```sh
 ocx advisor set --policy adaptive
 ```
 
-The internal defaults are two consecutive explicit validation failures, three successful edits
-without successful validation, or three equivalent failed validation actions. The three-edit
-threshold tolerates a patch split across two tools. These are completed-tool observations, not
-an analysis of hidden reasoning or test-log prose. Different diagnostics do not count as failed
-validation; unknown command outcomes are not failures. A successful validation resets the signals.
+Tek otomatik gerekçe `repair_failed` değeridir. Öncesinde hata olmayan bir dizi düzenleme danışma başlatmaz. Arada düzenleme olmayan iki doğrulama hatası da başlatmaz. Farklı bir doğrulamanın sonraki hatası danışmaz ve yeni bir hata döngüsü açar. Bir doğrulama sonucunun kararlı parmak izi yoksa aynı biçim yine danışabilir; kanıt iki doğrulamanın aynı olduğunu iddia etmez ve `same_validation=unknown` yazar.
 
-Adaptive performs the same first preflight consultation as `preflight`, with no duplicate first
-call. Afterwards, `edit → test PASS` and different diagnostic experiments cause **zero extra
-escalations**. `edit → test FAIL → edit → test FAIL` triggers consultation and advice reaches the
-same worker. After manual advice or an adaptive escalation, another escalation requires a fresh
-mutation followed by validation and the rule threshold. This cooldown does not block the first
-escalation after the preflight baseline. Advisor provider failures retain the existing one-minute
-failure cooldown; cancellation releases the claim without a failure cooldown.
+Gözlemler tamamlanmış araçlardan gelir. Sınıflandırıcı test günlüğü düzyazısını okumaz. Tanı komutları (`git diff`, `git status`, arama, dosya okuma) sonuç olumsuz olsa bile doğrulama değildir. Başarılı doğrulama döngüyü sıfırlar. Ortam atamaları, `&&`, borular, yönlendirmeler ve komut listeleri gibi bileşik kabuk komutları sınıflandırılmaz; içine gizlenmiş bir doğrulama gözlemlenmeyebilir.
 
-Only clients with stable task identity accumulate adaptive observations. State is process-local,
-bounded to 512 tasks for 24 hours, with 2,048 result IDs and 128 pending calls per task. Saturation
-skips escalation; restart, expiry or compaction can reset evidence. At most 128 recent messages
-are projected per request. Provider-private tool activity and complex shell expressions are not
-classified. No semantic stuck detection, multiple advisors, voting or model switching is added.
-Automatic advice uses the existing developer-role injection, with the same trust limitation and
-cross-provider task-content disclosure as preflight.
+Adaptive, `preflight` ile aynı ilk preflight danışmasını yapar ve o turda ikinci kez danışmaz. Taban çizgisinden sonra yinelenen düzenlemeler, başarılı bir testle izlenen düzenleme ve ayrı tanı denemeleri ek yükseltme yaratmaz. Test hatası, ardından düzenleme, ardından aynı test hatası danışır ve tavsiye aynı worker'a döner. Elle tavsiye ve başarılı bir adaptive danışması döngüyü sıfırlar. Sonraki yükseltme yeni bir hata, yeni bir onarım ve yeni bir hata ister. Sağlayıcı hataları mevcut bir dakikalık bekleme süresini korur. İptal talebi serbest bırakır ve bu beklemeyi başlatmaz.
+
+Yalnızca kararlı görev kimliği olan bir istemci adaptive gözlemlerini biriktirir. Durum süreç içindedir: 24 saat için 512 görev, görev başına 2.048 sonuç kimliği ve 128 bekleyen çağrı. Doygunluk yükseltmeyi atlar. Yeniden başlatma, süre dolması veya sıkıştırma kanıtı silebilir. İstek başına en fazla 128 yeni ileti okunur. Anlamsal takılma algısı, birden çok danışman, oylama veya model değiştirme eklenmez. Otomatik tavsiye yine developer rolü enjeksiyonunu kullanır; preflight ile aynı güven sınırı ve sağlayıcılar arası açıklama geçerlidir.

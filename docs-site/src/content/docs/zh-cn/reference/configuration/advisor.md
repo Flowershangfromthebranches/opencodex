@@ -1,6 +1,6 @@
 ---
 title: 顾问
-description: OpenCodex 自有的专家咨询 sidecar — 配置的专家模型为路由 Worker 提供建议，支持 manual 与 preflight 两种策略。
+description: OpenCodex 自有的专家咨询 sidecar — 配置的专家模型为路由 Worker 提供建议，支持 manual、preflight 与 adaptive 三种策略。
 ---
 
 顾问是一个独立的专家模型，审阅 Worker 的任务并返回建议。OpenCodex 端到端地拥有整个咨询过程：代理向 Worker 的回合注入合成的 `advisor` 工具，自己通过正常路由权威执行咨询，并回注建议使原 Worker 继续。Worker 无需委托、无需 spawn 任何东西、也不携带 provider 凭据。
@@ -58,30 +58,16 @@ Advisor 失败是 fail-open 的：已经发出的咨询若失败（模型不可�
 
 ## Adaptive
 
-Adaptive 包含首次 preflight 咨询和后续确定性升级；不检测语义上的困惑或根因不确定性。
+Adaptive 包含首次 preflight 咨询，随后只对一类有限的、可观察的不收敛做升级：一次明确的验证失败、一次修复性修改，以及同一次验证的再次失败。它不判断 Worker 是否卡住，也不做语义混乱或根因不明的检测。
 
 ```sh
 ocx advisor set --policy adaptive
 ```
 
-The internal defaults are two consecutive explicit validation failures, three successful edits
-without successful validation, or three equivalent failed validation actions. The three-edit
-threshold tolerates a patch split across two tools. These are completed-tool observations, not
-an analysis of hidden reasoning or test-log prose. Different diagnostics do not count as failed
-validation; unknown command outcomes are not failures. A successful validation resets the signals.
+唯一的自动原因是 `repair_failed`。没有先前失败的一连串修改不会咨询。两次验证失败之间如果没有修改，也不会咨询。另一次不同验证的失败不会咨询，而是开始新的失败周期。验证结果没有稳定指纹时，同样的形态仍可能咨询，但证据记为 `same_validation=unknown`，不会声称两次验证相同。
 
-Adaptive performs the same first preflight consultation as `preflight`, with no duplicate first
-call. Afterwards, `edit → test PASS` and different diagnostic experiments cause **zero extra
-escalations**. `edit → test FAIL → edit → test FAIL` triggers consultation and advice reaches the
-same worker. After manual advice or an adaptive escalation, another escalation requires a fresh
-mutation followed by validation and the rule threshold. This cooldown does not block the first
-escalation after the preflight baseline. Advisor provider failures retain the existing one-minute
-failure cooldown; cancellation releases the claim without a failure cooldown.
+观察来自已完成的工具。分类器不阅读测试日志里的自然语言。诊断命令（`git diff`、`git status`、搜索、读文件）即使结果为负，也不是验证。验证成功会重置这一轮。环境变量赋值、`&&`、管道、重定向和命令列表这类复合 shell 不予分类，因此藏在其中的验证可能观察不到。
 
-Only clients with stable task identity accumulate adaptive observations. State is process-local,
-bounded to 512 tasks for 24 hours, with 2,048 result IDs and 128 pending calls per task. Saturation
-skips escalation; restart, expiry or compaction can reset evidence. At most 128 recent messages
-are projected per request. Provider-private tool activity and complex shell expressions are not
-classified. No semantic stuck detection, multiple advisors, voting or model switching is added.
-Automatic advice uses the existing developer-role injection, with the same trust limitation and
-cross-provider task-content disclosure as preflight.
+Adaptive 使用与 `preflight` 相同的第一次 preflight 咨询，并且不会在同一次回合里再咨询第二次。基线之后，反复修改、修改后测试通过，以及彼此不同的诊断实验都不会额外升级。测试失败、然后修改、然后同一次测试再次失败，才会咨询，建议仍回到原来的 Worker。手动建议和一次成功的 adaptive 咨询都会重置这一轮。下一次升级需要新的失败、新的修复和新的失败。提供者失败沿用已有的一分钟冷却。取消会释放声明，并且不会开始这段冷却。
+
+只有带有稳定任务身份的客户端才会累积 adaptive 观察。状态位于进程内，上限为 512 个任务、24 小时，每个任务 2,048 个结果标识和 128 个待处理调用。表满时跳过升级。重启、过期或压缩都可能清掉证据。每个请求最多读取最近 128 条消息。不增加语义停滞检测、多顾问、投票或模型切换。自动建议仍使用 developer 角色注入，信任限制和跨提供者披露与 preflight 相同。

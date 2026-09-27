@@ -29,12 +29,13 @@ export function classifyTool(call: OcxToolCall, metadata?: OcxTool): ClassifiedT
     // Compound commands, substitutions and redirections can hide a different exit status.
     // Quoting is kept byte-for-byte: different experiments must not collapse into one.
     const cmd = command.trim();
-    if (/[;&|<>`$\n\r]/.test(cmd)) return unknown;
+    // Assignments (`FOO=1 bun test`) hide the real command the same way pipes do.
+    if (/[;&|<>`$=\n\r]/.test(cmd)) return unknown;
     if (/^(?:(?:bun|npm|pnpm|yarn) (?:run )?(?:test|lint|typecheck|build|check|verification)(?: |$)|(?:pytest|jest|vitest|tsc)(?: |$)|(?:cargo|go) (?:test|build|check)(?: |$)|python(?:3)? -m pytest(?: |$))/.test(cmd)) kind = "validation";
     else if (/^(?:cat|head|tail|ls|rg|grep)(?: |$)/.test(cmd)) kind = "read";
     else if (/^git (?:diff|status|log|show)(?: |$)/.test(cmd)) kind = "diagnostic";
     else if (/^(?:cp|mv|rm|touch) [\w./ -]+$/.test(cmd)) kind = "mutation";
-    else kind = "execution";
+    else return unknown;
     const workdir = args.workdir ?? args.cwd ?? "";
     if (typeof workdir !== "string" || workdir.length > LIMIT) return unknown;
     identity = `${workdir}\0${cmd}`;
@@ -42,8 +43,8 @@ export function classifyTool(call: OcxToolCall, metadata?: OcxTool): ClassifiedT
   if (kind === "mutation" && identity === undefined) {
     const path = args.path ?? args.file_path ?? args.filename;
     if (typeof path === "string" && path.length <= LIMIT) target = fingerprint(path);
-    // Different edits to one file are NOT equivalent actions. Retain only the target digest;
-    // mutation-count policy covers these without claiming the edits are identical.
+    // Different edits to one file are not equivalent actions. Retain only the target digest.
+    // A mutation advances a failure cycle; it is not itself a consultation.
     return { kind, target: target ?? "unspecified" };
   }
   if (kind === "unknown") return unknown;

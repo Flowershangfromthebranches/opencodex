@@ -1,6 +1,6 @@
 ---
 title: Консультант
-description: Принадлежащий OpenCodex sidecar экспертных консультаций — настроенная экспертная модель консультирует маршрутизируемых воркеров; политики manual и preflight.
+description: Принадлежащий OpenCodex sidecar экспертных консультаций — настроенная экспертная модель консультирует маршрутизируемых воркеров; политики manual, preflight и adaptive.
 ---
 
 Консультант — независимая экспертная модель, которая анализирует задачу воркера и возвращает рекомендации. Консультацией владеет OpenCodex от начала до конца: прокси внедряет синтетический инструмент `advisor` в ход воркера, сам выполняет консультацию через штатный маршрутизирующий механизм и возвращает рекомендацию, чтобы исходный воркер продолжил работу. Воркеру не нужно делегировать, spawn-ить что-либо или держать провайдерские учётные данные.
@@ -58,30 +58,16 @@ OpenCodex никогда не внедряет в нагрузку свои со
 
 ## Adaptive
 
-Adaptive включает начальную preflight-консультацию и последующую детерминированную эскалацию, без семантического определения затруднений.
+Adaptive включает начальную preflight-консультацию и затем эскалирует только ограниченный класс наблюдаемой несходимости: явный сбой проверки, исправляющее изменение и повторный сбой той же проверки. Политика не определяет, что воркер «застрял», не ищет семантическую путаницу и не оценивает неясность причины.
 
 ```sh
 ocx advisor set --policy adaptive
 ```
 
-The internal defaults are two consecutive explicit validation failures, three successful edits
-without successful validation, or three equivalent failed validation actions. The three-edit
-threshold tolerates a patch split across two tools. These are completed-tool observations, not
-an analysis of hidden reasoning or test-log prose. Different diagnostics do not count as failed
-validation; unknown command outcomes are not failures. A successful validation resets the signals.
+Единственная автоматическая причина — `repair_failed`. Серия правок без предшествующего сбоя консультацию не вызывает. Два сбоя проверки без правки между ними тоже не вызывают. Повторный сбой другой проверки не консультирует и начинает новый цикл сбоя. Если у результата проверки нет устойчивого отпечатка, та же форма всё же может консультировать, а свидетельство записывает `same_validation=unknown` и не утверждает, что проверки совпали.
 
-Adaptive performs the same first preflight consultation as `preflight`, with no duplicate first
-call. Afterwards, `edit → test PASS` and different diagnostic experiments cause **zero extra
-escalations**. `edit → test FAIL → edit → test FAIL` triggers consultation and advice reaches the
-same worker. After manual advice or an adaptive escalation, another escalation requires a fresh
-mutation followed by validation and the rule threshold. This cooldown does not block the first
-escalation after the preflight baseline. Advisor provider failures retain the existing one-minute
-failure cooldown; cancellation releases the claim without a failure cooldown.
+Наблюдения берутся из завершённых инструментов. Классификатор не читает текст журналов тестов. Диагностические команды (`git diff`, `git status`, поиск, чтение файла) не являются проверкой, даже если результат отрицательный. Успешная проверка сбрасывает цикл. Составные команды оболочки — присваивания окружения, `&&`, каналы, перенаправления и списки — не классифицируются, поэтому спрятанная в них проверка может остаться незамеченной.
 
-Only clients with stable task identity accumulate adaptive observations. State is process-local,
-bounded to 512 tasks for 24 hours, with 2,048 result IDs and 128 pending calls per task. Saturation
-skips escalation; restart, expiry or compaction can reset evidence. At most 128 recent messages
-are projected per request. Provider-private tool activity and complex shell expressions are not
-classified. No semantic stuck detection, multiple advisors, voting or model switching is added.
-Automatic advice uses the existing developer-role injection, with the same trust limitation and
-cross-provider task-content disclosure as preflight.
+Adaptive выполняет ту же первую preflight-консультацию, что и `preflight`, и не консультирует второй раз в этом ходе. После базовой консультации повторные правки, правка с последующим успешным тестом и отдельные диагностические эксперименты не дают дополнительной эскалации. Сбой теста, затем правка, затем тот же сбой теста консультирует, и совет возвращается тому же воркеру. Ручной совет и успешная adaptive-консультация сбрасывают цикл. Следующая эскалация требует нового сбоя, нового исправления и нового сбоя. Сбои провайдера сохраняют существующую минутную паузу. Отмена освобождает заявку и эту паузу не запускает.
+
+Только клиент со стабильной идентичностью задачи накапливает adaptive-наблюдения. Состояние живёт в процессе: не более 512 задач на 24 часа, 2 048 идентификаторов результатов и 128 ожидающих вызовов на задачу. При насыщении эскалация пропускается. Перезапуск, истечение срока или сжатие могут стереть свидетельства. За запрос читается не больше 128 недавних сообщений. Семантического обнаружения застревания, нескольких советников, голосования и смены модели нет. Автоматический совет по-прежнему внедряется сообщением роли developer, с тем же ограничением доверия и межпровайдерным раскрытием, что и preflight.

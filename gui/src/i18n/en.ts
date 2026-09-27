@@ -119,7 +119,7 @@ export const en = {
   "advisor.policy.manual": "Manual — only when the worker asks",
   "advisor.policy.preflight": "Preflight — automatic consultation attempt once orientation evidence exists",
   "advisor.policy.adaptive": "Adaptive",
-  "advisor.adaptiveDescription": "Includes preflight, then automatically consults the configured Advisor after repeated validation failures or repeated unvalidated changes. Successful validation resets escalation.",
+  "advisor.adaptiveDescription": "Includes the preflight consultation, then consults again only after an explicit validation failure, a repair change, and a follow-up failure of that same validation. Edits alone do not consult. A passing validation resets the cycle.",
   "advisor.timeout": "Timeout (ms)",
   "advisor.save": "Save advisor settings",
   "advisor.saved": "Advisor settings saved.",

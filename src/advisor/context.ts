@@ -124,7 +124,7 @@ export function buildAdvisorUserPrompt(input: AdvisorContextInput): string {
   const focus = input.question ? clip(input.question, MAX_QUESTION_CHARS) : "";
   return [
     `# Worker identity\n${input.workerIdentity}`,
-    `# Advisor identity\n${input.advisorModel} (independent expert advisor, consulted ${input.reason === "manual" ? "at the worker's explicit request" : input.reason === "adaptive" ? "automatically after observable non-convergence" : "automatically before the worker's first substantive turn"})`,
+    `# Advisor identity\n${input.advisorModel} (independent expert advisor, consulted ${input.reason === "manual" ? "at the worker's explicit request" : input.reason === "adaptive" ? "automatically after a failed repair of an explicit validation" : "automatically before the worker's first substantive turn"})`,
     `# Current task (latest user request)\n${latestUserTask(input.parsed)}`,
     ...(focus ? [`# Worker's focus question\n${focus}`] : []),
     `# Tools available to the worker\n${toolCatalog(input.parsed)}`,

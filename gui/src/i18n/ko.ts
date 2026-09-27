@@ -118,7 +118,7 @@ export const ko: Record<TKey, string> = {
   "advisor.policy.manual": "수동 — Worker가 요청할 때만",
   "advisor.policy.preflight": "Preflight — 방향 증거가 생기면 자동 상담 시도",
   "advisor.policy.adaptive": "적응형",
-  "advisor.adaptiveDescription": "초기 자문을 포함하며 검증 실패나 미검증 변경이 반복되면 설정된 Advisor에 자문합니다. 검증 성공 시 카운터가 초기화됩니다.",
+  "advisor.adaptiveDescription": "초기 preflight 자문을 포함합니다. 이후에는 명시적 검증 실패, 수리 변경, 같은 검증의 재실패가 있을 때만 다시 자문합니다. 변경만으로는 자문하지 않습니다. 검증 성공은 이 주기를 초기화합니다.",
   "advisor.timeout": "타임아웃 (ms)",
   "advisor.save": "어드바이저 설정 저장",
   "advisor.saved": "어드바이저 설정이 저장되었습니다.",

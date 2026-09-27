@@ -1,6 +1,6 @@
 ---
 title: Conseiller
-description: Le sidecar de consultation experte d'OpenCodex — un modèle expert configuré conseille les workers routés, avec les politiques manual et preflight.
+description: Le sidecar de consultation experte d'OpenCodex — un modèle expert configuré conseille les workers routés, avec les politiques manual, preflight et adaptive.
 ---
 
 Le conseiller est un modèle expert indépendant qui examine la tâche du worker et renvoie des
@@ -95,30 +95,16 @@ codage, et une consultation ne change jamais le modèle principal de la session.
 
 ## Adaptive
 
-Adaptive inclut la consultation preflight initiale et une escalade déterministe ultérieure ; il ne détecte pas la confusion sémantique.
+Adaptive inclut la consultation preflight initiale, puis n'escalade que pour une classe limitée de non-convergence observable : un échec de validation explicite, une modification de réparation, puis un nouvel échec de la même validation. Il ne détecte ni un worker bloqué, ni une confusion sémantique, ni une cause racine incertaine.
 
 ```sh
 ocx advisor set --policy adaptive
 ```
 
-The internal defaults are two consecutive explicit validation failures, three successful edits
-without successful validation, or three equivalent failed validation actions. The three-edit
-threshold tolerates a patch split across two tools. These are completed-tool observations, not
-an analysis of hidden reasoning or test-log prose. Different diagnostics do not count as failed
-validation; unknown command outcomes are not failures. A successful validation resets the signals.
+La seule raison automatique est `repair_failed`. Une suite de modifications sans échec préalable ne consulte pas. Deux échecs de validation sans modification entre eux ne consultent pas. Un échec de suivi sur une validation différente ne consulte pas et ouvre un nouveau cycle d'échec. Lorsqu'un résultat de validation n'a pas d'empreinte stable, la même forme peut encore consulter, et la preuve indique `same_validation=unknown` au lieu d'affirmer que les deux validations étaient identiques.
 
-Adaptive performs the same first preflight consultation as `preflight`, with no duplicate first
-call. Afterwards, `edit → test PASS` and different diagnostic experiments cause **zero extra
-escalations**. `edit → test FAIL → edit → test FAIL` triggers consultation and advice reaches the
-same worker. After manual advice or an adaptive escalation, another escalation requires a fresh
-mutation followed by validation and the rule threshold. This cooldown does not block the first
-escalation after the preflight baseline. Advisor provider failures retain the existing one-minute
-failure cooldown; cancellation releases the claim without a failure cooldown.
+Les observations viennent d'outils terminés. Le classifieur ne lit pas la prose des journaux de test. Les commandes de diagnostic (`git diff`, `git status`, recherche, lecture de fichier) ne sont pas des validations, même si le résultat est négatif. Une validation réussie réinitialise le cycle. Les commandes shell composées — affectations d'environnement, `&&`, tubes, redirections et listes — restent non classées : une validation cachée dedans peut ne pas être observée.
 
-Only clients with stable task identity accumulate adaptive observations. State is process-local,
-bounded to 512 tasks for 24 hours, with 2,048 result IDs and 128 pending calls per task. Saturation
-skips escalation; restart, expiry or compaction can reset evidence. At most 128 recent messages
-are projected per request. Provider-private tool activity and complex shell expressions are not
-classified. No semantic stuck detection, multiple advisors, voting or model switching is added.
-Automatic advice uses the existing developer-role injection, with the same trust limitation and
-cross-provider task-content disclosure as preflight.
+Adaptive reprend la même première consultation preflight que `preflight`, sans seconde consultation dans ce tour. Après cette base, des modifications répétées, une modification suivie d'un test réussi, et des diagnostics distincts ne provoquent aucune escalade supplémentaire. Un test en échec, puis une modification, puis le même test en échec consulte, et le conseil revient au même worker. Un conseil manuel et une consultation adaptive réussie réinitialisent tous deux le cycle. Une nouvelle escalade exige un nouvel échec, une nouvelle réparation, puis un nouvel échec. Les pannes du fournisseur conservent le délai d'une minute déjà en place. Une annulation libère la réservation et ne démarre pas ce délai.
+
+Seul un client doté d'une identité de tâche stable accumule les observations adaptive. L'état vit dans le processus, borné à 512 tâches pendant 24 heures, avec 2 048 identifiants de résultat et 128 appels en attente par tâche. La saturation saute l'escalade. Un redémarrage, l'expiration ou une compaction peut effacer les preuves. Au plus 128 messages récents sont lus par requête. Aucune détection sémantique de blocage, aucun multi-conseiller, aucun vote ni changement de modèle n'est ajouté. Le conseil automatique utilise toujours l'injection en rôle developer, avec la même limite de confiance et la même divulgation inter-fournisseurs que preflight.

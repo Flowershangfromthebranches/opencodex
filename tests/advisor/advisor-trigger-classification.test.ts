@@ -4,8 +4,20 @@ import type { OcxToolCall, OcxToolResultMessage } from "../../src/types";
 const call = (name: string, args = {}): OcxToolCall => ({ type: "toolCall", id: "c", name, arguments: args });
 const result = (content: string, isError = false): OcxToolResultMessage => ({ role: "toolResult", toolCallId: "c", toolName: "shell", content, isError, timestamp: 0 });
 test("conservative command classifier preserves meaningful command differences", () => {
-  for (const cmd of ["bun test a.ts", "npm run build", "pytest x.py", "cargo check", "go test ./..."]) expect(classifyTool(call("shell", { cmd })).kind).toBe("validation");
-  for (const cmd of ["false", "curl localhost", "bun test; true", "echo 'bun test'", "bun test | cat", "bun test\necho ok"]) expect(classifyTool(call("shell", { cmd })).kind).not.toBe("validation");
+  for (const cmd of [
+    "bun test", "bun test tests/foo.test.ts", "npm test", "npm run test", "npm run build",
+    "pnpm test", "yarn test", "pytest", "pytest tests/test_a.py", "python -m pytest", "python3 -m pytest",
+    "cargo test", "go test ./...", "tsc", "vitest", "jest",
+  ]) expect(classifyTool(call("shell", { cmd })).kind).toBe("validation");
+  for (const cmd of [
+    "cd repo && bun test", "FOO=1 bun test", "bun test | tee log", "bun test > log.txt",
+    "bun test; echo done", "echo \"bun test\"", "false", "curl localhost",
+  ]) expect(classifyTool(call("shell", { cmd }))).toEqual({ kind: "unknown" });
+  for (const name of ["shell", "shell_command", "exec_command", "Bash"]) {
+    expect(classifyTool(call(name, { cmd: "bun test" })).kind).toBe("validation");
+  }
+  expect(classifyTool({ ...call("shell", { cmd: "bun test" }), namespace: "mcp__foo" })).toEqual({ kind: "unknown" });
+  expect(classifyTool(call("mcp__foo__shell", { cmd: "bun test" }))).toEqual({ kind: "unknown" });
   expect(classifyTool(call("shell", { cmd: "bun test a.ts" })).fingerprint).not.toBe(classifyTool(call("shell", { cmd: "bun test b.ts" })).fingerprint);
   expect(classifyTool(call("shell", { cmd: "bun test", workdir: "a" })).fingerprint).not.toBe(classifyTool(call("shell", { cmd: "bun test", workdir: "b" })).fingerprint);
   expect(classifyTool(call("exec", { input: 'await tools.exec_command({cmd:"bun test"})' })).kind).toBe("unknown");
