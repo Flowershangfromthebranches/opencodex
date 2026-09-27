@@ -172,7 +172,10 @@ describe("createAdvisorGuard — manual advisor() interception", () => {
     queues.push([{ type: "text_delta", text: "carrying on" }, { type: "done" }]);
     const guard = createAdvisorGuard(planFrom({
       ...recorder,
-      outcome: { ok: false, isError: true, content: "<opencodex_advisor>\nunavailable\n</opencodex_advisor>" },
+      // The real failure shape from runConsultation: the unavailable envelope, NOT the advice
+      // wrapper — a failure must never read back as genuine advice (which would suppress the
+      // policy for this task).
+      outcome: { ok: false, isError: true, content: "<opencodex_advisor_unavailable>\nunavailable\n</opencodex_advisor_unavailable>" },
     }));
 
     const events = await collect(guard({
