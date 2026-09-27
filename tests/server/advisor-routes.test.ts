@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { handleAdvisorRoutes, parseAdvisorSettingsPatch } from "../../src/server/management/advisor-routes";
+import { handleCompanionRoutes } from "../../src/server/management/companion-routes";
 import type { ManagementApiDeps, ManagementContext } from "../../src/server/management/context";
 import type { OcxConfig } from "../../src/types";
 
@@ -66,6 +67,16 @@ describe("GET /api/advisor/settings", () => {
   test("other paths and methods return null for the dispatcher", async () => {
     const { ctx } = makeCtx(baseConfig(), "DELETE");
     expect(await handleAdvisorRoutes(ctx)).toBeNull();
+  });
+
+  test("companion dispatch reaches advisor settings", async () => {
+    // The management composition root is a sponsored surface, so the live
+    // chain calls advisor routes from the next already-wired handler.
+    const { ctx } = makeCtx(baseConfig(), "GET");
+    const response = await handleCompanionRoutes(ctx);
+    expect(response).not.toBeNull();
+    const body = await response!.json() as { settings: { policy: string } };
+    expect(body.settings.policy).toBe("manual");
   });
 });
 
