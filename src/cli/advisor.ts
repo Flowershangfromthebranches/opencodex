@@ -21,7 +21,10 @@ function parseSetArgs(args: string[]): SetOptions {
     const arg = args[index]!;
     if (!VALUED_FLAGS.has(arg)) throw new CliUsageError(`unknown advisor set option ${arg}`, USAGE);
     const value = args[++index];
-    if (!value || value.startsWith("--")) throw new CliUsageError(`${arg} requires a value`, USAGE);
+    if (value === undefined || value.startsWith("--")) throw new CliUsageError(`${arg} requires a value`, USAGE);
+    // An explicitly supplied empty value is meaningful for --model alone: the settings route
+    // treats "" as the supported "clear the model" state. Every other valued flag still needs one.
+    if (value === "" && arg !== "--model") throw new CliUsageError(`${arg} requires a value`, USAGE);
     if (arg === "--model") options.model = value;
     else if (arg === "--effort") options.effort = value;
     else if (arg === "--policy") options.policy = value;

@@ -49,6 +49,8 @@ export async function handleResponses(
   try {
     const response = await runWithCompactionRecovery(req, config, logCtx, {
       ...options,
+      // The request's signal must reach the child options, or the preflight call outlives it.
+      abortSignal,
       openAiSidecarAuth: options.openAiSidecarAuth === undefined
         ? captureExplicitOpenAiCallerAuth(req.headers, config) : options.openAiSidecarAuth,
       nativeCallerAuth: options.nativeCallerAuth === undefined

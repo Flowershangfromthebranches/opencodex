@@ -140,7 +140,7 @@ JSON mode: `payload`.
 
 - `status` (the default) reads the resolved settings; `on`/`off` toggle the sidecar; `set` updates model, effort, policy, or timeout.
 - The advisor model may be any routable model string: a bare native model, an explicit `provider/model`, or an account-qualified native model.
-- `policy: preflight` makes OpenCodex guarantee at least one automatic consultation per task; `policy: manual` consults only when the worker calls the synthetic `advisor` tool.
+- `policy: preflight` makes OpenCodex attempt one automatic consultation per task once the task shows orientation evidence (an assistant tool call or a tool result after the latest user message); `policy: manual` consults only when the worker calls the synthetic `advisor` tool.
 
 ### `ocx companion`
 

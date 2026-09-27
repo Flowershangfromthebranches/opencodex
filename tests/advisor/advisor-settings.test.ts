@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { handleAdvisorCommand } from "../../src/cli/advisor";
 import {
   ADVISOR_EFFORTS,
   advisorRunnable,
@@ -74,5 +75,34 @@ describe("resolveAdvisorSettings", () => {
     expect(resolveAdvisorSettings({ advisor: { timeoutMs: 100 } }).timeoutMs).toBe(120_000);
     expect(resolveAdvisorSettings({ advisor: { timeoutMs: 5_000 } }).timeoutMs).toBe(5_000);
     expect(resolveAdvisorSettings({ advisor: { timeoutMs: 10_000_000 } }).timeoutMs).toBe(600_000);
+  });
+});
+
+describe("ocx advisor set — clearing the model", () => {
+  const depsWith = (requests: Array<{ path: string; method: string; body: unknown }>) => ({
+    baseUrl: "http://proxy.test",
+    fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      requests.push({ path: new URL(String(input)).pathname, method: init?.method ?? "GET", body });
+      return Response.json({ settings: { model: "" }, runnable: false, warning: "advisor_enabled_without_model" });
+    },
+  });
+
+  test("an explicitly empty --model is forwarded as the clear operation", async () => {
+    const requests: Array<{ path: string; method: string; body: unknown }> = [];
+    expect(await handleAdvisorCommand(["set", "--model", "", "--json"], depsWith(requests))).toBe(0);
+    expect(requests).toEqual([
+      { path: "/api/advisor/settings", method: "PUT", body: { model: "" } },
+    ]);
+  });
+
+  test("other valued flags still require a value", async () => {
+    const requests: Array<{ path: string; method: string; body: unknown }> = [];
+    const deps = depsWith(requests);
+    expect(await handleAdvisorCommand(["set", "--effort", "", "--json"], deps)).toBe(2);
+    expect(await handleAdvisorCommand(["set", "--model"], deps)).toBe(2);
+    expect(await handleAdvisorCommand(["set", "--timeout-ms", "", "--json"], deps)).toBe(2);
+    // Not one of them reached the settings route.
+    expect(requests).toHaveLength(0);
   });
 });

@@ -674,7 +674,16 @@ export async function executeResponsesSidecars(
     ];
     // The advisor tool joined AFTER prepare computed the bridge maps; recompute so the tool is
     // declared (undeclared-tool guard, tool_choice mapping, schema repair) on this turn.
-    requestState.toolBridgeMaps = buildToolBridgeMaps(parsed, translatorBudget);
+    //
+    // Rebuild WITHOUT the budget: prepare already charged every tool in the catalog, and
+    // buildToolBridgeMaps charges each name it registers, so re-passing the budget would bill the
+    // whole catalog a second time and can trip `translation_buffer_limit` for a large MCP catalog.
+    // Charge only the one entry that is genuinely new — the synthetic advisor tool is a bare
+    // function tool, so it retains its wire name and its bare name (collaboration.ts:187, :233).
+    requestState.toolBridgeMaps = buildToolBridgeMaps(parsed);
+    translatorBudget.chargeRetained(new TextEncoder().encode(ADVISOR_TOOL_NAME).byteLength * 2, {
+      kind: "retained_collectors",
+    });
     advisorPlan.attachGuard(parsed);
   }
 

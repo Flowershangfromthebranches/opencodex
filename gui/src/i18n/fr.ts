@@ -117,7 +117,7 @@ export const fr: Record<TKey, string> = {
   "nav.combos": "Combinaisons",
   "nav.subagents": "Sous-agents",
   "nav.advisor": "Conseiller",
-  "advisor.description": "Un modèle expert indépendant qui examine la tâche du worker et renvoie des conseils. La consultation appartient à OpenCodex : le worker peut appeler l'outil synthétique advisor, et la politique preflight tente en plus automatiquement une consultation par tâche — dès que la tâche a produit une preuve d'orientation (un appel d'outil de l'assistant ou un résultat d'outil après le dernier message utilisateur), sans coopération du worker.",
+  "advisor.description": "Un modèle expert indépendant qui examine la tâche du worker et renvoie des conseils. La consultation appartient à OpenCodex : le worker peut appeler l'outil synthétique advisor, et la politique preflight tente en plus automatiquement une consultation par tâche — dès que la tâche a produit une preuve d'orientation (un appel d'outil de l'assistant ou un résultat d'outil après le dernier message utilisateur), sans coopération du worker. La tentative est dédupliquée par tâche pour les clients dotés d'une identité de conversation stable ; un client qui n'en a pas peut en voir une de plus.",
   "advisor.enabled": "Conseiller activé",
   "advisor.model": "Modèle expert",
   "advisor.modelPlaceholder": "ex. gpt-6-astra ou anthropic/claude-sonnet-4-6",
