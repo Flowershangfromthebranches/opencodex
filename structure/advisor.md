@@ -95,10 +95,11 @@ so two independent identity-less conversations can never suppress each other.
 ## State
 
 Request-scoped state (consultation count, dedup fingerprints, preflight flag) lives in the
-per-request plan closure. Task-scoped preflight dedup is a bounded, process-local ledger keyed by
-a stable conversation fingerprint (first user message + worker model) with entry-count and TTL
-caps; after a proxy restart a task in progress may receive one more preflight consultation, which
-is fail-open for correctness.
+per-request plan closure. Task-scoped preflight state is the bounded, process-local CLAIM table
+described above, keyed by conversation identity + task boundary + worker model; a client with no
+stable identity is excluded from it on purpose. After a proxy restart the table is empty, so a
+task in progress may receive one more preflight attempt — fail-open for correctness and only one
+extra expert call. Failure state expires on a one-minute cooldown, not the success TTL.
 
 ## Policies
 

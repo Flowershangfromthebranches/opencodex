@@ -41,7 +41,7 @@ description: OpenCodex 自有的专家咨询 sidecar — 配置的专家模型�
 
 OpenCodex 不会把自己的凭据注入负载（不含 provider API key、Authorization/OAuth 信息、后端专用机密与环境变量）。思维链不会被转移，加密的 provider 专用内容不会被解密或转发。**任务内容通常不会做凭据脱敏**：粘贴进任务里的凭据、或工具输出里打印的 token，都会按原样转发 —— OpenCodex 不会对会话执行 DLP。
 
-咨询负载完全由 Worker 模型已被允许看到的已解析会话构成：用户任务、会话、工具调用及其结果、Worker 的工具目录，以及双方模型身份。Advisor 返回散文式建议，以可识别的 `<opencodex_advisor>` 包装回注，不具备 system 权限。思维链不会被转移，加密的 provider 内容不会被解密，凭据或环境机密也不会进入负载。
+咨询负载完全由 Worker 模型已被允许看到的已解析会话构成：用户任务、会话、工具调用及其结果、Worker 的工具目录，以及双方模型身份。Advisor 返回散文式建议，以可识别的 `<opencodex_advisor>` 包装回注，不具备 system 权限。思维链不会被转移，加密的 provider 内容不会被解密。代理不会注入自己的凭据，但任务内容本身按原样转发（见上方跨 provider 提示）。
 
 ## 成本与记账
 
@@ -49,7 +49,7 @@ OpenCodex 不会把自己的凭据注入负载（不含 provider API key、Autho
 
 ## 失败行为
 
-Advisor 失败是 fail-open 的：如果专家模型不可用、配置错误或超时，Worker 会收到简短、无误导性的"advisor 不可用"上下文（preflight 情况下可能什么都不注入）并继续任务。Advisor 失败不会让编码请求失败，咨询也不会切换会话的主模型。
+Advisor 失败是 fail-open 的：如果专家模型不可用、配置错误或超时，Worker 会收到简短、无误导性的"advisor 不可用"通知（preflight 为 `<opencodex_advisor_unavailable>` 消息，manual 为错误工具结果）并继续任务；只有咨询被取消时才什么都不注入。Advisor 失败不会让编码请求失败，咨询也不会切换会话的主模型。
 
 ## PR1 限制
 

@@ -41,7 +41,7 @@ Panodaki **Advisor** sayfası veya `ocx advisor status|on|off|set --model <model
 
 OpenCodex kendi kimlik bilgilerini yüke asla enjekte etmez (sağlayıcı API anahtarları, Authorization/OAuth bilgileri, arka uç sırları ve ortam değişkenleri dahil değildir). Düşünce zinciri aktarılmaz, şifreli sağlayıcıya özel içerik çözülmez veya iletilmez. **Görev içeriği genellikle sırlardan arındırılmaz**: göreve yapıştırılan bir kimlik bilgisi veya bir aracın yazdırdığı token olduğu gibi iletilir — OpenCodex konuşma üzerinde DLP çalıştırmaz.
 
-Danışma yükü, yalnızca worker modelinin zaten görmesine izin verilen ayrıştırılmış konuşmadan oluşur: kullanıcı görevi, konuşma, araç çağrıları ve sonuçları, worker'ın araç kataloğu ve iki tarafın model kimliği. Danışman düzyazı tavsiye döndürür; tanınabilir `<opencodex_advisor>` sarmalayıcısıyla geri enjekte edilir ve sistem yetkisi yoktur. Düşünce zinciri aktarılmaz, şifreli sağlayıcı içeriği çözülmez ve kimlik bilgileri ya da ortam sırları yüke binmez.
+Danışma yükü, yalnızca worker modelinin zaten görmesine izin verilen ayrıştırılmış konuşmadan oluşur: kullanıcı görevi, konuşma, araç çağrıları ve sonuçları, worker'ın araç kataloğu ve iki tarafın model kimliği. Danışman düzyazı tavsiye döndürür; tanınabilir `<opencodex_advisor>` sarmalayıcısıyla geri enjekte edilir ve sistem yetkisi yoktur. Düşünce zinciri aktarılmaz ve şifreli sağlayıcı içeriği çözülmez. Proxy kendi kimlik bilgilerini enjekte etmez, ancak görev içeriği olduğu gibi iletilir (yukarıdaki sağlayıcılar arası uyarıya bakın).
 
 ## Maliyet ve hesap
 
@@ -49,7 +49,7 @@ Her danışma gerçek bir ek model çağrısıdır. Worker'ın token sayıların
 
 ## Hata davranışı
 
-Danışman fail-open davranır: uzman model kullanılamıyorsa, yanlış yapılandırıldıysa veya zaman aşımına uğrarsa, worker kısa ve yanıltıcı olmayan bir "danışman kullanılamıyor" bağlamı alır (preflight için hiçbir şey enjekte edilmeyebilir) ve göreve devam eder. Danışma hatası kodlama isteğini asla başarısız kılmaz ve oturumun ana modelini asla değiştirmez.
+Danışman fail-open davranır: uzman model kullanılamıyorsa, yanlış yapılandırıldıysa veya zaman aşımına uğrarsa, worker kısa ve yanıltıcı olmayan bir "danışman kullanılamıyor" bildirimi alır (preflight için `<opencodex_advisor_unavailable>` mesajı, manual için hata araç sonucu) ve göreve devam eder. Hiçbir şey yalnızca danışma iptal edildiğinde enjekte edilmez. Danışma hatası kodlama isteğini asla başarısız kılmaz ve oturumun ana modelini asla değiştirmez.
 
 ## PR1 sınırlamaları
 
