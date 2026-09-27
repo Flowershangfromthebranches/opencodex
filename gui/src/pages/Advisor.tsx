@@ -14,7 +14,7 @@ interface AdvisorSettings {
   enabled: boolean;
   model: string;
   effort: string;
-  policy: "manual" | "preflight" | "adaptive";
+  policy: "manual" | "preflight";
   timeoutMs: number;
 }
 
@@ -125,11 +125,10 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             id="advisor-policy"
             value={draft.policy}
             disabled={saving}
-            onChange={event => setDraft({ ...draft, policy: event.target.value as AdvisorSettings["policy"] })}
+            onChange={event => setDraft({ ...draft, policy: event.target.value === "preflight" ? "preflight" : "manual" })}
           >
             <option value="manual">{t("advisor.policy.manual")}</option>
             <option value="preflight">{t("advisor.policy.preflight")}</option>
-            <option value="adaptive">{t("advisor.policy.adaptive")}</option>
           </select>
         </div>
         <div style={rowStyle}>

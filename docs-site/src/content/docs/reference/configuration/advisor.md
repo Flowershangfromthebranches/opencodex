@@ -81,11 +81,13 @@ provable from the logs.
 
 ## Failure behavior
 
-The advisor fails open: if the expert model is unavailable, misconfigured, or times out, the
-worker receives a short, non-misleading "advisor unavailable" notice (a `<opencodex_advisor_unavailable>`
-message for preflight, an error tool result for manual) and continues the task. Only a
-CANCELLED consultation injects nothing, because the caller is gone. An advisor failure never
-fails the coding request, and a consultation never switches the session's main model.
+The advisor fails open. A DISPATCHED consultation that fails (unavailable model, misconfigured
+provider, timeout) gives the worker a short, non-misleading "advisor unavailable" notice — a
+`<opencodex_advisor_unavailable>` message for preflight, an error tool result for manual — and
+the task continues; only a CANCELLED consultation injects nothing, because the caller is gone.
+A plan that never dispatches (advisor disabled, or enabled without a model) sends no notice at
+all, because no consultation started. An advisor failure never fails the coding request, and a
+consultation never switches the session's main model.
 
 ## PR1 limitations
 

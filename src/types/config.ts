@@ -1482,7 +1482,7 @@ export interface OcxAdvisorConfig {
    * synthetic `advisor` tool. "preflight": OpenCodex additionally guarantees at least one automatic
    * consultation per task before the worker's first substantive turn.
    */
-  policy?: "manual" | "preflight" | "adaptive";
+  policy?: "manual" | "preflight";
   /** Advisor fetch timeout (ms). Default 120000. */
   timeoutMs?: number;
 }

@@ -60,7 +60,7 @@ export interface AdvisorPreflightLedger {
    * task until `complete`/`fail`/`release` settles it, so two concurrent requests cannot both
    * consult.
    */
-  claim(key: string, now?: number, repeatAfterSuccess?: boolean): AdvisorClaimState;
+  claim(key: string, now?: number): AdvisorClaimState;
   /** The consultation succeeded: suppress further automatic consultations until the TTL. */
   complete(key: string, now?: number): void;
   /** The consultation failed: short cooldown, then the task may retry. */
@@ -105,9 +105,9 @@ export function createAdvisorPreflightLedger(): AdvisorPreflightLedger {
   };
 
   return {
-    claim(key, now = Date.now(), repeatAfterSuccess = false) {
+    claim(key, now = Date.now()) {
       const entry = liveEntry(key, now);
-      if (!entry || (repeatAfterSuccess && entry.state === "success")) {
+      if (!entry) {
         set(key, "inflight", now);
         return "claimed";
       }

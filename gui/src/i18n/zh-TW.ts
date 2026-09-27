@@ -109,7 +109,6 @@ export const zhTW: Record<TKey, string> = {
   "advisor.policy": "策略",
   "advisor.policy.manual": "手動 — 僅在 Worker 主動請求時",
   "advisor.policy.preflight": "Preflight — 出現方向性證據後自動嘗試諮詢",
-  "advisor.policy.adaptive": "自適應 — 重複驗證失敗或修改未驗證時諮詢",
   "advisor.timeout": "逾時（毫秒）",
   "advisor.save": "儲存顧問設定",
   "advisor.saved": "顧問設定已儲存。",
