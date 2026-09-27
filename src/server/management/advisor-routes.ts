@@ -60,8 +60,15 @@ export function parseAdvisorSettingsPatch(body: unknown): ParsedPatch {
     patch.enabled = body.enabled;
   }
   if (body.model !== undefined) {
+    // An empty or whitespace-only value is the supported "clear the model" state, not an error:
+    // the resolver defaults to an empty model and `advisorRunnable` requires a non-blank one. The
+    // only structural rules are the string type and the trimmed length bound.
     if (typeof body.model !== "string" || body.model.trim().length > 200) {
-      return { ok: false, code: "invalid_model", message: "model must be a non-empty routable model string (at most 200 chars)" };
+      return {
+        ok: false,
+        code: "invalid_model",
+        message: "model must be a string whose trimmed value is at most 200 characters; an empty value clears the advisor model",
+      };
     }
     patch.model = body.model.trim();
   }

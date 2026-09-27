@@ -56,7 +56,12 @@ export type AdvisorClaimState =
   /** This task already received advice; suppression holds until the success TTL expires. */
   | "complete"
   /** A recent consultation failed; suppression holds for the short failure cooldown. */
-  | "cooldown";
+  | "cooldown"
+  /**
+   * The ledger is full of live claims and granted nothing. Fail-open: the worker continues
+   * without a new automatic consultation rather than evicting a claim that is still running.
+   */
+  | "saturated";
 
 /**
  * The result of a claim attempt. `token` identifies THIS claim and is present only on
@@ -104,34 +109,54 @@ export function createAdvisorPreflightLedger(): AdvisorPreflightLedger {
   const entries = new Map<string, LedgerEntry>();
   let claimSequence = 0;
 
-  const evict = (): void => {
-    while (entries.size > MAX_ENTRIES) {
-      // Map iteration is insertion-ordered; the oldest entry goes first.
-      const oldest = entries.keys().next();
-      if (oldest.done) break;
-      entries.delete(oldest.value);
-    }
-  };
-
-  const liveEntry = (key: string, now: number): LedgerEntry | undefined => {
-    const entry = entries.get(key);
-    if (!entry) return undefined;
+  const isExpired = (entry: LedgerEntry, now: number): boolean => {
     const ttl = entry.state === "success"
       ? ADVISOR_SUCCESS_TTL_MS
       : entry.state === "failed"
         ? ADVISOR_FAILURE_COOLDOWN_MS
         : ADVISOR_INFLIGHT_TTL_MS;
-    if (now - entry.at > ttl) {
+    return now - entry.at > ttl;
+  };
+
+  /**
+   * Make room for ONE new claim without ever evicting a live in-flight entry, because that entry
+   * is the only thing preventing a second automatic consultation for its task. Order: expired
+   * entries first, then settled ones (success before failure), oldest first. Returns false when
+   * every entry is a live claim — the caller then reports `saturated` instead of breaking the
+   * "at most one in-flight consultation per task" guarantee.
+   */
+  const makeRoom = (now: number): boolean => {
+    if (entries.size < MAX_ENTRIES) return true;
+    for (const [key, entry] of entries) {
+      if (isExpired(entry, now)) entries.delete(key);
+    }
+    if (entries.size < MAX_ENTRIES) return true;
+    for (const state of ["success", "failed"] as const) {
+      for (const [key, entry] of entries) {
+        if (entry.state === state) {
+          entries.delete(key);
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  const liveEntry = (key: string, now: number): LedgerEntry | undefined => {
+    const entry = entries.get(key);
+    if (!entry) return undefined;
+    if (isExpired(entry, now)) {
       entries.delete(key);
       return undefined;
     }
     return entry;
   };
 
+  // Replacing an existing key never grows the map, and every NEW key is admitted only through
+  // claim()'s makeRoom gate, so the table cannot exceed MAX_ENTRIES.
   const set = (key: string, state: LedgerEntry["state"], now: number, token?: string): void => {
     if (entries.has(key)) entries.delete(key);
     entries.set(key, { state, at: now, ...(token !== undefined ? { token } : {}) });
-    evict();
   };
 
   /** True when the caller's token still owns the current in-flight entry for this key. */
@@ -146,6 +171,7 @@ export function createAdvisorPreflightLedger(): AdvisorPreflightLedger {
       if (entry?.state === "success") return { state: "complete" };
       if (entry?.state === "failed") return { state: "cooldown" };
       if (entry?.state === "inflight") return { state: "inflight" };
+      if (!makeRoom(now)) return { state: "saturated" };
       claimSequence += 1;
       const token = `claim-${claimSequence.toString(36)}`;
       set(key, "inflight", now, token);
