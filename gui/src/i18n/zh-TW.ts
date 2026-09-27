@@ -111,7 +111,7 @@ export const zhTW: Record<TKey, string> = {
   "nav.combos": "組合",
   "nav.subagents": "子代理",
   "nav.advisor": "顧問",
-  "advisor.description": "獨立的專家模型，審閱 Worker 的任務並返回建議。諮詢由 OpenCodex 自己執行：Worker 可呼叫合成的 advisor 工具；preflight 策略還會在任務產出方向性證據（最新使用者訊息之後的助手工具呼叫或工具結果）後自動嘗試一次諮詢，無需 Worker 配合。此嘗試對帶有穩定會話識別的用戶端按任務去重；沒有穩定識別的用戶端可能多觸發一次。",
+  "advisor.description": "獨立的專家模型，審閱 Worker 的任務並返回建議。諮詢由 OpenCodex 自己執行：Worker 可呼叫合成的 advisor 工具；preflight 策略還會在任務產出方向性證據（最新使用者訊息之後的助手工具呼叫或工具結果）後自動嘗試一次諮詢，無需 Worker 配合。此嘗試對帶有穩定會話識別的用戶端按任務去重；沒有穩定識別的用戶端不走該去重，每個符合條件的請求都可能再次觸發諮詢。",
   "advisor.enabled": "啟用顧問",
   "advisor.model": "專家模型",
   "advisor.modelPlaceholder": "例如 gpt-6-astra 或 anthropic/claude-sonnet-4-6",
