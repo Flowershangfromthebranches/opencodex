@@ -55,13 +55,42 @@ provider credentials.
 
 **Cross-provider data transfer is the feature's documented cost:** a consultation sends the
 task conversation and tool results to the configured advisor provider, which may differ from the
-worker's provider — the GUI, docs, and config description must say so. The payload is built
-exclusively from the parsed conversation the model is already allowed to see: user task, conversation, tool calls and their results, the worker's tool catalog,
+worker's provider — the GUI, docs, and config description must say so. The proxy injects none of
+its own credentials (no provider API keys, Authorization/OAuth material, backend-only secrets,
+or environment variables), never transfers chain-of-thought, and never decrypts or forwards
+encrypted provider-only content. **Task content is not generally secret-redacted** — pasted
+credentials and token-bearing tool output travel as-is, because no reliable string-level
+secret detector exists; no DLP claim may be made in any doc, GUI string, or PR text. The payload
+is built exclusively from the parsed conversation the model is already allowed to see: user task, conversation, tool calls and their results, the worker's tool catalog,
 and both model identities. Thinking/chain-of-thought parts are never included, encrypted
 provider content is never decrypted or forwarded, and failure text is redacted and bounded before
 it can reach any context. Advice is re-injected as identifiable
 `<opencodex_advisor>`-wrapped content with no system authority: manual consultations arrive as
 tool results, preflight advice as a marked developer message.
+
+## Provenance and the preflight claim
+
+"Already advised" is decided by PROVENANCE, never by scanning for a bare string:
+
+- manual: a `toolResult` whose `toolName` is the synthetic advisor tool and whose content carries
+  the `<opencodex_advisor>` wrapper;
+- preflight: a developer message carrying the runtime-owned `<opencodex_advisor_preflight>`
+  wrapper.
+
+Ordinary tool output, developer text, user text, and failure notices (`<opencodex_advisor_unavailable>`)
+match neither form, so nothing a shell, log, or upstream error body prints can suppress or forge
+advice. The guard never composes failure prose itself: `AdvisorPlan.formatUnavailable` owns that
+text and neutralizes untrusted fragments.
+
+The preflight ledger is an atomic CLAIM table, not a has-then-mark pair: `claim` returns
+`claimed` / `inflight` / `complete` / `cooldown`, and `complete` / `fail` / `release` settle it.
+Success suppresses for the task lifetime; a failure suppresses only for a one-minute cooldown
+(the minute scale the repository already uses for polling), so a transient outage pauses the
+policy instead of silencing it; a client cancellation releases the claim with no cooldown. Keys
+are conversation identity + task boundary + worker model, reusing the existing `thread-id` /
+Cursor / replay-scope identities. A client with NO stable identity stays out of the ledger
+entirely: it is limited to request-scoped dedup and genuine in-history provenance (fail-open),
+so two independent identity-less conversations can never suppress each other.
 
 ## State
 

@@ -1,60 +1,130 @@
 /**
- * Conversation-scoped advisor state.
+ * Conversation- and task-scoped advisor state.
  *
- * Two scopes, deliberately separate:
+ * Three scopes, deliberately separate:
  *
  * 1. REQUEST-scoped state lives in the per-request plan closure (see runtime.ts) — consultation
- *    count, preflight flag, consultation fingerprints. It is born and dies with one request and
- *    is never shared.
+ *    count, dedup fingerprints, the preflight flag. Born and dies with one request.
  *
- * 2. TASK-scoped preflight dedup (this file): a bounded, process-local ledger keyed by a stable
- *    conversation fingerprint so `policy: "preflight"` consults AT MOST ONCE per task across the
- *    many stateless full-history requests a worker sends. Bounded by entry count and TTL; entries
- *    are plain strings — no secrets, no message bodies.
+ * 2. TASK-scoped preflight ledger (this file): a bounded, process-local claim table that makes
+ *    "at most one automatic consultation per task" atomic across concurrent requests. A claim
+ *    requires a STABLE conversation identity plus the current task boundary; a client that sends
+ *    no identity never enters this ledger (see `advisorLedgerKey`) and therefore fails open —
+ *    it may be consulted once per request rather than risk two independent tasks suppressing
+ *    each other through a shared guess.
  *
- * Known limitation (documented in the PR and public docs): after a proxy restart the ledger is
- * empty, so a task in progress may get one more preflight consultation. That is fail-open for
- * correctness and only costs one extra expert call.
+ * 3. PROVENANCE: "this task was already advised" is never inferred from a bare string. Manual
+ *    advice counts only as a `toolResult` whose `toolName` is the synthetic advisor tool, and
+ *    preflight advice only through the runtime-owned `<opencodex_advisor_preflight>` wrapper.
+ *    Ordinary tool output, developer text, user text, and failure notices cannot forge it.
+ *
+ * Ledger entries are plain state records — no message bodies, no credentials. Every state is
+ * bounded by entry count and its own TTL.
  */
 
-const MAX_ENTRIES = 512;
-const TTL_MS = 24 * 60 * 60 * 1000;
+/** Long-lived success suppression: the task lifetime approximation (also the ledger TTL cap). */
+export const ADVISOR_SUCCESS_TTL_MS = 24 * 60 * 60 * 1000;
+/**
+ * Failure cooldown. One minute is the repository's standing minute-scale unit (tray polling,
+ * subagent availability polling); it turns a transient 503 into a short pause instead of
+ * silencing the policy for the rest of the coding session.
+ */
+export const ADVISOR_FAILURE_COOLDOWN_MS = 60 * 1000;
+/**
+ * In-flight claim expiry. Longer than the largest configurable consultation timeout (600s
+ * upper bound on `advisor.timeoutMs`, default 120s) so a slow-but-alive consultation is never
+ * mistaken for a wedged one, while a crashed claim cannot block a task forever.
+ */
+export const ADVISOR_INFLIGHT_TTL_MS = 10 * 60 * 1000;
 
-export interface PreflightLedgerEntry {
-  markedAt: number;
-  reason: "preflight" | "manual";
+const MAX_ENTRIES = 512;
+
+export type AdvisorClaimState =
+  /** The caller now owns the consultation for this task. */
+  | "claimed"
+  /** Another request for the same task is consulting right now. */
+  | "inflight"
+  /** This task already received advice; suppression holds until the success TTL expires. */
+  | "complete"
+  /** A recent consultation failed; suppression holds for the short failure cooldown. */
+  | "cooldown";
+
+interface LedgerEntry {
+  state: "inflight" | "success" | "failed";
+  at: number;
 }
 
 export interface AdvisorPreflightLedger {
-  /** True when this conversation fingerprint already had its guaranteed consultation. */
-  has(key: string, now?: number): boolean;
-  /** Record a consultation for a conversation fingerprint. Evicts expired/oldest entries. */
-  mark(key: string, reason: "preflight" | "manual", now?: number): void;
+  /**
+   * Atomically try to own the consultation for a task key. Returns `claimed` exactly once per
+   * task until `complete`/`fail`/`release` settles it, so two concurrent requests cannot both
+   * consult.
+   */
+  claim(key: string, now?: number): AdvisorClaimState;
+  /** The consultation succeeded: suppress further automatic consultations until the TTL. */
+  complete(key: string, now?: number): void;
+  /** The consultation failed: short cooldown, then the task may retry. */
+  fail(key: string, now?: number): void;
+  /** The consultation was cancelled (client abort): no cooldown, the task may retry at once. */
+  release(key: string, now?: number): void;
   /** Test/observability seam: current entry count. */
   size(): number;
 }
 
 export function createAdvisorPreflightLedger(): AdvisorPreflightLedger {
-  const entries = new Map<string, PreflightLedgerEntry>();
+  const entries = new Map<string, LedgerEntry>();
+
+  const evict = (): void => {
+    while (entries.size > MAX_ENTRIES) {
+      // Map iteration is insertion-ordered; the oldest entry goes first.
+      const oldest = entries.keys().next();
+      if (oldest.done) break;
+      entries.delete(oldest.value);
+    }
+  };
+
+  const liveEntry = (key: string, now: number): LedgerEntry | undefined => {
+    const entry = entries.get(key);
+    if (!entry) return undefined;
+    const ttl = entry.state === "success"
+      ? ADVISOR_SUCCESS_TTL_MS
+      : entry.state === "failed"
+        ? ADVISOR_FAILURE_COOLDOWN_MS
+        : ADVISOR_INFLIGHT_TTL_MS;
+    if (now - entry.at > ttl) {
+      entries.delete(key);
+      return undefined;
+    }
+    return entry;
+  };
+
+  const set = (key: string, state: LedgerEntry["state"], now: number): void => {
+    if (entries.has(key)) entries.delete(key);
+    entries.set(key, { state, at: now });
+    evict();
+  };
+
   return {
-    has(key, now = Date.now()) {
-      const entry = entries.get(key);
-      if (!entry) return false;
-      if (now - entry.markedAt > TTL_MS) {
-        entries.delete(key);
-        return false;
+    claim(key, now = Date.now()) {
+      const entry = liveEntry(key, now);
+      if (!entry) {
+        set(key, "inflight", now);
+        return "claimed";
       }
-      return true;
+      if (entry.state === "success") return "complete";
+      if (entry.state === "failed") return "cooldown";
+      return "inflight";
     },
-    mark(key, reason, now = Date.now()) {
-      if (entries.has(key)) entries.delete(key);
-      entries.set(key, { markedAt: now, reason });
-      while (entries.size > MAX_ENTRIES) {
-        // Map iteration is insertion-ordered; the oldest entry goes first.
-        const oldest = entries.keys().next();
-        if (oldest.done) break;
-        entries.delete(oldest.value);
-      }
+    complete(key, now = Date.now()) {
+      set(key, "success", now);
+    },
+    fail(key, now = Date.now()) {
+      set(key, "failed", now);
+    },
+    release(key, now = Date.now()) {
+      const entry = entries.get(key);
+      // Only an in-flight claim this caller owns is released; a settled success/failure stays.
+      if (entry?.state === "inflight" && now - entry.at <= ADVISOR_INFLIGHT_TTL_MS) entries.delete(key);
     },
     size() {
       return entries.size;
@@ -63,53 +133,77 @@ export function createAdvisorPreflightLedger(): AdvisorPreflightLedger {
 }
 
 /**
- * Stable conversation fingerprint for preflight dedup.
- *
- * `threadId` is the primary identity: Codex sends per-thread headers, so two independent
- * conversations never share a ledger entry. The fallback (a stateless client that sends no
- * thread identity) hashes the first user message — stable within one task for full-history
- * clients, but two threadless conversations that open with the same prompt share a key; that
- * residual limitation is documented. The worker model id is always part of the key.
+ * Stable conversation identity for the ledger, reusing the repository's existing request
+ * identities in specificity order: the client's own thread, the shared parent thread, the
+ * Cursor conversation, the Cursor client thread, then the reasoning-replay scope's thread.
+ * Returns undefined for a client that sends no identity at all — such a caller stays out of the
+ * process-global ledger on purpose (fail-open, see the module header).
  */
-export function conversationPreflightKey(
-  firstUserText: string,
-  workerModelId: string,
-  threadId?: string,
-): string {
-  return threadId
-    ? `tid:${threadId}:${djb2(workerModelId)}`
-    : `djb2:${djb2(firstUserText)}:${djb2(workerModelId)}`;
-}
-
-/**
- * The best stable conversation identity available on a parsed request: the client's own thread
- * id when the surface provides one, then the shared parent thread id, then the Cursor
- * conversation id. Undefined for clients that send no identity header.
- */
-export function conversationThreadId(parsed: {
+export function advisorConversationIdentity(parsed: {
   _codexOwnThreadId?: string;
   _clientThreadId?: string;
   _cursorConversationId?: string;
+  _cursorClientThreadId?: string;
+  _reasoningReplayScope?: { clientThreadId?: string };
 }): string | undefined {
-  return parsed._codexOwnThreadId ?? parsed._clientThreadId ?? parsed._cursorConversationId;
+  return parsed._codexOwnThreadId
+    ?? parsed._clientThreadId
+    ?? parsed._cursorConversationId
+    ?? parsed._cursorClientThreadId
+    ?? parsed._reasoningReplayScope?.clientThreadId
+    ?? undefined;
 }
 
-export function firstUserText(parsed: { context: { messages: readonly { role: string; content: unknown }[] } }): string {
+/**
+ * The current task boundary inside a conversation: how many user turns the history carries and
+ * what the latest one says. A new user message moves the boundary (a new task gets its own
+ * claim); the same turn re-sent by a stateless full-history client keeps the same boundary, and
+ * a `previous_response_id` expansion replays the same user turns, so continuations dedup.
+ */
+export function advisorTaskBoundary(parsed: {
+  context: { messages: readonly { role: string; content: unknown }[] };
+}): string {
+  let userTurns = 0;
+  let lastUserText = "";
   for (const message of parsed.context.messages) {
     if (message.role !== "user") continue;
-    const content = message.content;
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-      const text = content
-        .filter((part): part is { type: "text"; text: string } =>
-          !!part && typeof part === "object" && (part as { type?: unknown }).type === "text"
-          && typeof (part as { text?: unknown }).text === "string")
-        .map(part => part.text)
-        .join("");
-      if (text.trim() !== "") return text;
-    }
+    userTurns += 1;
+    lastUserText = contentText(message.content);
   }
-  return "";
+  return `t${userTurns}:${djb2(lastUserText.slice(0, 200))}`;
+}
+
+/**
+ * The ledger key: conversation identity + task boundary + worker model. Returns undefined when
+ * the caller has no stable conversation identity — the caller then relies on request-scoped
+ * dedup and genuine in-history provenance instead of a shared guess (documented fail-open).
+ */
+export function advisorLedgerKey(
+  parsed: {
+    context: { messages: readonly { role: string; content: unknown }[] };
+    _codexOwnThreadId?: string;
+    _clientThreadId?: string;
+    _cursorConversationId?: string;
+    _cursorClientThreadId?: string;
+    _reasoningReplayScope?: { clientThreadId?: string };
+  },
+  workerModelId: string,
+): string | undefined {
+  const identity = advisorConversationIdentity(parsed);
+  if (!identity) return undefined;
+  return `cid:${djb2(identity)}:${advisorTaskBoundary(parsed)}:${djb2(workerModelId)}`;
+}
+
+/** Text projection for string-or-parts content; used only for hashing, never transmitted. */
+export function contentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((part): part is { type: "text"; text: string } =>
+      !!part && typeof part === "object" && (part as { type?: unknown }).type === "text"
+      && typeof (part as { text?: unknown }).text === "string")
+    .map(part => part.text)
+    .join("");
 }
 
 function djb2(value: string): string {
@@ -121,39 +215,64 @@ function djb2(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
+/** Runtime-owned preflight wrapper. Distinct from the manual advice wrapper on purpose. */
+export const ADVISOR_PREFLIGHT_MARKER = "<opencodex_advisor_preflight>";
+
+/** The synthetic advisor tool's wire name; kept in sync with the tool definition by test. */
+export const ADVISOR_RESULT_TOOL_NAME = "advisor";
+
+/** Advice wrapper written by the MANUAL reinjection path (a paired tool result). */
+export const ADVISOR_ADVICE_MARKER = "<opencodex_advisor>";
+
 /**
- * Detect an ALREADY-PRESENT advisor result in the conversation history. The advice wrapper
- * (<opencodex_advisor>) is the single marker both reinjection paths write, so a task that
- * already carried advice (manual or preflight, this process or a previous_response_id replay)
- * never triggers a second guaranteed consultation on top of it.
+ * Detect an ALREADY-PRESENT advisor result in the conversation history — by PROVENANCE, never by
+ * a bare string:
+ *
+ * - manual: a `toolResult` whose `toolName` is the synthetic advisor tool AND whose content
+ *   carries the advice wrapper. A shell/file/log result that merely contains the wrapper text is
+ *   NOT an advisor result.
+ * - preflight: a developer message carrying the runtime-owned `<opencodex_advisor_preflight>`
+ *   wrapper. Ordinary developer text that happens to contain `<opencodex_advisor>` is NOT an
+ *   advisor result.
+ *
+ * Failure notices (`<opencodex_advisor_unavailable>`) match neither form and therefore never
+ * suppress a later consultation.
  */
-export function historyHasAdvisorResult(parsed: { context: { messages: readonly { role: string; content: unknown }[] } }): boolean {
+export function historyHasAdvisorResult(parsed: {
+  context: { messages: readonly { role: string; content?: unknown; toolName?: string }[] };
+}): boolean {
   for (let i = parsed.context.messages.length - 1; i >= 0; i -= 1) {
-    const message = parsed.context.messages[i];
-    if (message.role !== "toolResult" && message.role !== "developer") continue;
-    const content = message.content;
-    const text = typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content
-          .filter((part): part is { type: "text"; text: string } =>
-            !!part && typeof part === "object" && (part as { type?: unknown }).type === "text"
-            && typeof (part as { text?: unknown }).text === "string")
-          .map(part => part.text)
-          .join("")
-        : "";
-    if (text.includes("<opencodex_advisor>")) return true;
+    const message = parsed.context.messages[i]!;
+    if (message.role === "toolResult") {
+      if (message.toolName !== ADVISOR_RESULT_TOOL_NAME) continue;
+      if (contentText(message.content).includes(ADVISOR_ADVICE_MARKER)) return true;
+      continue;
+    }
+    if (message.role === "developer") {
+      if (contentText(message.content).includes(ADVISOR_PREFLIGHT_MARKER)) return true;
+    }
   }
   return false;
 }
 
+/** Kept for callers that only need the first user text (payload building, tests). */
+export function firstUserText(parsed: { context: { messages: readonly { role: string; content: unknown }[] } }): string {
+  for (const message of parsed.context.messages) {
+    if (message.role !== "user") continue;
+    const text = contentText(message.content);
+    if (text.trim() !== "") return text;
+  }
+  return "";
+}
+
 /**
- * Deterministic preflight trigger: has this conversation already produced at least one valid
- * orientation/tool-result continuation since the latest user message? This is the documented
- * approximation for "before the first substantive implementation" — the protocol layer offers no
- * safe pre-mutation checkpoint, so OpenCodex fires the guaranteed consultation on the first
- * worker reasoning turn that arrives WITH tool evidence of orientation. Only text/toolResult
- * content is inspected; never reasoning, never encrypted items.
+ * Deterministic preflight trigger: has this conversation already produced orientation evidence
+ * since the latest user message? The documented approximation for "before the first substantive
+ * implementation" — the protocol layer offers no safe pre-mutation checkpoint, so OpenCodex fires
+ * the automatic attempt on the first worker reasoning turn that arrives with that evidence.
+ * Evidence is an assistant tool call OR a tool result after the latest user message (both forms
+ * are genuinely accepted; the docs say so). Only text/toolResult content is inspected — never
+ * reasoning, never encrypted items.
  */
 export function hasOrientationEvidence(parsed: { context: { messages: readonly { role: string; content: unknown }[] } }): boolean {
   let latestUserIndex = -1;

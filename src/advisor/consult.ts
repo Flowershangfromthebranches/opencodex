@@ -36,6 +36,8 @@ export interface AdvisorConsultationResult {
   /** Advisor prose when ok; empty string otherwise. */
   advice: string;
   advisorModel: string;
+  /** True when the caller aborted the request — not a provider failure (no cooldown). */
+  cancelled?: boolean;
   /** Redacted, bounded failure description when not ok. */
   error?: string;
   /** Loopback round-trip duration (ms), for logs. */
@@ -127,6 +129,11 @@ export async function consultAdvisor(
 
   const linkedSignal = signalWithTimeout(timeoutMs, abortSignal);
   const sidecarExit = sidecarEnter("advisor");
+  if (abortSignal?.aborted) {
+    sidecarExit();
+    linkedSignal.cleanup();
+    return { ok: false, cancelled: true, advice: "", advisorModel: input.advisorModel, error: "advisor cancelled before dispatch", durationMs: Date.now() - t0 };
+  }
   try {
     const res = await fetch(`${baseUrlOverride ?? advisorBaseUrl(config)}/v1/chat/completions`, {
       method: "POST",
@@ -183,11 +190,17 @@ export async function consultAdvisor(
       detachBodyGuard();
     }
   } catch (e) {
+    const durationMs = Date.now() - t0;
+    // Client cancellation is not a provider failure: the caller aborted (linked signal), so the
+    // task must stay eligible for a later attempt rather than entering a failure cooldown.
+    if (abortSignal?.aborted) {
+      return { ok: false, cancelled: true, advice: "", advisorModel: input.advisorModel, error: "advisor cancelled by the caller", durationMs };
+    }
     const kind = e instanceof Error && e.name === "TimeoutError" ? "timeout" : "connect_error";
     return {
       ok: false, advice: "", advisorModel: input.advisorModel,
       error: `advisor ${kind}: ${redactSecretString(e instanceof Error ? e.message : String(e))}`,
-      durationMs: Date.now() - t0,
+      durationMs,
     };
   } finally {
     sidecarExit();

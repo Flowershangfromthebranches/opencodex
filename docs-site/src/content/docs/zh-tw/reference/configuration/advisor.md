@@ -5,7 +5,7 @@ description: OpenCodex 自有的專家諮詢 sidecar — 設定的專家模型�
 
 顧問是一個獨立的專家模型，審閱 Worker 的任務並返回建議。OpenCodex 端到端地擁有整個諮詢過程：代理向 Worker 的回合注入合成的 `advisor` 工具，自己透過正常路由權威執行諮詢，並回注建議使原 Worker 繼續。Worker 無需委託、無需 spawn 任何東西、也不攜帶 provider 憑證。
 
-這與子代理面（見[代理設定](/zh-TW/reference/configuration/agents/)）不同：子代理是透過 Codex 協作工具由 Worker 發起的委託。顧問是客户端完全不可見的代理側 sidecar —— 即使從不 spawn 的 Worker 也能獲得建議。
+這與子代理面（見[代理設定](/zh-tw/reference/configuration/agents/)）不同：子代理是透過 Codex 協作工具由 Worker 發起的委託。顧問是客户端完全不可見的代理側 sidecar —— 即使從不 spawn 的 Worker 也能獲得建議。
 
 ## 設定
 
@@ -36,6 +36,10 @@ description: OpenCodex 自有的專家諮詢 sidecar — 設定的專家模型�
 - **`preflight`** — OpenCodex 會在每個任務自動嘗試一次額外諮詢。失敗的諮詢不會被當作建議：任務會在失敗帳本條目過期後重試。當 Worker 產出第一份方向性證據（最新使用者訊息之後的助手工具呼叫或工具結果）時，代理會諮詢顧問並在 Worker 下一回合之前注入建議 —— 即使 Worker 從不呼叫該工具。觸發條件是確定性的、有文件記載的近似規則，不是語義級「模型卡住了」偵測器。
 
 ## Advisor 能看到什麼
+
+**跨 provider 資料傳輸：** 當顧問 provider 與 Worker 的 provider 不同時，諮詢負載會把任務對話與工具結果傳送給第二個模型 provider。請勿對不信任該任務內容的 provider 啟用顧問。
+
+OpenCodex 不會把自己的憑證注入負載（不含 provider API key、Authorization/OAuth 資訊、後端專用機密與環境變數）。思維鏈不會被轉移，加密的 provider 專用內容不會被解密或轉送。**任務內容通常不會做憑證脫敏**：貼進任務的憑證、或工具輸出裡列印的 token，都會按原樣轉送 —— OpenCodex 不會對會話執行 DLP。
 
 諮詢負載完全由 Worker 模型已被允許看到的已解析會話構成：使用者任務、會話、工具呼叫及其結果、Worker 的工具目錄，以及雙方模型身份。Advisor 返回散文式建議，以可識別的 `<opencodex_advisor>` 包裝回注，不具備 system 權限。思維鏈不會被轉移，加密的 provider 內容不會被解密，憑證或環境機密也不會進入負載。
 

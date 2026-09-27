@@ -1,118 +1,225 @@
 import { describe, expect, test } from "bun:test";
 import { parseRequest } from "../../src/responses/parser";
+import { ADVISOR_TOOL_NAME } from "../../src/server/responses/advisor-slot";
+import { ADVISOR_RESULT_TOOL_NAME } from "../../src/advisor/state";
 import {
-  conversationPreflightKey,
-  conversationThreadId,
+  ADVISOR_FAILURE_COOLDOWN_MS,
+  ADVISOR_INFLIGHT_TTL_MS,
+  ADVISOR_SUCCESS_TTL_MS,
+  advisorConversationIdentity,
+  advisorLedgerKey,
+  advisorTaskBoundary,
+  contentText,
   createAdvisorPreflightLedger,
   firstUserText,
   hasOrientationEvidence,
   historyHasAdvisorResult,
 } from "../../src/advisor/state";
 
-function parsedWithInput(input: unknown) {
-  return parseRequest({ model: "deepseek/deepseek-v4", stream: false, input } as never);
+function parsedWithInput(input: unknown, options?: { threadId?: string }) {
+  const parsed = parseRequest({ model: "deepseek/deepseek-v4", stream: false, input } as never);
+  if (options?.threadId) parsed._codexOwnThreadId = options.threadId;
+  return parsed;
 }
 
-describe("advisor preflight ledger", () => {
-  test("mark then has, per key", () => {
+const oriented = (text: string, threadId?: string) => parsedWithInput([
+  { role: "user", content: text },
+  { type: "function_call", call_id: "c1", name: "shell", arguments: "{}" },
+  { type: "function_call_output", call_id: "c1", output: "ok" },
+], threadId ? { threadId } : undefined);
+
+describe("advisor preflight ledger — atomic claim", () => {
+  test("claim is exclusive until settled", () => {
     const ledger = createAdvisorPreflightLedger();
-    expect(ledger.has("k1")).toBe(false);
-    ledger.mark("k1", "preflight", 1_000);
-    expect(ledger.has("k1", 2_000)).toBe(true);
-    expect(ledger.has("k2", 2_000)).toBe(false);
+    expect(ledger.claim("k", 1_000)).toBe("claimed");
+    // A concurrent request for the same task must not start a second consultation.
+    expect(ledger.claim("k", 1_001)).toBe("inflight");
   });
 
-  test("entries expire after the TTL", () => {
+  test("complete suppresses until the success TTL, then the task is eligible again", () => {
     const ledger = createAdvisorPreflightLedger();
-    ledger.mark("k1", "preflight", 0);
-    expect(ledger.has("k1", 24 * 60 * 60 * 1000 + 1)).toBe(false);
+    ledger.claim("k", 0);
+    ledger.complete("k", 0);
+    expect(ledger.claim("k", ADVISOR_SUCCESS_TTL_MS - 1)).toBe("complete");
+    expect(ledger.claim("k", ADVISOR_SUCCESS_TTL_MS + 1)).toBe("claimed");
   });
 
-  test("ledger is bounded: oldest entries are evicted past the cap", () => {
+  test("fail suppresses only for the short cooldown, then retry is allowed", () => {
     const ledger = createAdvisorPreflightLedger();
-    for (let i = 0; i < 600; i += 1) ledger.mark(`key-${i}`, "preflight", i);
+    ledger.claim("k", 0);
+    ledger.fail("k", 0);
+    expect(ledger.claim("k", ADVISOR_FAILURE_COOLDOWN_MS - 1)).toBe("cooldown");
+    expect(ledger.claim("k", ADVISOR_FAILURE_COOLDOWN_MS + 1)).toBe("claimed");
+    // The failure cooldown is far shorter than the success window: a transient outage pauses,
+    // it does not silence the policy for the whole session.
+    expect(ADVISOR_FAILURE_COOLDOWN_MS).toBeLessThan(ADVISOR_SUCCESS_TTL_MS / 10);
+  });
+
+  test("release after cancellation leaves the task immediately eligible", () => {
+    const ledger = createAdvisorPreflightLedger();
+    ledger.claim("k", 0);
+    ledger.release("k", 0);
+    expect(ledger.claim("k", 1)).toBe("claimed");
+  });
+
+  test("release never clears a settled success or failure", () => {
+    const ledger = createAdvisorPreflightLedger();
+    ledger.claim("s", 0);
+    ledger.complete("s", 0);
+    ledger.release("s", 0);
+    expect(ledger.claim("s", 1)).toBe("complete");
+
+    ledger.claim("f", 0);
+    ledger.fail("f", 0);
+    ledger.release("f", 0);
+    expect(ledger.claim("f", 1)).toBe("cooldown");
+  });
+
+  test("a stale in-flight claim expires so a crashed consult cannot block the task", () => {
+    const ledger = createAdvisorPreflightLedger();
+    ledger.claim("k", 0);
+    expect(ledger.claim("k", ADVISOR_INFLIGHT_TTL_MS + 1)).toBe("claimed");
+  });
+
+  test("the ledger is bounded: oldest entries are evicted past the cap", () => {
+    const ledger = createAdvisorPreflightLedger();
+    for (let i = 0; i < 600; i += 1) ledger.claim(`key-${i}`, i);
     expect(ledger.size()).toBeLessThanOrEqual(512);
-    // The oldest entries are gone; the newest survive.
-    expect(ledger.has("key-0", 600)).toBe(false);
-    expect(ledger.has("key-599", 600)).toBe(true);
+    expect(ledger.claim("key-0", 600)).toBe("claimed");
+    expect(ledger.claim("key-599", 600)).toBe("inflight");
   });
 });
 
-describe("hasOrientationEvidence", () => {
-  test("tool result after the latest user message counts as orientation", () => {
-    const parsed = parsedWithInput([
-      { role: "user", content: "fix it" },
-      { type: "function_call", call_id: "c1", name: "shell", arguments: "{}" },
-      { type: "function_call_output", call_id: "c1", output: "ok" },
-    ]);
-    expect(hasOrientationEvidence(parsed)).toBe(true);
+describe("advisor task identity", () => {
+  test("identity reuses the repository's stable request identities in specificity order", () => {
+    expect(advisorConversationIdentity({ _codexOwnThreadId: "own", _clientThreadId: "parent" })).toBe("own");
+    expect(advisorConversationIdentity({ _clientThreadId: "parent" })).toBe("parent");
+    expect(advisorConversationIdentity({ _cursorConversationId: "cur" })).toBe("cur");
+    expect(advisorConversationIdentity({ _cursorClientThreadId: "cur-cli" })).toBe("cur-cli");
+    expect(advisorConversationIdentity({ _reasoningReplayScope: { clientThreadId: "rs" } })).toBe("rs");
+    expect(advisorConversationIdentity({})).toBeUndefined();
   });
 
-  test("assistant tool call without a result yet also counts", () => {
-    const parsed = parsedWithInput([
-      { role: "user", content: "fix it" },
-      { type: "function_call", call_id: "c1", name: "read_file", arguments: "{}" },
-    ]);
-    expect(hasOrientationEvidence(parsed)).toBe(true);
+  test("two conversations that open with the same prompt are isolated by thread id", () => {
+    const a = advisorLedgerKey(oriented("same opening prompt", "thread-A"), "m");
+    const b = advisorLedgerKey(oriented("same opening prompt", "thread-B"), "m");
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    expect(a).not.toBe(b);
   });
 
-  test("a bare user message with no tool activity does not trigger", () => {
-    const parsed = parsedWithInput([{ role: "user", content: "hello" }]);
-    expect(hasOrientationEvidence(parsed)).toBe(false);
-  });
-
-  test("tool activity from BEFORE the latest user message does not count", () => {
-    const parsed = parsedWithInput([
+  test("two tasks inside one thread get different boundaries", () => {
+    const task1 = advisorLedgerKey(oriented("first task", "thread-A"), "m");
+    const task2 = advisorLedgerKey(parsedWithInput([
       { role: "user", content: "first task" },
       { type: "function_call", call_id: "c1", name: "shell", arguments: "{}" },
       { type: "function_call_output", call_id: "c1", output: "ok" },
-      { role: "user", content: "different task now" },
+      { role: "user", content: "second task" },
+      { type: "function_call", call_id: "c2", name: "shell", arguments: "{}" },
+      { type: "function_call_output", call_id: "c2", output: "ok" },
+    ], { threadId: "thread-A" }), "m");
+    expect(task1).toBeDefined();
+    expect(task2).toBeDefined();
+    expect(task1).not.toBe(task2);
+  });
+
+  test("a stateless full-history continuation keeps the same key", () => {
+    const first = oriented("stable task", "thread-A");
+    const resent = oriented("stable task", "thread-A");
+    expect(advisorLedgerKey(first, "m")).toBe(advisorLedgerKey(resent, "m"));
+  });
+
+  test("a previous_response_id expansion of the same turn keeps the same key", () => {
+    // Expansion replays the same user turn and its tool results, so the boundary is unchanged
+    // and the continuation dedups instead of re-consulting.
+    const plain = oriented("continued task", "thread-A");
+    const expanded = parseRequest({
+      model: "deepseek/deepseek-v4",
+      stream: false,
+      input: [
+        { role: "user", content: "continued task" },
+        { type: "function_call", call_id: "c1", name: "shell", arguments: "{}" },
+        { type: "function_call_output", call_id: "c1", output: "ok" },
+      ],
+    } as never);
+    expanded._codexOwnThreadId = "thread-A";
+    expect(advisorLedgerKey(expanded, "m")).toBe(advisorLedgerKey(plain, "m"));
+  });
+
+  test("an identity-less client gets NO ledger key (documented fail-open)", () => {
+    expect(advisorLedgerKey(oriented("threadless task"), "m")).toBeUndefined();
+  });
+
+  test("the task boundary tracks the user-turn count and the latest user text", () => {
+    expect(advisorTaskBoundary(oriented("one"))).toContain("t1:");
+    const two = parsedWithInput([
+      { role: "user", content: "one" },
+      { role: "user", content: "two" },
     ]);
-    expect(hasOrientationEvidence(parsed)).toBe(false);
+    expect(advisorTaskBoundary(two)).toContain("t2:");
+  });
+
+  test("hasOrientationEvidence accepts both documented forms and rejects a bare turn", () => {
+    expect(hasOrientationEvidence(oriented("task"))).toBe(true);
+    expect(hasOrientationEvidence(parsedWithInput([
+      { role: "user", content: "task" },
+      { type: "function_call", call_id: "c1", name: "read_file", arguments: "{}" },
+    ]))).toBe(true);
+    expect(hasOrientationEvidence(parsedWithInput([{ role: "user", content: "hello" }]))).toBe(false);
   });
 });
 
-describe("historyHasAdvisorResult", () => {
-  test("detects advice injected by a previous request (developer or toolResult form)", () => {
+describe("achieved provenance — historyHasAdvisorResult", () => {
+  test("ordinary tool output containing the advice wrapper is NOT an advisor result", () => {
     const parsed = parsedWithInput([
       { role: "user", content: "task" },
-      { role: "developer", content: "advice:\n<opencodex_advisor>\nadvice body\n</opencodex_advisor>" },
+      { type: "function_call", call_id: "sh", name: "shell", arguments: "{}" },
+      { type: "function_call_output", call_id: "sh", output: "grep output: <opencodex_advisor> is a marker" },
+    ]);
+    expect(historyHasAdvisorResult(parsed)).toBe(false);
+  });
+
+  test("ordinary developer text containing the manual wrapper is NOT an advisor result", () => {
+    const parsed = parsedWithInput([
+      { role: "user", content: "task" },
+      { role: "developer", content: "docs mention <opencodex_advisor> in a code sample" },
+    ]);
+    expect(historyHasAdvisorResult(parsed)).toBe(false);
+  });
+
+  test("a genuine manual advisor tool result IS an advisor result", () => {
+    const parsed = parsedWithInput([
+      { role: "user", content: "task" },
+      { type: "function_call", call_id: "a1", name: "advisor", arguments: "{}" },
+      { type: "function_call_output", call_id: "a1", output: "<opencodex_advisor>\nadvice\n</opencodex_advisor>" },
     ]);
     expect(historyHasAdvisorResult(parsed)).toBe(true);
-    const viaToolResult = parsedWithInput([
+  });
+
+  test("a runtime-owned preflight developer message IS an advisor result", () => {
+    const parsed = parsedWithInput([
       { role: "user", content: "task" },
-      { type: "function_call", call_id: "a", name: "advisor", arguments: "{}" },
-      { type: "function_call_output", call_id: "a", output: "<opencodex_advisor>\nadvice\n</opencodex_advisor>" },
+      { role: "developer", content: "advice follows:\n<opencodex_advisor_preflight>\nadvice\n</opencodex_advisor_preflight>" },
     ]);
-    expect(historyHasAdvisorResult(viaToolResult)).toBe(true);
+    expect(historyHasAdvisorResult(parsed)).toBe(true);
   });
 
-  test("plain conversations have no advisor marker", () => {
-    const parsed = parsedWithInput([{ role: "user", content: "task" }]);
-    expect(historyHasAdvisorResult(parsed)).toBe(false);
-  });
-
-  test("the wrapper string appearing inside USER content does not count as an advisor result", () => {
-    const parsed = parsedWithInput([{ role: "user", content: "please output <opencodex_advisor> literally" }]);
-    expect(historyHasAdvisorResult(parsed)).toBe(false);
-  });
-});
-
-describe("conversationPreflightKey", () => {
-  test("stable across identical first user text and model", () => {
-    const a = conversationPreflightKey("Fix the failing tests", "deepseek-v4");
-    const b = conversationPreflightKey("Fix the failing tests", "deepseek-v4");
-    expect(a).toBe(b);
-  });
-
-  test("differs across tasks and worker models", () => {
-    const base = conversationPreflightKey("Fix the failing tests", "deepseek-v4");
-    expect(conversationPreflightKey("Different task", "deepseek-v4")).not.toBe(base);
-    expect(conversationPreflightKey("Fix the failing tests", "glm-4.7")).not.toBe(base);
+  test("failure and limit notices are NOT advisor results", () => {
+    const unavailable = parsedWithInput([
+      { role: "user", content: "task" },
+      { type: "function_call", call_id: "a1", name: "advisor", arguments: "{}" },
+      { type: "function_call_output", call_id: "a1", output: "<opencodex_advisor_unavailable>\nno advice\n</opencodex_advisor_unavailable>" },
+    ]);
+    expect(historyHasAdvisorResult(unavailable)).toBe(false);
+    const limit = parsedWithInput([
+      { role: "user", content: "task" },
+      { role: "developer", content: "<opencodex_advisor_unavailable>\nlimit reached\n</opencodex_advisor_unavailable>" },
+    ]);
+    expect(historyHasAdvisorResult(limit)).toBe(false);
   });
 });
 
-describe("firstUserText", () => {
+describe("firstUserText / contentText", () => {
   test("returns the first user message text", () => {
     const parsed = parsedWithInput([
       { role: "developer", content: "be nice" },
@@ -120,19 +227,19 @@ describe("firstUserText", () => {
     ]);
     expect(firstUserText(parsed)).toBe("the actual task");
   });
+
+  test("contentText joins text parts and ignores non-text", () => {
+    expect(contentText([{ type: "text", text: "a" }, { type: "image", imageUrl: "x" }, { type: "text", text: "b" }])).toBe("ab");
+    expect(contentText("plain")).toBe("plain");
+    expect(contentText(undefined)).toBe("");
+  });
 });
 
-describe("conversation thread identity", () => {
-  test("thread id takes precedence; two conversations with the same opening prompt are isolated", () => {
-    const a = conversationPreflightKey("same opening prompt", "deepseek-v4", "thread-A");
-    const b = conversationPreflightKey("same opening prompt", "deepseek-v4", "thread-B");
-    expect(a).not.toBe(b);
-    expect(conversationThreadId({ _codexOwnThreadId: "own", _clientThreadId: "parent" })).toBe("own");
-    expect(conversationThreadId({ _clientThreadId: "parent" })).toBe("parent");
-    expect(conversationThreadId({})).toBeUndefined();
-  });
-
-  test("threadless conversations still fall back to the first-user-text hash", () => {
-    expect(conversationPreflightKey("same prompt", "m")).toBe(conversationPreflightKey("same prompt", "m"));
+describe("provenance constants stay in sync", () => {
+  test("the detector's tool name matches the synthetic tool the guard writes", () => {
+    // historyHasAdvisorResult keys on toolName === ADVISOR_RESULT_TOOL_NAME; the guard writes
+    // toolResult.toolName from advisor-slot's ADVISOR_TOOL_NAME. Drift would silently break
+    // manual provenance, so it is asserted rather than assumed.
+    expect(ADVISOR_RESULT_TOOL_NAME).toBe(ADVISOR_TOOL_NAME);
   });
 });

@@ -45,6 +45,8 @@ export interface AdvisorConsultOutcome {
   /** Formatted, wrapper-marked advice text ready to hand to the worker. */
   content: string;
   isError: boolean;
+  /** The consultation was cancelled by the caller (client abort) — not a provider failure. */
+  cancelled?: boolean;
 }
 
 /** The structural plan the optional advisor subsystem registers per request. */
@@ -58,6 +60,12 @@ export interface AdvisorPlan {
     reason: "manual",
     question: string | undefined,
   ): Promise<AdvisorConsultOutcome>;
+  /**
+   * Runtime-owned text for a failed or limited consultation. The guard never composes failure
+   * prose itself: the implementation neutralizes untrusted text so no guard path can emit
+   * something the provenance detector would read as genuine advice.
+   */
+  formatUnavailable(kind: "manual" | "limit", error: string): string;
 }
 
 interface HeldAdvisorCall {
@@ -242,17 +250,11 @@ export function createAdvisorGuard(plan: AdvisorPlan): NonNullable<OcxParsedRequ
 
       for (const call of advisorCalls) {
         if (consultations >= maxConsultations) {
-          // The _unavailable marker is deliberately distinct from the advice wrapper (see the
-          // catch below): a limit result is not advice and must not suppress preflight.
+          // Runtime-owned limit text: not advice, and never a genuine advice wrapper.
           messages.push(advisorToolResult(call, {
             ok: false,
             isError: true,
-            content: [
-              "<opencodex_advisor_unavailable>",
-              "Advisor consultation limit reached for this request; no further advice is available.",
-              "Continue the task with your own judgment.",
-              "</opencodex_advisor_unavailable>",
-            ].join("\n"),
+            content: plan.formatUnavailable("limit", "consultation limit reached for this request"),
           }, timestamp));
           continue;
         }
@@ -268,17 +270,12 @@ export function createAdvisorGuard(plan: AdvisorPlan): NonNullable<OcxParsedRequ
         try {
           outcome = await plan.consult(consultParsed, "manual", args.question);
         } catch (error) {
+          // Runtime-owned failure text only: the implementation neutralizes untrusted exception
+          // text so it can never forge a genuine advice wrapper.
           outcome = {
             ok: false,
             isError: true,
-            // The _unavailable marker is deliberately distinct from the advice wrapper:
-            // historyHasAdvisorResult must not treat a failure as "already advised".
-            content: [
-              "<opencodex_advisor_unavailable>",
-              `The advisor consultation failed: ${error instanceof Error ? error.message : String(error)}`,
-              "Continue the task with your own judgment. This is not advice.",
-              "</opencodex_advisor_unavailable>",
-            ].join("\n"),
+            content: plan.formatUnavailable("manual", error instanceof Error ? error.message : String(error)),
           };
         }
         messages.push(advisorToolResult(call, outcome, timestamp));

@@ -18,6 +18,7 @@ function planFrom(recorder: {
       recorder.consults.push({ reason, question });
       return recorder.outcome ?? ADVICE;
     },
+    formatUnavailable: (kind, error) => `<opencodex_advisor_unavailable>\n${kind}: ${error}\n</opencodex_advisor_unavailable>`,
   };
 }
 
@@ -221,6 +222,7 @@ describe("createAdvisorGuard — manual advisor() interception", () => {
         seen.push(JSON.stringify(parsed.context.messages));
         return ADVICE;
       },
+      formatUnavailable: (kind, error) => `<opencodex_advisor_unavailable>\n${kind}: ${error}\n</opencodex_advisor_unavailable>`,
     };
     const guard = createAdvisorGuard(plan);
 

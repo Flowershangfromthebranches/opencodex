@@ -123,7 +123,7 @@ export const vi: Record<TKey, string> = {
   "advisor.loadFailed": "Không thể tải cài đặt cố vấn. Proxy có đang chạy không?",
   "advisor.warning.noModel": "Đã bật nhưng chưa cấu hình mô hình chuyên gia — các lần tư vấn sẽ thất bại.",
   "advisor.costNote": "Mỗi lần tư vấn là một lời gọi mô hình thực sự bổ sung, được tính vào mức sử dụng theo mô hình cố vấn, không phải mô hình worker.",
-  "advisor.privacyNote": "Lưu ý liên provider: các lần tư vấn gửi hội thoại nhiệm vụ và kết quả công cụ đến provider cố vấn đã cấu hình, có thể khác với provider của worker. Không bật cố vấn với provider bạn không tin tưởng với nội dung nhiệm vụ này.",
+  "advisor.privacyNote": "Lưu ý liên provider: các lần tư vấn gửi hội thoại nhiệm vụ và kết quả công cụ đến provider cố vấn đã cấu hình, có thể khác với provider của worker. Nội dung nhiệm vụ không được loại bỏ bí mật — không bật cố vấn cho nhiệm vụ mà bạn không muốn chia sẻ nội dung với provider đó.",
   "nav.logs": "Logs & Gỡ lỗi",
   "nav.usage": "Mức sử dụng",
   "common.github": "GitHub",
