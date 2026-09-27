@@ -49,30 +49,51 @@ export type AdvisorClaimState =
   /** A recent consultation failed; suppression holds for the short failure cooldown. */
   | "cooldown";
 
+/**
+ * The result of a claim attempt. `token` identifies THIS claim and is present only on
+ * `"claimed"`; settlement must present it, so a slow consultation whose in-flight entry expired
+ * cannot settle the successor claim that took its place.
+ */
+export interface AdvisorClaim {
+  state: AdvisorClaimState;
+  token?: string;
+}
+
 interface LedgerEntry {
   state: "inflight" | "success" | "failed";
   at: number;
+  /** Present on in-flight entries: which claim owns this entry. */
+  token?: string;
 }
 
 export interface AdvisorPreflightLedger {
   /**
    * Atomically try to own the consultation for a task key. Returns `claimed` exactly once per
-   * task until `complete`/`fail`/`release` settles it, so two concurrent requests cannot both
-   * consult.
+   * task (with the ownership token) until a matching settlement releases it, so two concurrent
+   * requests cannot both consult.
    */
-  claim(key: string, now?: number): AdvisorClaimState;
-  /** The consultation succeeded: suppress further automatic consultations until the TTL. */
-  complete(key: string, now?: number): void;
-  /** The consultation failed: short cooldown, then the task may retry. */
-  fail(key: string, now?: number): void;
-  /** The consultation was cancelled (client abort): no cooldown, the task may retry at once. */
-  release(key: string, now?: number): void;
+  claim(key: string, now?: number): AdvisorClaim;
+  /**
+   * Settle a claim the caller owns. A settlement whose token does not match the current entry
+   * is a no-op: the entry now belongs to a successor claim (the caller's in-flight window
+   * expired), and it must not be able to erase or overwrite that successor's state.
+   */
+  complete(key: string, token: string, now?: number): void;
+  fail(key: string, token: string, now?: number): void;
+  release(key: string, token: string, now?: number): void;
+  /**
+   * Fact, not settlement: this task received advice (used by a successful MANUAL consultation,
+   * which owns no preflight claim). Records success regardless of the current entry, because
+   * "the task was advised" is true whichever consultation produced it.
+   */
+  markAdvised(key: string, now?: number): void;
   /** Test/observability seam: current entry count. */
   size(): number;
 }
 
 export function createAdvisorPreflightLedger(): AdvisorPreflightLedger {
   const entries = new Map<string, LedgerEntry>();
+  let claimSequence = 0;
 
   const evict = (): void => {
     while (entries.size > MAX_ENTRIES) {
@@ -98,33 +119,42 @@ export function createAdvisorPreflightLedger(): AdvisorPreflightLedger {
     return entry;
   };
 
-  const set = (key: string, state: LedgerEntry["state"], now: number): void => {
+  const set = (key: string, state: LedgerEntry["state"], now: number, token?: string): void => {
     if (entries.has(key)) entries.delete(key);
-    entries.set(key, { state, at: now });
+    entries.set(key, { state, at: now, ...(token !== undefined ? { token } : {}) });
     evict();
+  };
+
+  /** True when the caller's token still owns the current in-flight entry for this key. */
+  const owns = (key: string, token: string, now: number): boolean => {
+    const entry = liveEntry(key, now);
+    return entry?.state === "inflight" && entry.token === token;
   };
 
   return {
     claim(key, now = Date.now()) {
       const entry = liveEntry(key, now);
-      if (!entry) {
-        set(key, "inflight", now);
-        return "claimed";
-      }
-      if (entry.state === "success") return "complete";
-      if (entry.state === "failed") return "cooldown";
-      return "inflight";
+      if (entry?.state === "success") return { state: "complete" };
+      if (entry?.state === "failed") return { state: "cooldown" };
+      if (entry?.state === "inflight") return { state: "inflight" };
+      claimSequence += 1;
+      const token = `claim-${claimSequence.toString(36)}`;
+      set(key, "inflight", now, token);
+      return { state: "claimed", token };
     },
-    complete(key, now = Date.now()) {
+    complete(key, token, now = Date.now()) {
+      // A settlement that no longer owns the entry is a no-op: the claim it belonged to expired
+      // and a successor now owns the state.
+      if (owns(key, token, now)) set(key, "success", now);
+    },
+    fail(key, token, now = Date.now()) {
+      if (owns(key, token, now)) set(key, "failed", now);
+    },
+    release(key, token, now = Date.now()) {
+      if (owns(key, token, now)) entries.delete(key);
+    },
+    markAdvised(key, now = Date.now()) {
       set(key, "success", now);
-    },
-    fail(key, now = Date.now()) {
-      set(key, "failed", now);
-    },
-    release(key, now = Date.now()) {
-      const entry = entries.get(key);
-      // Only an in-flight claim this caller owns is released; a settled success/failure stays.
-      if (entry?.state === "inflight" && now - entry.at <= ADVISOR_INFLIGHT_TTL_MS) entries.delete(key);
     },
     size() {
       return entries.size;

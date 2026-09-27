@@ -32,25 +32,27 @@ const oriented = (text: string, threadId?: string) => parsedWithInput([
 describe("advisor preflight ledger — atomic claim", () => {
   test("claim is exclusive until settled", () => {
     const ledger = createAdvisorPreflightLedger();
-    expect(ledger.claim("k", 1_000)).toBe("claimed");
+    const first = ledger.claim("k", 1_000);
+    expect(first.state).toBe("claimed");
+    expect(first.token).toBeDefined();
     // A concurrent request for the same task must not start a second consultation.
-    expect(ledger.claim("k", 1_001)).toBe("inflight");
+    expect(ledger.claim("k", 1_001).state).toBe("inflight");
   });
 
   test("complete suppresses until the success TTL, then the task is eligible again", () => {
     const ledger = createAdvisorPreflightLedger();
-    ledger.claim("k", 0);
-    ledger.complete("k", 0);
-    expect(ledger.claim("k", ADVISOR_SUCCESS_TTL_MS - 1)).toBe("complete");
-    expect(ledger.claim("k", ADVISOR_SUCCESS_TTL_MS + 1)).toBe("claimed");
+    const claim = ledger.claim("k", 0);
+    ledger.complete("k", claim.token!, 0);
+    expect(ledger.claim("k", ADVISOR_SUCCESS_TTL_MS - 1).state).toBe("complete");
+    expect(ledger.claim("k", ADVISOR_SUCCESS_TTL_MS + 1).state).toBe("claimed");
   });
 
   test("fail suppresses only for the short cooldown, then retry is allowed", () => {
     const ledger = createAdvisorPreflightLedger();
-    ledger.claim("k", 0);
-    ledger.fail("k", 0);
-    expect(ledger.claim("k", ADVISOR_FAILURE_COOLDOWN_MS - 1)).toBe("cooldown");
-    expect(ledger.claim("k", ADVISOR_FAILURE_COOLDOWN_MS + 1)).toBe("claimed");
+    const claim = ledger.claim("k", 0);
+    ledger.fail("k", claim.token!, 0);
+    expect(ledger.claim("k", ADVISOR_FAILURE_COOLDOWN_MS - 1).state).toBe("cooldown");
+    expect(ledger.claim("k", ADVISOR_FAILURE_COOLDOWN_MS + 1).state).toBe("claimed");
     // The failure cooldown is far shorter than the success window: a transient outage pauses,
     // it does not silence the policy for the whole session.
     expect(ADVISOR_FAILURE_COOLDOWN_MS).toBeLessThan(ADVISOR_SUCCESS_TTL_MS / 10);
@@ -58,36 +60,66 @@ describe("advisor preflight ledger — atomic claim", () => {
 
   test("release after cancellation leaves the task immediately eligible", () => {
     const ledger = createAdvisorPreflightLedger();
-    ledger.claim("k", 0);
-    ledger.release("k", 0);
-    expect(ledger.claim("k", 1)).toBe("claimed");
+    const claim = ledger.claim("k", 0);
+    ledger.release("k", claim.token!, 0);
+    expect(ledger.claim("k", 1).state).toBe("claimed");
   });
 
   test("release never clears a settled success or failure", () => {
     const ledger = createAdvisorPreflightLedger();
-    ledger.claim("s", 0);
-    ledger.complete("s", 0);
-    ledger.release("s", 0);
-    expect(ledger.claim("s", 1)).toBe("complete");
+    const success = ledger.claim("s", 0);
+    ledger.complete("s", success.token!, 0);
+    ledger.release("s", success.token!, 0);
+    expect(ledger.claim("s", 1).state).toBe("complete");
 
-    ledger.claim("f", 0);
-    ledger.fail("f", 0);
-    ledger.release("f", 0);
-    expect(ledger.claim("f", 1)).toBe("cooldown");
+    const failure = ledger.claim("f", 0);
+    ledger.fail("f", failure.token!, 0);
+    ledger.release("f", failure.token!, 0);
+    expect(ledger.claim("f", 1).state).toBe("cooldown");
   });
 
   test("a stale in-flight claim expires so a crashed consult cannot block the task", () => {
     const ledger = createAdvisorPreflightLedger();
     ledger.claim("k", 0);
-    expect(ledger.claim("k", ADVISOR_INFLIGHT_TTL_MS + 1)).toBe("claimed");
+    expect(ledger.claim("k", ADVISOR_INFLIGHT_TTL_MS + 1).state).toBe("claimed");
+  });
+
+  test("a settlement from an expired claim cannot disturb the successor claim", () => {
+    const ledger = createAdvisorPreflightLedger();
+    const stale = ledger.claim("k", 0);
+    // The in-flight window expires and a successor takes the entry.
+    const successor = ledger.claim("k", ADVISOR_INFLIGHT_TTL_MS + 1);
+    expect(successor.state).toBe("claimed");
+    expect(successor.token).not.toBe(stale.token);
+
+    // Every settlement the stale owner can make must be a no-op.
+    ledger.release("k", stale.token!, ADVISOR_INFLIGHT_TTL_MS + 2);
+    ledger.fail("k", stale.token!, ADVISOR_INFLIGHT_TTL_MS + 3);
+    ledger.complete("k", stale.token!, ADVISOR_INFLIGHT_TTL_MS + 4);
+    expect(ledger.claim("k", ADVISOR_INFLIGHT_TTL_MS + 5).state).toBe("inflight");
+
+    // The successor still settles normally.
+    ledger.complete("k", successor.token!, ADVISOR_INFLIGHT_TTL_MS + 6);
+    expect(ledger.claim("k", ADVISOR_INFLIGHT_TTL_MS + 7).state).toBe("complete");
+  });
+
+  test("markAdvised records the fact for a manual success that owns no preflight claim", () => {
+    const ledger = createAdvisorPreflightLedger();
+    ledger.markAdvised("k", 0);
+    expect(ledger.claim("k", 1).state).toBe("complete");
+    // It also settles over an in-flight entry: the task WAS advised, whichever consultation did it.
+    const other = ledger.claim("m", 0);
+    ledger.markAdvised("m", 1);
+    expect(ledger.claim("m", 2).state).toBe("complete");
+    expect(other.state).toBe("claimed");
   });
 
   test("the ledger is bounded: oldest entries are evicted past the cap", () => {
     const ledger = createAdvisorPreflightLedger();
     for (let i = 0; i < 600; i += 1) ledger.claim(`key-${i}`, i);
     expect(ledger.size()).toBeLessThanOrEqual(512);
-    expect(ledger.claim("key-0", 600)).toBe("claimed");
-    expect(ledger.claim("key-599", 600)).toBe("inflight");
+    expect(ledger.claim("key-0", 600).state).toBe("claimed");
+    expect(ledger.claim("key-599", 600).state).toBe("inflight");
   });
 });
 
