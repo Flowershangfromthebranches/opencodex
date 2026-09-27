@@ -133,7 +133,7 @@ export const zh: Record<TKey, string> = {
   "advisor.loadFailed": "无法加载顾问设置。代理是否在运行？",
   "advisor.warning.noModel": "已启用但尚未配置专家模型 — 咨询将会失败。",
   "advisor.costNote": "每次咨询都是真实的额外模型调用，会以顾问模型（而非 Worker 模型）计入用量。",
-  "advisor.privacyNote": "跨 provider 提示：咨询会把任务对话与工具结果发送给配置的顾问 provider，它可能与 Worker 的 provider 不同。请勿对不信任其处理该任务内容的 provider 启用顾问。",
+  "advisor.privacyNote": "跨 provider 提示：咨询会把任务对话与工具结果发送给配置的顾问 provider，它可能与 Worker 的 provider 不同。任务内容不做凭据脱敏 —— 请不要对不信任该任务内容的 provider 启用顾问。",
   // routing intelligence
   "routing.title": "路由智能 (beta)",
   "routing.subtitle": "策略配置文件、试运行评估以及基于来源的路由分析。",

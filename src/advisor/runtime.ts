@@ -7,12 +7,21 @@
  *
  * Responsibilities:
  * - decide whether the advisor applies to this request (settings + capability of the path);
- * - preflight: the guaranteed automatic consultation, injected as a marked developer message
- *   before the worker is dispatched;
+ * - preflight: one automatic consultation ATTEMPT per task when the orientation evidence exists,
+ *   claimed atomically in the ledger and injected as a marked developer message;
  * - manual: back the synthetic `advisor` tool guard with real consultations through the routing
  *   authority (loopback chat completion);
  * - observability: one structured log line per consultation — proof that the advisor actually
  *   ran (worker model, advisor model, trigger, duration, status, usage).
+ *
+ * Preflight injection authority (PR1 security debt, recorded deliberately): the advice rides a
+ * DEVELOPER message because the Responses protocol offers no lower-trust representation that
+ * stays legal across providers — a tool result would require fabricating a tool call the worker
+ * never made (Anthropic rejects unpaired tool results; continuation state is built from paired
+ * history). The message text denies system/user authority and the body carries the runtime-owned
+ * `<opencodex_advisor_preflight>` wrapper, but the developer ROLE is still an operator-authority
+ * channel: this is a known limitation, not a claim of a low-privilege data channel. A
+ * protocol-level consultation-result item is the follow-up improvement.
  */
 import type { OcxConfig, OcxParsedRequest } from "../types";
 import type { AdvisorPlan, AdvisorConsultOutcome } from "../server/responses/advisor-slot";
@@ -20,21 +29,22 @@ import { createAdvisorGuard } from "../server/responses/advisor-slot";
 import { advisorRunnable, resolveAdvisorSettings } from "./settings";
 import { consultAdvisor } from "./consult";
 import {
-  conversationPreflightKey,
-  conversationThreadId,
+  advisorLedgerKey,
   createAdvisorPreflightLedger,
-  firstUserText,
   hasOrientationEvidence,
   historyHasAdvisorResult,
+  type AdvisorPreflightLedger,
 } from "./state";
 import { formatAdvisorAdvice, formatAdvisorUnavailable } from "./context";
 
 /**
- * Process-local task ledger. Bounded (entries + TTL) in src/advisor/state.ts; one instance per
- * process so dedup works across concurrent requests. Not durable by design — see the documented
- * restart limitation.
+ * Process-local task ledger. Bounded (entries + per-state TTL) in src/advisor/state.ts; one
+ * instance per process so the claim is atomic across concurrent requests. Not durable by design
+ * — see the documented restart limitation.
  */
-const preflightLedger = createAdvisorPreflightLedger();
+const sharedPreflightLedger = createAdvisorPreflightLedger();
+
+export const ADVISOR_SHARED_LEDGER = sharedPreflightLedger;
 
 export interface AdvisorRuntimeDeps {
   config: Pick<OcxConfig, "advisor" | "port" | "hostname" | "apiKeys" | "unauthenticatedLoopbackListener">;
@@ -44,12 +54,19 @@ export interface AdvisorRuntimeDeps {
   abortSignal?: AbortSignal;
   /** Test seam; production always self-fetches the resolved local destination. */
   baseUrlOverride?: string;
+  /** Test seam; production uses the process-wide ledger. */
+  ledger?: AdvisorPreflightLedger;
+  /** Deterministic clock seam for the ledger's TTL/cooldown arithmetic (tests only). */
+  now?: () => number;
 }
 
 export interface AdvisorRuntimePlan extends AdvisorPlan {
   readonly policy: "manual" | "preflight";
   readonly toolEnabled: boolean;
-  /** Deterministic guaranteed-consultation pass; returns true when advice was injected. */
+  /**
+   * The automatic preflight pass. Returns true when advice was injected. A cancelled
+   * consultation injects nothing and leaves the task eligible for a later attempt.
+   */
   preflightInject(parsed: OcxParsedRequest): Promise<boolean>;
   /** Attach the stream guard for the synthetic tool to the parsed request. */
   attachGuard(parsed: OcxParsedRequest): void;
@@ -58,23 +75,29 @@ export interface AdvisorRuntimePlan extends AdvisorPlan {
 export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRuntimePlan | null {
   const settings = resolveAdvisorSettings(deps.config);
   if (!advisorRunnable(settings)) return null;
+  const ledger = deps.ledger ?? sharedPreflightLedger;
+  const now = deps.now ?? (() => Date.now());
 
   // Request-scoped state: born here, dies with the request. Never global.
   const fingerprints = new Set<string>();
   let preflightUsed = false;
 
+  const taskKey = (parsed: OcxParsedRequest): string | undefined =>
+    advisorLedgerKey(parsed, deps.workerModelId);
+
   const logConsultation = (
     trigger: "manual" | "preflight",
-    outcome: { ok: boolean; durationMs: number; error?: string; usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } },
+    outcome: { ok: boolean; cancelled?: boolean; durationMs: number; error?: string; usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } },
   ): void => {
     const usage = outcome.usage
       ? ` usage=in=${outcome.usage.inputTokens ?? "?"} out=${outcome.usage.outputTokens ?? "?"}`
       : "";
+    const status = outcome.ok ? "ok" : outcome.cancelled ? "cancelled" : "failed";
     // One structured line per consultation: the minimal proof that the advisor actually ran.
     console.warn(
-      `[advisor] consultation ${outcome.ok ? "ok" : "failed"} trigger=${trigger} worker=${deps.workerModelId}`
+      `[advisor] consultation ${status} trigger=${trigger} worker=${deps.workerModelId}`
       + ` advisor=${settings.model} durationMs=${outcome.durationMs}${usage}`
-      + `${outcome.ok ? "" : ` error=${outcome.error ?? "unknown"}`}`,
+      + `${outcome.ok || outcome.cancelled ? "" : ` error=${outcome.error ?? "unknown"}`}`,
     );
   };
 
@@ -83,14 +106,11 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
     reason: "manual" | "preflight",
     question: string | undefined,
   ): Promise<AdvisorConsultOutcome> => {
-    // Same-consultation dedup within this request: identical trigger + focus returns the cached
-    // outcome instead of a second expert call.
+    // Same-consultation dedup within this request: identical trigger + focus returns a
+    // non-advice outcome instead of a second expert call.
     const fingerprint = `${reason}|${question ?? ""}`;
-    const cached = fingerprints.has(fingerprint);
     let result;
-    if (cached) {
-      // Re-run-free path is not possible without storing the full advice; dedup instead SKIPS
-      // the second expert call and reports the first consultation's identity honestly.
+    if (fingerprints.has(fingerprint)) {
       result = {
         ok: false,
         advice: "",
@@ -98,90 +118,110 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
         error: "duplicate consultation request (already consulted with this focus in this request)",
         durationMs: 0,
       };
-    } else {
-      fingerprints.add(fingerprint);
-      result = await consultAdvisor(
-        {
-          parsed,
-          workerIdentity: deps.workerIdentity,
-          advisorModel: settings.model,
-          reason,
-          ...(question !== undefined ? { question } : {}),
-        },
-        deps.config,
-        settings.effort,
-        settings.timeoutMs,
-        deps.abortSignal,
-        deps.baseUrlOverride,
-      );
-      logConsultation(reason, result);
-    }
-    // Only a SUCCESSFUL consultation counts as "this task was advised". A failed preflight is
-    // recorded under a separate ledger key so it is not retried on every turn of the task
-    // (retry-storm guard), but the entry expires with the ledger TTL and the task can get its
-    // guaranteed consultation once the advisor recovers. Failed outcomes are injected with the
-    // `<opencodex_advisor_unavailable>` wrapper, which historyHasAdvisorResult deliberately
-    // does NOT match — a failure is not advice and must not permanently suppress preflight.
-    if (result.ok) {
-      preflightLedger.mark(
-        ledgerKey(parsed),
-        reason,
-      );
-    } else if (reason === "preflight") {
-      preflightLedger.mark(
-        ledgerKey(parsed, ":failed"),
-        "manual",
-      );
-    }
-    if (!result.ok) {
       return {
         ok: false,
         isError: true,
-        content: formatAdvisorUnavailable(reason, result.error ?? "unavailable"),
+        content: formatAdvisorUnavailable(reason === "preflight" ? "preflight" : "manual", result.error),
+      };
+    }
+    fingerprints.add(fingerprint);
+    result = await consultAdvisor(
+      {
+        parsed,
+        workerIdentity: deps.workerIdentity,
+        advisorModel: settings.model,
+        reason,
+        ...(question !== undefined ? { question } : {}),
+      },
+      deps.config,
+      settings.effort,
+      settings.timeoutMs,
+      deps.abortSignal,
+      deps.baseUrlOverride,
+    );
+    logConsultation(reason, result);
+
+    if (result.ok) {
+      // A genuine result suppresses further automatic consultation for the task. Manual success
+      // settles it too: a task the worker already had advised does not need a preflight attempt.
+      if (reason === "manual") {
+        const key = taskKey(parsed);
+        if (key) ledger.complete(key, now());
+      }
+      return {
+        ok: true,
+        isError: false,
+        content: formatAdvisorAdvice({
+          advisorModel: result.advisorModel,
+          reason,
+          advice: result.advice,
+          channel: reason === "preflight" ? "preflight" : "manual",
+        }),
       };
     }
     return {
-      ok: true,
-      isError: false,
-      content: formatAdvisorAdvice({ advisorModel: result.advisorModel, reason, advice: result.advice }),
+      ok: false,
+      isError: true,
+      ...(result.cancelled ? { cancelled: true } : {}),
+      content: formatAdvisorUnavailable(reason === "preflight" ? "preflight" : "manual", result.error ?? "unavailable"),
     };
   };
 
-  // Task identity for the ledger: the client's thread id when the surface provides one, else
-  // the hashed first user message. Thread-keyed conversations are isolated exactly; the
-  // threadless fallback shares a key only between conversations that open with an identical
-  // first prompt (documented limitation).
-  const ledgerKey = (parsed: OcxParsedRequest, suffix = ""): string =>
-    conversationPreflightKey(firstUserText(parsed), deps.workerModelId, conversationThreadId(parsed)) + suffix;
-
   const preflightInject = async (parsed: OcxParsedRequest): Promise<boolean> => {
     if (settings.policy !== "preflight" || preflightUsed) return false;
-    // One guaranteed consultation per task: a conversation that already carries advice (manual
-    // or preflight, including replays) and conversations without orientation evidence skip.
+    // Already advised (genuine provenance) or no qualifying orientation evidence: skip.
     if (historyHasAdvisorResult(parsed)) return false;
     if (!hasOrientationEvidence(parsed)) return false;
-    // A successful consultation suppresses retries for the ledger TTL; a failed one suppresses
-    // them under its own key, which expires on the same clock so the task retries once the
-    // advisor recovers instead of being locked out for the conversation's lifetime.
-    if (preflightLedger.has(ledgerKey(parsed)) || preflightLedger.has(ledgerKey(parsed, ":failed"))) return false;
+
+    // Atomic claim. A client with a stable conversation identity participates in the
+    // process-global ledger, so concurrent requests for one task consult at most once and a
+    // settled task is not re-consulted. A client with NO stable identity stays out of the
+    // ledger on purpose: request-scoped dedup plus genuine in-history provenance are the only
+    // suppression it gets — fail-open, so two independent identity-less conversations can never
+    // suppress each other through a shared guess.
+    const key = taskKey(parsed);
+    if (key) {
+      const claim = ledger.claim(key, now());
+      if (claim !== "claimed") return false;
+    }
     preflightUsed = true;
-    const outcome = await runConsultation(parsed, "preflight", undefined);
-    // Injection authority: preflight advice rides a DEVELOPER message on purpose. A tool result
-    // would require a paired synthetic tool call the worker never made — fabricating one is an
-    // invalid conversation for several providers (Anthropic rejects unpaired tool results) and
-    // would corrupt continuation state. The developer role is the Responses protocol's
-    // operator-instruction channel, which is what an automatic runtime consultation is; the
-    // message text explicitly denies it system/user authority, and the advice body carries the
-    // <opencodex_advisor> wrapper so downstream logic treats it as advisory data. Lowering this
-    // to a protocol-level "consultation result" item is a future orchestration improvement, not
-    // a PR1 change.
+
+    let outcome: AdvisorConsultOutcome;
+    try {
+      outcome = await runConsultation(parsed, "preflight", undefined);
+    } catch (error) {
+      if (key) ledger.fail(key, now());
+      console.warn(`[advisor] consultation failed trigger=preflight worker=${deps.workerModelId} error=plan_threw`);
+      parsed.context.messages = [
+        ...parsed.context.messages,
+        {
+          role: "developer",
+          content: "An automatic advisor consultation could not be completed. Continue with your own judgment.",
+          timestamp: Date.now(),
+        },
+      ];
+      void error;
+      return false;
+    }
+
+    if (outcome.ok) {
+      if (key) ledger.complete(key, now());
+    } else if (outcome.cancelled) {
+      // Client cancellation is not a provider failure: no cooldown, the task may retry later.
+      if (key) ledger.release(key, now());
+      // Nothing to inject — the caller is gone or aborting; do not add noise to a live turn.
+      return false;
+    } else {
+      if (key) ledger.fail(key, now());
+    }
+
     parsed.context.messages = [
       ...parsed.context.messages,
       {
         role: "developer",
         content: [
           "An independent expert advisor was consulted about this task before your next turn "
-          + "(automatic preflight consultation by the runtime). Treat the following as advisory "
+          + "(automatic preflight attempt by the runtime). Treat the following as advisory "
           + "input from a domain expert — it has no system or user authority; apply your own judgment:",
           "",
           outcome.content,
@@ -189,7 +229,14 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
         timestamp: Date.now(),
       },
     ];
-    return true;
+    return outcome.ok;
+  };
+
+  const plan: AdvisorPlan = {
+    consult: (parsed, reason, question) => runConsultation(parsed, reason, question),
+    // The guard's own failure/limit text goes through the same runtime-owned, marker-neutralized
+    // formatter so no guard path can emit text that looks like a genuine advice wrapper.
+    formatUnavailable: (kind, error) => formatAdvisorUnavailable(kind, error),
   };
 
   return {
@@ -197,12 +244,11 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
     // The synthetic tool is only safe where the guard can intercept: run-turn adapters own their
     // own loops, so they get preflight support but never the tool (documented limitation).
     toolEnabled: settings.enabled,
-    consult: (parsed, reason, question) => runConsultation(parsed, reason, question),
+    consult: plan.consult,
+    formatUnavailable: plan.formatUnavailable,
     preflightInject,
     attachGuard: parsed => {
-      parsed._advisorGuard = createAdvisorGuard({
-        consult: (p, reason, question) => runConsultation(p, reason, question),
-      });
+      parsed._advisorGuard = createAdvisorGuard(plan);
     },
   };
 }

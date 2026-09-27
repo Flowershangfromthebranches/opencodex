@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { createAdvisorRuntimePlan } from "../../src/advisor/runtime";
-import { formatAdvisorUnavailable } from "../../src/advisor/context";
-import { historyHasAdvisorResult } from "../../src/advisor/state";
+import type { AdvisorPreflightLedger } from "../../src/advisor/state";
+import { createAdvisorPreflightLedger } from "../../src/advisor/state";
 import type { OcxConfig, OcxParsedRequest } from "../../src/types";
 import { parseRequest } from "../../src/responses/parser";
 
@@ -25,23 +25,31 @@ function configWith(advisor: OcxConfig["advisor"]): OcxConfig {
   } as OcxConfig;
 }
 
-function orientedParsed(): OcxParsedRequest {
-  return parseRequest({
+/** Oriented conversation with an explicit thread identity (participates in the ledger). */
+function orientedParsed(text = "Fix the failing auth tests", threadId = "thread-1"): OcxParsedRequest {
+  const parsed = parseRequest({
     model: "worker/deepseek-v4",
     stream: false,
     input: [
-      { role: "user", content: "Fix the failing auth tests" },
+      { role: "user", content: text },
       { type: "function_call", call_id: "c1", name: "shell", arguments: "{}" },
       { type: "function_call_output", call_id: "c1", output: "3 tests failed" },
     ],
   });
+  parsed._codexOwnThreadId = threadId;
+  return parsed;
 }
 
-function plainParsed(): OcxParsedRequest {
+/** Identity-less conversation: no ledger participation (fail-open path). */
+function threadlessParsed(text = "Identity-less task"): OcxParsedRequest {
   return parseRequest({
     model: "worker/deepseek-v4",
     stream: false,
-    input: [{ role: "user", content: "Fix the failing auth tests" }],
+    input: [
+      { role: "user", content: text },
+      { type: "function_call", call_id: "c1", name: "shell", arguments: "{}" },
+      { type: "function_call_output", call_id: "c1", output: "3 tests failed" },
+    ],
   });
 }
 
@@ -58,23 +66,29 @@ function fakeLoopback(advice = "Rewrite the refresh window first.") {
   return calls;
 }
 
-describe("createAdvisorRuntimePlan — eligibility", () => {
+function makePlan(options: {
+  advisor: OcxConfig["advisor"];
+  ledger?: AdvisorPreflightLedger;
+  abortSignal?: AbortSignal;
+  baseUrlOverride?: string;
+  now?: () => number;
+}) {
+  return createAdvisorRuntimePlan({
+    config: configWith(options.advisor),
+    workerIdentity: "deepseek-v4 (provider worker)",
+    workerModelId: "deepseek-v4",
+    ...(options.ledger ? { ledger: options.ledger } : {}),
+    ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+    ...(options.now ? { now: options.now } : {}),
+    baseUrlOverride: options.baseUrlOverride ?? "http://advisor.test",
+  })!;
+}
+
+describe("advisor plan — eligibility", () => {
   test("no plan when the advisor is disabled or unconfigured", () => {
-    expect(createAdvisorRuntimePlan({
-      config: configWith(undefined),
-      workerIdentity: "w",
-      workerModelId: "m",
-    })).toBeNull();
-    expect(createAdvisorRuntimePlan({
-      config: configWith({ enabled: true }),
-      workerIdentity: "w",
-      workerModelId: "m",
-    })).toBeNull();
-    expect(createAdvisorRuntimePlan({
-      config: configWith({ enabled: false, model: "gpt-6-astra" }),
-      workerIdentity: "w",
-      workerModelId: "m",
-    })).toBeNull();
+    expect(createAdvisorRuntimePlan({ config: configWith(undefined), workerIdentity: "w", workerModelId: "m" })).toBeNull();
+    expect(createAdvisorRuntimePlan({ config: configWith({ enabled: true }), workerIdentity: "w", workerModelId: "m" })).toBeNull();
+    expect(createAdvisorRuntimePlan({ config: configWith({ enabled: false, model: "gpt-6-astra" }), workerIdentity: "w", workerModelId: "m" })).toBeNull();
   });
 
   test("a plan exists when enabled with a model, for both policies", () => {
@@ -90,129 +104,230 @@ describe("createAdvisorRuntimePlan — eligibility", () => {
   });
 });
 
-describe("createAdvisorRuntimePlan — preflight policy", () => {
-  test("injects advice once for an oriented conversation, as a marked developer message", async () => {
+describe("advisor plan — preflight policy", () => {
+  test("injects advice once for an oriented conversation, with the runtime-owned preflight wrapper", async () => {
     const calls = fakeLoopback();
-    const plan = createAdvisorRuntimePlan({
-      config: configWith({ enabled: true, model: "expert/expert-model", policy: "preflight" }),
-      workerIdentity: "deepseek-v4 (provider worker)",
-      workerModelId: "deepseek-v4",
-    })!;
+    const ledger = createAdvisorPreflightLedger();
+    const plan = makePlan({ advisor: { enabled: true, model: "expert/expert-model", policy: "preflight" }, ledger });
     const parsed = orientedParsed();
 
-    const injected = await plan.preflightInject(parsed);
-    expect(injected).toBe(true);
+    expect(await plan.preflightInject(parsed)).toBe(true);
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.model).toBe("expert/expert-model");
     const last = parsed.context.messages[parsed.context.messages.length - 1]!;
     expect(last.role).toBe("developer");
-    expect(String(last.content)).toContain("<opencodex_advisor>");
+    expect(String(last.content)).toContain("<opencodex_advisor_preflight>");
     expect(String(last.content)).toContain("Rewrite the refresh window first.");
 
-    // The SAME request never consults twice, and the same task never gets a second one.
+    // Same request: no second consultation.
     expect(await plan.preflightInject(parsed)).toBe(false);
     expect(calls).toHaveLength(1);
   });
 
-  test("skips conversations without orientation evidence", async () => {
+  test("a successful completion suppresses the task until the success TTL", async () => {
     const calls = fakeLoopback();
-    const plan = createAdvisorRuntimePlan({
-      config: configWith({ enabled: true, model: "expert/expert-model", policy: "preflight" }),
-      workerIdentity: "w",
-      workerModelId: "m",
-    })!;
-    expect(await plan.preflightInject(plainParsed())).toBe(false);
-    expect(calls).toHaveLength(0);
+    const ledger = createAdvisorPreflightLedger();
+    const config = configWith({ enabled: true, model: "expert/expert-model", policy: "preflight" });
+    const first = createAdvisorRuntimePlan({ config, workerIdentity: "w", workerModelId: "m", ledger, baseUrlOverride: "http://advisor.test" })!;
+    expect(await first.preflightInject(orientedParsed())).toBe(true);
+    expect(calls).toHaveLength(1);
+
+    // A later request for the SAME task (same thread + same turn boundary) does not re-consult.
+    const second = createAdvisorRuntimePlan({ config, workerIdentity: "w", workerModelId: "m", ledger, baseUrlOverride: "http://advisor.test" })!;
+    expect(await second.preflightInject(orientedParsed())).toBe(false);
+    expect(calls).toHaveLength(1);
   });
 
-  test("skips conversations that already carry advisor advice", async () => {
+  test("skips conversations without orientation evidence or that already carry genuine advice", async () => {
     const calls = fakeLoopback();
-    const plan = createAdvisorRuntimePlan({
-      config: configWith({ enabled: true, model: "expert/expert-model", policy: "preflight" }),
-      workerIdentity: "w",
-      workerModelId: "m",
-    })!;
-    const parsed = parseRequest({
+    const plan = makePlan({ advisor: { enabled: true, model: "expert/expert-model", policy: "preflight" }, ledger: createAdvisorPreflightLedger() });
+    const plain = parseRequest({ model: "worker/deepseek-v4", stream: false, input: [{ role: "user", content: "hello" }] });
+    plain._codexOwnThreadId = "thread-plain";
+    expect(await plan.preflightInject(plain)).toBe(false);
+
+    const advised = parseRequest({
       model: "worker/deepseek-v4",
       stream: false,
       input: [
         { role: "user", content: "Fix the failing auth tests" },
-        { type: "function_call", call_id: "c1", name: "shell", arguments: "{}" },
-        { type: "function_call_output", call_id: "c1", output: "3 tests failed" },
-        { role: "developer", content: "advice:\n<opencodex_advisor>\nbody\n</opencodex_advisor>" },
+        { type: "function_call", call_id: "a1", name: "advisor", arguments: "{}" },
+        { type: "function_call_output", call_id: "a1", output: "<opencodex_advisor>\nadvice\n</opencodex_advisor>" },
       ],
     });
-    expect(await plan.preflightInject(parsed)).toBe(false);
+    advised._codexOwnThreadId = "thread-advised";
+    expect(await plan.preflightInject(advised)).toBe(false);
     expect(calls).toHaveLength(0);
   });
 
-  test("manual policy never auto-consults", async () => {
+  test("manual policy never auto-consults, but still backs the synthetic tool", async () => {
     const calls = fakeLoopback();
-    const plan = createAdvisorRuntimePlan({
-      config: configWith({ enabled: true, model: "expert/expert-model", policy: "manual" }),
-      workerIdentity: "w",
-      workerModelId: "m",
-    })!;
+    const plan = makePlan({ advisor: { enabled: true, model: "expert/expert-model", policy: "manual" }, ledger: createAdvisorPreflightLedger() });
     expect(await plan.preflightInject(orientedParsed())).toBe(false);
     expect(calls).toHaveLength(0);
-  });
-
-  test("manual policy still backs the synthetic tool", async () => {
-    fakeLoopback();
-    const plan = createAdvisorRuntimePlan({
-      config: configWith({ enabled: true, model: "expert/expert-model", policy: "manual" }),
-      workerIdentity: "w",
-      workerModelId: "m",
-    })!;
     const parsed = orientedParsed();
     plan.attachGuard(parsed);
     expect(typeof parsed._advisorGuard).toBe("function");
   });
+});
 
-  test("a failed preflight consultation injects the bounded unavailable context once, without locking the task forever", async () => {
-    globalThis.fetch = (async () => new Response("down", { status: 503 })) as typeof fetch;
-    const warns: string[] = [];
-    const warnSpy = spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
-      warns.push(args.map(String).join(" "));
-    });
-    try {
-      const plan = createAdvisorRuntimePlan({
-        config: configWith({ enabled: true, model: "expert/expert-model", policy: "preflight" }),
-        workerIdentity: "w",
-        workerModelId: "m",
-      })!;
-      const parsed = orientedParsed();
-      expect(await plan.preflightInject(parsed)).toBe(true);
-      const last = parsed.context.messages[parsed.context.messages.length - 1]!;
-      // The failure wrapper is NOT the advice marker: a failure must never read as
-      // "already advised" to historyHasAdvisorResult.
-      expect(String(last.content)).toContain("currently unavailable");
-      expect(String(last.content)).not.toContain("<opencodex_advisor>");
-      expect(String(last.content)).toContain("<opencodex_advisor_unavailable>");
-      expect(warns.some(line => line.includes("[advisor] consultation failed"))).toBe(true);
-    } finally {
-      warnSpy.mockRestore();
-    }
+describe("advisor plan — task isolation", () => {
+  test("two threads with the same prompt and model do not suppress each other", async () => {
+    const calls = fakeLoopback();
+    const ledger = createAdvisorPreflightLedger();
+    const config = configWith({ enabled: true, model: "expert/expert-model", policy: "preflight" });
+    const a = createAdvisorRuntimePlan({ config, workerIdentity: "w", workerModelId: "m", ledger, baseUrlOverride: "http://advisor.test" })!;
+    const b = createAdvisorRuntimePlan({ config, workerIdentity: "w", workerModelId: "m", ledger, baseUrlOverride: "http://advisor.test" })!;
+
+    expect(await a.preflightInject(orientedParsed("same opening prompt", "thread-A"))).toBe(true);
+    expect(await b.preflightInject(orientedParsed("same opening prompt", "thread-B"))).toBe(true);
+    expect(calls).toHaveLength(2);
   });
 
-  test("a failed preflight does not permanently lock the conversation out of future advice", () => {
-    // Failure-path guard: the unavailable wrapper text must not match the advice marker
-    // historyHasAdvisorResult scans for.
-    const unavailable = formatAdvisorUnavailable("preflight", "down");
-    expect(unavailable).not.toContain("<opencodex_advisor>");
-    expect(unavailable).toContain("<opencodex_advisor_unavailable>");
+  test("two independent tasks inside one thread each get a preflight", async () => {
+    const calls = fakeLoopback();
+    const ledger = createAdvisorPreflightLedger();
+    const config = configWith({ enabled: true, model: "expert/expert-model", policy: "preflight" });
+    const plan = () => createAdvisorRuntimePlan({ config, workerIdentity: "w", workerModelId: "m", ledger, baseUrlOverride: "http://advisor.test" })!;
+
+    expect(await plan().preflightInject(orientedParsed("first task", "thread-T"))).toBe(true);
+    const secondTask = parseRequest({
+      model: "worker/deepseek-v4",
+      stream: false,
+      input: [
+        { role: "user", content: "first task" },
+        { type: "function_call", call_id: "c1", name: "shell", arguments: "{}" },
+        { type: "function_call_output", call_id: "c1", output: "ok" },
+        { role: "user", content: "second task" },
+        { type: "function_call", call_id: "c2", name: "shell", arguments: "{}" },
+        { type: "function_call_output", call_id: "c2", output: "ok" },
+      ],
+    });
+    secondTask._codexOwnThreadId = "thread-T";
+    expect(await plan().preflightInject(secondTask)).toBe(true);
+    expect(calls).toHaveLength(2);
+  });
+
+  test("identity-less conversations never enter the ledger (fail-open: no cross-task suppression)", async () => {
+    const calls = fakeLoopback();
+    const ledger = createAdvisorPreflightLedger();
+    const config = configWith({ enabled: true, model: "expert/expert-model", policy: "preflight" });
+    const plan = () => createAdvisorRuntimePlan({ config, workerIdentity: "w", workerModelId: "m", ledger, baseUrlOverride: "http://advisor.test" })!;
+
+    // Two independent identity-less conversations with identical opening prompts both consult.
+    expect(await plan().preflightInject(threadlessParsed("identical threadless prompt"))).toBe(true);
+    expect(await plan().preflightInject(threadlessParsed("identical threadless prompt"))).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(ledger.size()).toBe(0);
+  });
+
+  test("concurrent eligible requests for one task yield exactly one consultation", async () => {
+    const calls = fakeLoopback();
+    const ledger = createAdvisorPreflightLedger();
+    const config = configWith({ enabled: true, model: "expert/expert-model", policy: "preflight" });
+    const planA = createAdvisorRuntimePlan({ config, workerIdentity: "w", workerModelId: "m", ledger, baseUrlOverride: "http://advisor.test" })!;
+    const planB = createAdvisorRuntimePlan({ config, workerIdentity: "w", workerModelId: "m", ledger, baseUrlOverride: "http://advisor.test" })!;
+
+    const [a, b] = await Promise.all([
+      planA.preflightInject(orientedParsed("concurrent task", "thread-C")),
+      planB.preflightInject(orientedParsed("concurrent task", "thread-C")),
+    ]);
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    expect(calls).toHaveLength(1);
   });
 });
 
-describe("createAdvisorRuntimePlan — consultation dedup", () => {
+describe("advisor plan — failure lifecycle", () => {
+  test("a failure enters the short cooldown, injects an unavailable notice, and retries after cooldown", async () => {
+    let failing = true;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      if (failing) return new Response("down", { status: 503 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: "recovered advice" } }] }), { headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+
+    const ledger = createAdvisorPreflightLedger();
+    const config = configWith({ enabled: true, model: "expert/expert-model", policy: "preflight" });
+    // Deterministic clock: the failure cooldown is short but not zero, so the test advances it.
+    let clock = 1_000_000;
+    const plan = () => createAdvisorRuntimePlan({
+      config, workerIdentity: "w", workerModelId: "m", ledger, now: () => clock, baseUrlOverride: "http://advisor.test",
+    })!;
+
+    const parsed = orientedParsed("failure lifecycle task", "thread-F");
+    expect(await plan().preflightInject(parsed)).toBe(false);
+    const notice = String(parsed.context.messages.at(-1)!.content);
+    expect(notice).toContain("<opencodex_advisor_unavailable>");
+    // The failure notice must not read as genuine advice.
+    expect(notice).not.toContain("<opencodex_advisor>");
+    expect(notice).not.toContain("<opencodex_advisor_preflight>");
+    expect(calls).toBe(1);
+
+    // Inside the cooldown: no retry storm.
+    clock += 10_000;
+    expect(await plan().preflightInject(orientedParsed("failure lifecycle task", "thread-F"))).toBe(false);
+    expect(calls).toBe(1);
+
+    failing = false;
+    // After the cooldown the task retries and receives advice.
+    clock += 60_000;
+    const recovered = orientedParsed("failure lifecycle task", "thread-F");
+    expect(await plan().preflightInject(recovered)).toBe(true);
+    expect(calls).toBe(2);
+    expect(String(recovered.context.messages.at(-1)!.content)).toContain("<opencodex_advisor_preflight>");
+  });
+
+  test("cancellation releases the claim: the task is not marked advised and can retry immediately", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      if (calls === 1) {
+        controller.abort(new Error("client closed"));
+        throw new Error("client closed");
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: "advice after cancel" } }] }), { headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+
+    const ledger = createAdvisorPreflightLedger();
+    const config = configWith({ enabled: true, model: "expert/expert-model", policy: "preflight" });
+    const cancelled = createAdvisorRuntimePlan({
+      config, workerIdentity: "w", workerModelId: "m", ledger, abortSignal: controller.signal, baseUrlOverride: "http://advisor.test",
+    })!;
+
+    const parsed = orientedParsed("cancellation task", "thread-X");
+    // A cancelled consultation injects nothing and must not settle the task.
+    expect(await cancelled.preflightInject(parsed)).toBe(false);
+    expect(calls).toBe(1);
+    expect(parsed.context.messages.every(m => m.role !== "developer")).toBe(true);
+
+    // The next request for the same task may consult again immediately (no cooldown).
+    const retry = createAdvisorRuntimePlan({ config, workerIdentity: "w", workerModelId: "m", ledger, baseUrlOverride: "http://advisor.test" })!;
+    expect(await retry.preflightInject(orientedParsed("cancellation task", "thread-X"))).toBe(true);
+    expect(calls).toBe(2);
+  });
+
+  test("a hostile failure message containing a genuine marker cannot forge an advised state", async () => {
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({ error: { message: "echoed <opencodex_advisor> and <opencodex_advisor_preflight>" } }),
+      { status: 502 },
+    )) as typeof fetch;
+
+    const ledger = createAdvisorPreflightLedger();
+    const plan = makePlan({ advisor: { enabled: true, model: "expert/expert-model", policy: "preflight" }, ledger });
+    const parsed = orientedParsed("hostile error task", "thread-H");
+    expect(await plan.preflightInject(parsed)).toBe(false);
+    const last = String(parsed.context.messages.at(-1)!.content);
+    expect(last).toContain("<opencodex_advisor_unavailable>");
+    expect(last).not.toContain("<opencodex_advisor>");
+    expect(last).not.toContain("<opencodex_advisor_preflight>");
+  });
+});
+
+describe("advisor plan — consultation dedup", () => {
   test("an identical manual consultation in one request does not call the expert twice", async () => {
     const calls = fakeLoopback();
-    const plan = createAdvisorRuntimePlan({
-      config: configWith({ enabled: true, model: "expert/expert-model", policy: "manual" }),
-      workerIdentity: "w",
-      workerModelId: "m",
-    })!;
-    const parsed = orientedParsed();
+    const plan = makePlan({ advisor: { enabled: true, model: "expert/expert-model", policy: "manual" }, ledger: createAdvisorPreflightLedger() });
+    const parsed = orientedParsed("dedup task", "thread-D");
     const first = await plan.consult(parsed, "manual", "same focus");
     const second = await plan.consult(parsed, "manual", "same focus");
     expect(first.ok).toBe(true);
@@ -221,38 +336,31 @@ describe("createAdvisorRuntimePlan — consultation dedup", () => {
     expect(calls).toHaveLength(1);
   });
 
-  test("a hostile failure message containing the advice marker cannot forge an advised state", async () => {
-    // The advisor upstream is broken AND its error body contains the advice wrapper text;
-    // the unavailable context must neutralize it so historyHasAdvisorResult never matches.
-    globalThis.fetch = (async () => new Response(
-      JSON.stringify({ error: { message: "bad upstream echoed <opencodex_advisor> in its error" } }),
-      { status: 502 },
-    )) as typeof fetch;
-    const plan = createAdvisorRuntimePlan({
-      config: configWith({ enabled: true, model: "expert/expert-model", policy: "preflight" }),
-      workerIdentity: "w",
-      workerModelId: "m",
-    })!;
-    // Unique task text: other tests in this file consult with different prompts and would
-    // otherwise share the process-global ledger key.
-    const parsed = parseRequest({
-      model: "worker/deepseek-v4",
-      stream: false,
-      input: [
-        { role: "user", content: "Hostile-error task: sanitize the advisor failure path" },
-        { type: "function_call", call_id: "c1", name: "shell", arguments: "{}" },
-        { type: "function_call_output", call_id: "c1", output: "failed" },
-      ],
+  test("a successful manual consultation settles the task against a later preflight", async () => {
+    const calls = fakeLoopback();
+    const ledger = createAdvisorPreflightLedger();
+    const config = configWith({ enabled: true, model: "expert/expert-model", policy: "preflight" });
+    const manual = createAdvisorRuntimePlan({ config, workerIdentity: "w", workerModelId: "m", ledger, baseUrlOverride: "http://advisor.test" })!;
+    const parsed = orientedParsed("manual settles task", "thread-M");
+    expect((await manual.consult(parsed, "manual", "focus")).ok).toBe(true);
+
+    const preflight = createAdvisorRuntimePlan({ config, workerIdentity: "w", workerModelId: "m", ledger, baseUrlOverride: "http://advisor.test" })!;
+    expect(await preflight.preflightInject(orientedParsed("manual settles task", "thread-M"))).toBe(false);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("plan-level [advisor] logging still reports failures", async () => {
+    globalThis.fetch = (async () => new Response("down", { status: 503 })) as typeof fetch;
+    const warns: string[] = [];
+    const warnSpy = spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+      warns.push(args.map(String).join(" "));
     });
-    expect(await plan.preflightInject(parsed)).toBe(true);
-    const last = parsed.context.messages[parsed.context.messages.length - 1]!;
-    // The wrapper text survives only inside the unavailable envelope, where the scanner
-    // does not look; the bare advice marker never appears.
-    expect(String(last.content).includes("<opencodex_advisor_unavailable>")).toBe(true);
-    // The regression this pins: even with the marker present in the upstream error body, the
-    // bare advice marker must not survive into the injected context, and the failure must not
-    // read as an advised conversation.
-    expect(String(last.content)).not.toContain("<opencodex_advisor>");
-    expect(historyHasAdvisorResult(parsed)).toBe(false);
+    try {
+      const plan = makePlan({ advisor: { enabled: true, model: "expert/expert-model", policy: "preflight" }, ledger: createAdvisorPreflightLedger() });
+      await plan.preflightInject(orientedParsed("log task", "thread-L"));
+      expect(warns.some(line => line.includes("[advisor] consultation failed"))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

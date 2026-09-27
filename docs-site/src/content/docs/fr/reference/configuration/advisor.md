@@ -54,6 +54,10 @@ Gérez-le via la page **Advisor** du tableau de bord ou
 
 ## Ce que voit le conseiller
 
+**Transfert de données entre fournisseurs :** lorsque le fournisseur du conseiller diffère de celui du worker, la charge utile de consultation envoie la conversation de tâche et les résultats d'outils à un second fournisseur de modèle. N'activez pas le conseiller avec un fournisseur auquel vous ne confiez pas ce contenu.
+
+OpenCodex n'injecte jamais ses propres identifiants dans la charge utile (aucune clé d'API de fournisseur, aucun élément Authorization/OAuth, aucun secret backend, aucune variable d'environnement). La chaîne de raisonnement n'est jamais transférée, et le contenu chiffré propre au fournisseur n'est jamais déchiffré ni transmis. **Le contenu de tâche n'est pas généralement expurgé de secrets** : un identifiant collé dans la tâche, ou un jeton imprimé par un outil, est transmis tel quel — OpenCodex n'exécute pas de DLP sur la conversation.
+
 La charge utile de consultation est construite exclusivement à partir de la conversation analysée
 que le modèle du worker a déjà le droit de voir : la tâche utilisateur, la conversation, les
 appels d'outils et leurs résultats, le catalogue d'outils du worker et l'identité des deux

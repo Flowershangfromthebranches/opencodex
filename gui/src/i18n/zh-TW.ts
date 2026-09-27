@@ -125,7 +125,7 @@ export const zhTW: Record<TKey, string> = {
   "advisor.loadFailed": "無法載入顧問設定。代理是否在執行？",
   "advisor.warning.noModel": "已啟用但尚未設定專家模型 — 諮詢將會失敗。",
   "advisor.costNote": "每次諮詢都是真實的額外模型呼叫，會以顧問模型（而非 Worker 模型）計入用量。",
-  "advisor.privacyNote": "跨 provider 提示：諮詢會把任務對話與工具結果傳送給設定的顧問 provider，它可能與 Worker 的 provider 不同。請勿對不信任其處理該任務內容的 provider 啟用顧問。",
+  "advisor.privacyNote": "跨 provider 提示：諮詢會把任務對話與工具結果傳送給設定的顧問 provider，它可能與 Worker 的 provider 不同。任務內容不做憑證脫敏 —— 請不要對不信任該任務內容的 provider 啟用顧問。",
   "nav.logs": "日誌與除錯",
   "nav.usage": "用量",
   "common.github": "GitHub",

@@ -56,11 +56,14 @@ Manage it with the dashboard **Advisor** page or
 **Cross-provider data transfer:** when the advisor provider differs from the worker's provider,
 the consultation payload sends the task conversation and tool results to a second model
 provider. Do not enable the advisor with a provider you do not trust with this task content.
-The proxy never injects credentials, authorization or OAuth material, or environment secrets
-into the payload; chain-of-thought is never transferred; encrypted provider-only content is
-never decrypted or forwarded. Task content itself — including anything the task text or tool
-results contain — is forwarded as-is: do not enable the advisor on tasks whose content is too
-sensitive for the advisor provider.
+
+OpenCodex never injects its own credentials into the payload: no provider API keys, no
+authorization or OAuth material, no backend-only secrets, and no environment variables.
+Chain-of-thought is never transferred, and encrypted provider-only content is never decrypted or
+forwarded. **Task content is not generally secret-redacted**: a credential someone pasted into
+the task, or a token a tool printed in its output, is forwarded as-is — a proxy cannot reliably
+tell a secret from a string, and OpenCodex does not run DLP over the conversation. Do not enable
+the advisor on tasks whose content is too sensitive for the advisor provider.
 
 The consultation payload is built from the parsed conversation the worker model is already
 allowed to see: the user task, the conversation, tool calls and their results, the worker's tool
