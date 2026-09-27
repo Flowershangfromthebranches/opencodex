@@ -108,7 +108,7 @@ export const vi: Record<TKey, string> = {
   "nav.combos": "Combos",
   "nav.subagents": "Subagents",
   "nav.advisor": "Cố vấn",
-  "advisor.description": "Một mô hình chuyên gia độc lập xem xét nhiệm vụ của worker và trả về lời khuyên. OpenCodex tự thực hiện việc tư vấn: worker có thể gọi công cụ advisor tổng hợp; chính sách preflight còn tự động thử một lần tư vấn cho mỗi nhiệm vụ — sau khi nhiệm vụ tạo ra bằng chứng định hướng (một lệnh gọi công cụ của trợ lý hoặc một kết quả công cụ sau tin nhắn người dùng mới nhất), không cần worker hợp tác.",
+  "advisor.description": "Một mô hình chuyên gia độc lập xem xét nhiệm vụ của worker và trả về lời khuyên. OpenCodex tự thực hiện việc tư vấn: worker có thể gọi công cụ advisor tổng hợp; chính sách preflight còn tự động thử một lần tư vấn cho mỗi nhiệm vụ — sau khi nhiệm vụ tạo ra bằng chứng định hướng (một lệnh gọi công cụ của trợ lý hoặc một kết quả công cụ sau tin nhắn người dùng mới nhất), không cần worker hợp tác. Lần thử được khử trùng lặp theo nhiệm vụ đối với máy khách có định danh hội thoại ổn định; máy khách không có định danh có thể thấy thêm một lần.",
   "advisor.enabled": "Bật cố vấn",
   "advisor.model": "Mô hình chuyên gia",
   "advisor.modelPlaceholder": "vd. gpt-6-astra hoặc anthropic/claude-sonnet-4-6",

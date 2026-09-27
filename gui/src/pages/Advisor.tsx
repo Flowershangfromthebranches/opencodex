@@ -93,7 +93,6 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             />
             <span className="slider" aria-hidden="true" />
           </label>
-          {dto.warning === "advisor_enabled_without_model" && <span className="muted">{t("advisor.warning.noModel")}</span>}
         </div>
         <div style={rowStyle}>
           <label htmlFor="advisor-model" style={labelStyle}>{t("advisor.model")}</label>

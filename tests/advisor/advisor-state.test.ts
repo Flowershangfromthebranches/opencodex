@@ -1,6 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { parseRequest } from "../../src/responses/parser";
-import { expandPreviousResponseInput, rememberResponseState } from "../../src/responses/state";
+import {
+  clearResponseStateMemoryForTests,
+  expandPreviousResponseInput,
+  rememberResponseState,
+} from "../../src/responses/state";
 import { ADVISOR_TOOL_NAME } from "../../src/server/responses/advisor-slot";
 import { ADVISOR_RESULT_TOOL_NAME } from "../../src/advisor/state";
 import {
@@ -22,6 +26,12 @@ function parsedWithInput(input: unknown, options?: { threadId?: string }) {
   if (options?.threadId) parsed._codexOwnThreadId = options.threadId;
   return parsed;
 }
+
+// The continuation regression below stores a response in the process-global response-state
+// store; clear it between tests so no fixture can answer a later `previous_response_id`.
+afterEach(() => {
+  clearResponseStateMemoryForTests();
+});
 
 const oriented = (text: string, threadId?: string) => parsedWithInput([
   { role: "user", content: text },
@@ -165,6 +175,40 @@ describe("advisor preflight ledger — atomic claim", () => {
     expect(ledger.claim("oldest-inflight", 1).state).toBe("inflight");
     expect(ledger.claim("oldest-inflight", 1).token).toBeUndefined();
     void oldest;
+  });
+
+  test("markAdvised cannot grow the table past the cap either", () => {
+    const ledger = createAdvisorPreflightLedger();
+    // 512 live claims: nothing to reclaim, so a new key's advice record is skipped rather than
+    // evicting a running claim (the same fail-open rule claim() follows).
+    for (let i = 0; i < 512; i += 1) ledger.claim(`live-${i}`, 0);
+    expect(ledger.size()).toBe(512);
+    ledger.markAdvised("brand-new-task", 1);
+    expect(ledger.size()).toBe(512);
+    // The record was skipped, so the key is still free rather than silently suppressed: a claim
+    // for it reports the table's saturation, not "complete".
+    expect(ledger.claim("brand-new-task", 2).state).toBe("saturated");
+
+    // With settled entries present, the record is admitted by reclaiming one of them.
+    const ledger2 = createAdvisorPreflightLedger();
+    ledger2.claim("live", 0);
+    for (let i = 0; i < 511; i += 1) {
+      const claim = ledger2.claim(`settled-${i}`, 0);
+      ledger2.complete(`settled-${i}`, claim.token!, 0);
+    }
+    expect(ledger2.size()).toBe(512);
+    ledger2.markAdvised("new-task", 1);
+    expect(ledger2.size()).toBe(512);
+    expect(ledger2.claim("new-task", 2).state).toBe("complete");
+  });
+
+  test("markAdvised settles an existing live claim in place (no growth)", () => {
+    const ledger = createAdvisorPreflightLedger();
+    const claim = ledger.claim("k", 0);
+    expect(claim.state).toBe("claimed");
+    ledger.markAdvised("k", 1);
+    expect(ledger.size()).toBe(1);
+    expect(ledger.claim("k", 2).state).toBe("complete");
   });
 });
 
