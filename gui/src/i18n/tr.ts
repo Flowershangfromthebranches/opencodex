@@ -109,7 +109,7 @@ export const tr: Record<TKey, string> = {
   "nav.combos": "Kombolar",
   "nav.subagents": "Alt Ajanlar",
   "nav.advisor": "Danışman",
-  "advisor.description": "Worker'ın görevini inceleyen ve öneri döndüren bağımsız bir uzman model. Danışmayı OpenCodex yürütür: worker sentetik advisor aracını çağırabilir; preflight politikası ayrıca görev yönelim kanıtı ürettiğinde (son kullanıcı mesajından sonra bir asistan araç çağrısı veya araç sonucu) görev başına bir otomatik danışma dener (worker iş birliği gerekmez). Deneme, kararlı bir konuşma kimliği taşıyan istemciler için görev başına tekilleştirilir; kimliği olmayan bir istemci, uygun olan her yeni istekte bir deneme daha görebilir.",
+  "advisor.description": "Worker'ın görevini inceleyen ve öneri döndüren bağımsız bir uzman model. Danışmayı OpenCodex yürütür: worker sentetik advisor aracını çağırabilir; preflight politikası ayrıca görev yönelim kanıtı ürettiğinde (son kullanıcı mesajından sonra bir asistan araç çağrısı veya araç sonucu) görev başına bir otomatik danışma dener (worker iş birliği gerekmez). Deneme, kararlı bir konuşma kimliği taşıyan istemciler için görev başına tekilleştirilir; kimliği olmayan bir istemci için bu tekilleştirme uygulanmaz ve uygun olan her istekte danışma yeniden gerçekleşebilir.",
   "advisor.enabled": "Danışman etkin",
   "advisor.model": "Uzman model",
   "advisor.modelPlaceholder": "örn. gpt-6-astra veya anthropic/claude-sonnet-4-6",

@@ -109,7 +109,7 @@ export const de: Record<TKey, string> = {
   "nav.subagents": "Sub-Agenten",
 
   "nav.advisor": "Berater",
-  "advisor.description": "Ein unabhängiges Expertenmodell, das die Aufgabe des Workers prüft und Rat zurückgibt. Die Konsultation gehört OpenCodex: Der Worker kann das synthetische Advisor-Tool aufrufen, und die Preflight-Politik versucht zusätzlich automatisch eine Konsultation pro Aufgabe — sobald die Aufgabe Orientierungsbelege geliefert hat (ein Tool-Aufruf des Assistenten oder ein Tool-Ergebnis nach der letzten Nutzernachricht) und ohne Mitwirkung des Workers. Der Versuch wird für Clients mit einer stabilen Konversationsidentität pro Aufgabe dedupliziert; ein Client ohne eine solche kann einen weiteren Versuch erleben.",
+  "advisor.description": "Ein unabhängiges Expertenmodell, das die Aufgabe des Workers prüft und Rat zurückgibt. Die Konsultation gehört OpenCodex: Der Worker kann das synthetische Advisor-Tool aufrufen, und die Preflight-Politik versucht zusätzlich automatisch eine Konsultation pro Aufgabe — sobald die Aufgabe Orientierungsbelege geliefert hat (ein Tool-Aufruf des Assistenten oder ein Tool-Ergebnis nach der letzten Nutzernachricht) und ohne Mitwirkung des Workers. Der Versuch wird für Clients mit einer stabilen Konversationsidentität pro Aufgabe dedupliziert; ein Client ohne eine solche überspringt diese Deduplizierung und kann den Versuch bei jeder neu geeigneten Anfrage erneut erleben.",
   "advisor.enabled": "Berater aktiviert",
   "advisor.model": "Expertenmodell",
   "advisor.modelPlaceholder": "z. B. gpt-6-astra oder anthropic/claude-sonnet-4-6",

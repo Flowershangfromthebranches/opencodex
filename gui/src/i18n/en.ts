@@ -110,7 +110,7 @@ export const en = {
   "nav.combos": "Combos",
   "nav.subagents": "Subagents",
   "nav.advisor": "Advisor",
-  "advisor.description": "An independent expert model that reviews the worker's task and returns advice. OpenCodex owns the consultation: the worker can call the synthetic advisor tool, and policy preflight additionally attempts one automatic consultation per task without any worker cooperation — firing once the task has produced orientation evidence (an assistant tool call or a tool result after the latest user message). The attempt is deduplicated per task for clients that carry a stable conversation identity; a client without one may see an additional attempt.",
+  "advisor.description": "An independent expert model that reviews the worker's task and returns advice. OpenCodex owns the consultation: the worker can call the synthetic advisor tool, and policy preflight additionally attempts one automatic consultation per task without any worker cooperation — firing once the task has produced orientation evidence (an assistant tool call or a tool result after the latest user message). The attempt is deduplicated per task for clients that carry a stable conversation identity; a client without one skips that dedup and may receive the attempt again on every newly eligible request.",
   "advisor.enabled": "Advisor enabled",
   "advisor.model": "Expert model",
   "advisor.modelPlaceholder": "e.g. gpt-6-astra or anthropic/claude-sonnet-4-6",
