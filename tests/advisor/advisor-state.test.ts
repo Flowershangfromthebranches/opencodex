@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { parseRequest } from "../../src/responses/parser";
 import {
   conversationPreflightKey,
+  conversationThreadId,
   createAdvisorPreflightLedger,
   firstUserText,
   hasOrientationEvidence,
@@ -118,5 +119,20 @@ describe("firstUserText", () => {
       { role: "user", content: "the actual task" },
     ]);
     expect(firstUserText(parsed)).toBe("the actual task");
+  });
+});
+
+describe("conversation thread identity", () => {
+  test("thread id takes precedence; two conversations with the same opening prompt are isolated", () => {
+    const a = conversationPreflightKey("same opening prompt", "deepseek-v4", "thread-A");
+    const b = conversationPreflightKey("same opening prompt", "deepseek-v4", "thread-B");
+    expect(a).not.toBe(b);
+    expect(conversationThreadId({ _codexOwnThreadId: "own", _clientThreadId: "parent" })).toBe("own");
+    expect(conversationThreadId({ _clientThreadId: "parent" })).toBe("parent");
+    expect(conversationThreadId({})).toBeUndefined();
+  });
+
+  test("threadless conversations still fall back to the first-user-text hash", () => {
+    expect(conversationPreflightKey("same prompt", "m")).toBe(conversationPreflightKey("same prompt", "m"));
   });
 });

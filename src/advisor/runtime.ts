@@ -21,6 +21,7 @@ import { advisorRunnable, resolveAdvisorSettings } from "./settings";
 import { consultAdvisor } from "./consult";
 import {
   conversationPreflightKey,
+  conversationThreadId,
   createAdvisorPreflightLedger,
   firstUserText,
   hasOrientationEvidence,
@@ -123,12 +124,12 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
     // does NOT match — a failure is not advice and must not permanently suppress preflight.
     if (result.ok) {
       preflightLedger.mark(
-        conversationPreflightKey(firstUserText(parsed), deps.workerModelId),
+        ledgerKey(parsed),
         reason,
       );
     } else if (reason === "preflight") {
       preflightLedger.mark(
-        `${conversationPreflightKey(firstUserText(parsed), deps.workerModelId)}:failed`,
+        ledgerKey(parsed, ":failed"),
         "manual",
       );
     }
@@ -146,19 +147,34 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
     };
   };
 
+  // Task identity for the ledger: the client's thread id when the surface provides one, else
+  // the hashed first user message. Thread-keyed conversations are isolated exactly; the
+  // threadless fallback shares a key only between conversations that open with an identical
+  // first prompt (documented limitation).
+  const ledgerKey = (parsed: OcxParsedRequest, suffix = ""): string =>
+    conversationPreflightKey(firstUserText(parsed), deps.workerModelId, conversationThreadId(parsed)) + suffix;
+
   const preflightInject = async (parsed: OcxParsedRequest): Promise<boolean> => {
     if (settings.policy !== "preflight" || preflightUsed) return false;
     // One guaranteed consultation per task: a conversation that already carries advice (manual
     // or preflight, including replays) and conversations without orientation evidence skip.
     if (historyHasAdvisorResult(parsed)) return false;
     if (!hasOrientationEvidence(parsed)) return false;
-    const key = conversationPreflightKey(firstUserText(parsed), deps.workerModelId);
     // A successful consultation suppresses retries for the ledger TTL; a failed one suppresses
     // them under its own key, which expires on the same clock so the task retries once the
     // advisor recovers instead of being locked out for the conversation's lifetime.
-    if (preflightLedger.has(key) || preflightLedger.has(`${key}:failed`)) return false;
+    if (preflightLedger.has(ledgerKey(parsed)) || preflightLedger.has(ledgerKey(parsed, ":failed"))) return false;
     preflightUsed = true;
     const outcome = await runConsultation(parsed, "preflight", undefined);
+    // Injection authority: preflight advice rides a DEVELOPER message on purpose. A tool result
+    // would require a paired synthetic tool call the worker never made — fabricating one is an
+    // invalid conversation for several providers (Anthropic rejects unpaired tool results) and
+    // would corrupt continuation state. The developer role is the Responses protocol's
+    // operator-instruction channel, which is what an automatic runtime consultation is; the
+    // message text explicitly denies it system/user authority, and the advice body carries the
+    // <opencodex_advisor> wrapper so downstream logic treats it as advisory data. Lowering this
+    // to a protocol-level "consultation result" item is a future orchestration improvement, not
+    // a PR1 change.
     parsed.context.messages = [
       ...parsed.context.messages,
       {

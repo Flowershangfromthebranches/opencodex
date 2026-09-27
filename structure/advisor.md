@@ -53,8 +53,10 @@ provider credentials.
 
 ## Context and safety boundaries
 
-The advisor payload is built exclusively from the parsed conversation the model is already
-allowed to see: user task, conversation, tool calls and their results, the worker's tool catalog,
+**Cross-provider data transfer is the feature's documented cost:** a consultation sends the
+task conversation and tool results to the configured advisor provider, which may differ from the
+worker's provider — the GUI, docs, and config description must say so. The payload is built
+exclusively from the parsed conversation the model is already allowed to see: user task, conversation, tool calls and their results, the worker's tool catalog,
 and both model identities. Thinking/chain-of-thought parts are never included, encrypted
 provider content is never decrypted or forwarded, and failure text is redacted and bounded before
 it can reach any context. Advice is re-injected as identifiable
