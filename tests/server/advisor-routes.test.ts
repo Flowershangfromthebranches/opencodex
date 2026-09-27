@@ -154,4 +154,52 @@ describe("parseAdvisorSettingsPatch (strict validation)", () => {
     expect(saved).toHaveLength(0);
     expect((config as { advisor?: unknown }).advisor).toEqual({ enabled: true });
   });
+
+  test("model clearing: an empty value clears the model and reports not-runnable", async () => {
+    const config = baseConfig();
+    (config as { advisor?: unknown }).advisor = { enabled: true, model: "expert/gpt-6-astra" };
+    const { ctx, saved } = makeCtx(config, "PUT", { model: "" });
+    const response = await handleAdvisorRoutes(ctx);
+    expect(response!.status).toBe(200);
+    const body = await response!.json() as {
+      settings: { model: string; enabled: boolean };
+      runnable: boolean;
+      warning?: string;
+    };
+    // Clearing the model is a supported state, not a validation failure.
+    expect(body.settings.model).toBe("");
+    expect(body.settings.enabled).toBe(true);
+    expect(body.runnable).toBe(false);
+    // Enabled without a model is the state the GUI shows a warning for.
+    expect(body.warning).toBe("advisor_enabled_without_model");
+    expect(saved).toHaveLength(1);
+    expect((config as { advisor?: { model?: string } }).advisor?.model).toBe("");
+  });
+
+  test("model clearing: a whitespace-only value trims to an empty model and saves", async () => {
+    const config = baseConfig();
+    (config as { advisor?: unknown }).advisor = { enabled: false, model: "expert/gpt-6-astra" };
+    const { ctx, saved } = makeCtx(config, "PUT", { model: "   " });
+    const response = await handleAdvisorRoutes(ctx);
+    expect(response!.status).toBe(200);
+    const body = await response!.json() as { settings: { model: string } };
+    expect(body.settings.model).toBe("");
+    expect(saved).toHaveLength(1);
+    expect((config as { advisor?: { model?: string } }).advisor?.model).toBe("");
+  });
+
+  test("model validation still bounds the trimmed length at 200 characters", async () => {
+    const config = baseConfig();
+    const { ctx, saved } = makeCtx(config, "PUT", { model: `expert/${"m".repeat(200)}` });
+    const response = await handleAdvisorRoutes(ctx);
+    expect(response!.status).toBe(400);
+    const body = await response!.json() as { error: { code: string; message: string } };
+    expect(body.error.code).toBe("invalid_model");
+    // The message now describes the real contract (string + trimmed bound; empty clears).
+    expect(body.error.message).toContain("empty value clears");
+    expect(saved).toHaveLength(0);
+    // Exactly 200 trimmed characters is still accepted.
+    const okCtx = makeCtx(baseConfig(), "PUT", { model: "m".repeat(200) }).ctx;
+    expect((await handleAdvisorRoutes(okCtx))!.status).toBe(200);
+  });
 });

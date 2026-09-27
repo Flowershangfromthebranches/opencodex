@@ -114,12 +114,57 @@ describe("advisor preflight ledger — atomic claim", () => {
     expect(other.state).toBe("claimed");
   });
 
-  test("the ledger is bounded: oldest entries are evicted past the cap", () => {
+  test("the ledger stays bounded and never evicts a live claim to make room", () => {
     const ledger = createAdvisorPreflightLedger();
-    for (let i = 0; i < 600; i += 1) ledger.claim(`key-${i}`, i);
-    expect(ledger.size()).toBeLessThanOrEqual(512);
-    expect(ledger.claim("key-0", 600).state).toBe("claimed");
-    expect(ledger.claim("key-599", 600).state).toBe("inflight");
+    // 600 simultaneous tasks: the first 512 are admitted, the rest are refused rather than
+    // evicting an in-flight claim that is still the only guard for its task.
+    let saturated = 0;
+    for (let i = 0; i < 600; i += 1) {
+      const claim = ledger.claim(`key-${i}`, i);
+      if (claim.state === "saturated") saturated += 1;
+    }
+    expect(saturated).toBe(88);
+    expect(ledger.size()).toBe(512);
+    // Every admitted claim survived: the oldest is still in flight, not evicted.
+    expect(ledger.claim("key-0", 599).state).toBe("inflight");
+    expect(ledger.claim("key-511", 599).state).toBe("inflight");
+    // A refused task is refused deterministically, and can claim once room exists.
+    expect(ledger.claim("key-599", 599).state).toBe("saturated");
+  });
+
+  test("an expired claim is reclaimed before settled entries", () => {
+    const ledger = createAdvisorPreflightLedger();
+    // 511 long-lived successes (24h TTL) plus one in-flight claim (10-minute TTL), all at t=0.
+    for (let i = 0; i < 511; i += 1) {
+      const claim = ledger.claim(`settled-${i}`, 0);
+      ledger.complete(`settled-${i}`, claim.token!, 0);
+    }
+    ledger.claim("expiring", 0);
+    expect(ledger.size()).toBe(512);
+
+    // At t=11min the in-flight entry is expired while the successes are not.
+    const t = 11 * 60 * 1000;
+    expect(ledger.claim("newcomer", t).state).toBe("claimed");
+    expect(ledger.size()).toBe(512);
+    // The expired entry paid for the room: settled successes were left alone.
+    expect(ledger.claim("settled-0", t).state).toBe("complete");
+  });
+
+  test("live claims are preserved when settled entries exist", () => {
+    const ledger = createAdvisorPreflightLedger();
+    const oldest = ledger.claim("oldest-inflight", 0);
+    for (let i = 1; i < 512; i += 1) {
+      const claim = ledger.claim(`settled-${i}`, 0);
+      ledger.complete(`settled-${i}`, claim.token!, 0);
+    }
+    expect(ledger.size()).toBe(512);
+    // Room is made from settled entries; the live claim keeps ownership.
+    const newcomer = ledger.claim("newcomer", 1);
+    expect(newcomer.state).toBe("claimed");
+    expect(ledger.size()).toBe(512);
+    expect(ledger.claim("oldest-inflight", 1).state).toBe("inflight");
+    expect(ledger.claim("oldest-inflight", 1).token).toBeUndefined();
+    void oldest;
   });
 });
 
