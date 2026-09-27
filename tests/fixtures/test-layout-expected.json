@@ -1801,5 +1801,6 @@
   "advisor-consult.test.ts": "advisor",
   "advisor-plan.test.ts": "advisor",
   "advisor-responses-wiring.test.ts": "advisor",
-  "advisor-routes.test.ts": "server"
+  "advisor-routes.test.ts": "server",
+  "advisor-internal-authority.test.ts": "advisor"
 }
