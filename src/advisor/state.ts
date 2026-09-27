@@ -65,12 +65,33 @@ export function createAdvisorPreflightLedger(): AdvisorPreflightLedger {
 /**
  * Stable conversation fingerprint for preflight dedup.
  *
- * The first user message is the anchor every client preserves across the stateless full-history
- * requests of one task (and previous_response_id expansion replays it from stored state too), so
- * its content hash identifies the task without any per-conversation identifier on the wire.
+ * `threadId` is the primary identity: Codex sends per-thread headers, so two independent
+ * conversations never share a ledger entry. The fallback (a stateless client that sends no
+ * thread identity) hashes the first user message — stable within one task for full-history
+ * clients, but two threadless conversations that open with the same prompt share a key; that
+ * residual limitation is documented. The worker model id is always part of the key.
  */
-export function conversationPreflightKey(firstUserText: string, workerModelId: string): string {
-  return `djb2:${djb2(firstUserText)}:${djb2(workerModelId)}`;
+export function conversationPreflightKey(
+  firstUserText: string,
+  workerModelId: string,
+  threadId?: string,
+): string {
+  return threadId
+    ? `tid:${threadId}:${djb2(workerModelId)}`
+    : `djb2:${djb2(firstUserText)}:${djb2(workerModelId)}`;
+}
+
+/**
+ * The best stable conversation identity available on a parsed request: the client's own thread
+ * id when the surface provides one, then the shared parent thread id, then the Cursor
+ * conversation id. Undefined for clients that send no identity header.
+ */
+export function conversationThreadId(parsed: {
+  _codexOwnThreadId?: string;
+  _clientThreadId?: string;
+  _cursorConversationId?: string;
+}): string | undefined {
+  return parsed._codexOwnThreadId ?? parsed._clientThreadId ?? parsed._cursorConversationId;
 }
 
 export function firstUserText(parsed: { context: { messages: readonly { role: string; content: unknown }[] } }): string {

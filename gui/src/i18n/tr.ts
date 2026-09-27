@@ -124,6 +124,7 @@ export const tr: Record<TKey, string> = {
   "advisor.loadFailed": "Danışman ayarları yüklenemedi. Proxy çalışıyor mu?",
   "advisor.warning.noModel": "Etkin ancak uzman model yapılandırılmamış — danışmalar başarısız olacak.",
   "advisor.costNote": "Danışmalar gerçek ek model çağrılarıdır; kullanım, worker modeli değil danışman modeli altında görünür.",
+  "advisor.privacyNote": "Sağlayıcılar arası uyarı: Danışmalar, görev konuşmasını ve araç sonuçlarını yapılandırılmış danışman sağlayıcısına (worker'ın sağlayıcısından farklı olabilir) gönderir. Bu görev içeriğine güvenmediğiniz bir sağlayıcıda danışmanı etkinleştirmeyin.",
   "nav.logs": "Günlükler & Hata Ayıklama",
   "nav.usage": "Kullanım",
   "common.github": "GitHub",
