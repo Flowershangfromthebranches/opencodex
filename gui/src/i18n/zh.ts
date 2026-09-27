@@ -110,7 +110,7 @@ export const zh: Record<TKey, string> = {
   "nav.subagents": "子代理",
 
   "nav.advisor": "顾问",
-  "advisor.description": "独立的专家模型，审阅 Worker 的任务并返回建议。咨询由 OpenCodex 自己执行：Worker 可调用合成的 advisor 工具；preflight 策略还会在任务产出方向性证据（最新用户消息之后的助手工具调用或工具结果）后自动尝试一次咨询，无需 Worker 配合。",
+  "advisor.description": "独立的专家模型，审阅 Worker 的任务并返回建议。咨询由 OpenCodex 自己执行：Worker 可调用合成的 advisor 工具；preflight 策略还会在任务产出方向性证据（最新用户消息之后的助手工具调用或工具结果）后自动尝试一次咨询，无需 Worker 配合。该尝试对带有稳定会话标识的客户端按任务去重；没有稳定标识的客户端可能多触发一次。",
   "advisor.enabled": "启用顾问",
   "advisor.model": "专家模型",
   "advisor.modelPlaceholder": "例如 gpt-6-astra 或 anthropic/claude-sonnet-4-6",

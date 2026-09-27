@@ -110,7 +110,7 @@ export const ko: Record<TKey, string> = {
   "nav.subagents": "서브에이전트",
 
   "nav.advisor": "어드바이저",
-  "advisor.description": "Worker의 작업을 검토하고 조언을 반환하는 독립 전문가 모델입니다. 상담은 OpenCodex가 직접 실행하며, Worker는 합성 advisor 도구를 호출할 수 있고 preflight 정책은 작업이 방향 증거(최신 사용자 메시지 이후의 어시스턴트 도구 호출 또는 도구 결과)를 낸 뒤 한 번의 자동 상담을 시도합니다(워커 협력 불필요).",
+  "advisor.description": "Worker의 작업을 검토하고 조언을 반환하는 독립 전문가 모델입니다. 상담은 OpenCodex가 직접 실행하며, Worker는 합성 advisor 도구를 호출할 수 있고 preflight 정책은 작업이 방향 증거(최신 사용자 메시지 이후의 어시스턴트 도구 호출 또는 도구 결과)를 낸 뒤 한 번의 자동 상담을 시도합니다(워커 협력 불필요).이 시도는 안정적인 대화 식별자를 가진 클라이언트에서는 작업별로 중복 제거되지만, 식별자가 없는 클라이언트에서는 한 번 더 발생할 수 있습니다.",
   "advisor.enabled": "어드바이저 사용",
   "advisor.model": "전문가 모델",
   "advisor.modelPlaceholder": "예: gpt-6-astra 또는 anthropic/claude-sonnet-4-6",

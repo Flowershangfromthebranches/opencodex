@@ -189,6 +189,11 @@ export function createAdvisorPreflightLedger(): AdvisorPreflightLedger {
       if (owns(key, token, now)) entries.delete(key);
     },
     markAdvised(key, now = Date.now()) {
+      // Recording the FACT must respect the same cap as claiming: a key that is not present and a
+      // table holding nothing but live claims means no room, so the record is skipped rather than
+      // evicting a claim that is still running. Fail-open: at worst one extra automatic attempt.
+      const present = liveEntry(key, now) !== undefined;
+      if (!present && !makeRoom(now)) return;
       set(key, "success", now);
     },
     size() {

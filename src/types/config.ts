@@ -1010,7 +1010,8 @@ export interface OcxConfig {
    * `advisor` tool into routed worker turns, executes the configured expert model itself (loopback
    * through the normal routing authority, so the advisor may be ANY routable provider/model), and
    * reinjects the advice so the original worker continues. `policy: "preflight"` additionally
-   * guarantees at least one automatic consultation per task without any worker cooperation.
+   * attempts one automatic consultation per task without worker cooperation, once the task has
+   * produced orientation evidence.
    */
   advisor?: OcxAdvisorConfig;
   /** Vision sidecar: describe images via a gpt vision model so text-only models can "see" them. */
@@ -1533,8 +1534,9 @@ export interface OcxAdvisorConfig {
   effort?: "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
   /**
    * When the advisor is consulted. "manual" (default): only when the worker explicitly calls the
-   * synthetic `advisor` tool. "preflight": OpenCodex additionally guarantees at least one automatic
-   * consultation per task before the worker's first substantive turn.
+   * synthetic `advisor` tool. "preflight": OpenCodex additionally attempts one automatic
+   * consultation per task once the task has produced orientation evidence (an assistant tool call
+   * or a tool result after the latest user message).
    */
   policy?: "manual" | "preflight";
   /** Advisor fetch timeout (ms). Default 120000. */
