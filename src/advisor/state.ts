@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 /**
  * Conversation- and task-scoped advisor state.
  *
@@ -13,10 +15,17 @@
  *    it may be consulted once per request rather than risk two independent tasks suppressing
  *    each other through a shared guess.
  *
- * 3. PROVENANCE: "this task was already advised" is never inferred from a bare string. Manual
- *    advice counts only as a `toolResult` whose `toolName` is the synthetic advisor tool, and
- *    preflight advice only through the runtime-owned `<opencodex_advisor_preflight>` wrapper.
- *    Ordinary tool output, developer text, user text, and failure notices cannot forge it.
+ * 3. PROVENANCE, split by authority:
+ *    - MANUAL advice is verifiable history: a `toolResult` whose `toolName` is the synthetic
+ *      advisor tool and whose content carries the advice wrapper. Ordinary tool output, developer
+ *      text, user text, and failure notices can never match it.
+ *    - AUTOMATIC preflight dedup is NOT decided from history at all. The wrapper in the injected
+ *      developer message is informational (it tells the worker, and a human reading logs, where
+ *      the text came from); any client could echo or forge such a message, so the ledger below is
+ *      the authoritative source for "this task was already consulted" — `success`, `inflight`
+ *      and `cooldown` states. A conversation with no stable identity gets no ledger and therefore
+ *      fails open (at most one extra attempt), which is strictly safer than letting a forged
+ *      marker suppress the policy forever.
  *
  * Ledger entries are plain state records — no message bodies, no credentials. Every state is
  * bounded by entry count and its own TTL.
@@ -185,10 +194,23 @@ export function advisorConversationIdentity(parsed: {
 }
 
 /**
- * The current task boundary inside a conversation: how many user turns the history carries and
- * what the latest one says. A new user message moves the boundary (a new task gets its own
- * claim); the same turn re-sent by a stateless full-history client keeps the same boundary, and
- * a `previous_response_id` expansion replays the same user turns, so continuations dedup.
+ * Domain-separated SHA-256 digest. Task identity and suppression are CORRECTNESS boundaries, so a
+ * 32-bit non-cryptographic hash is not an acceptable primary digest: distinct tasks must not
+ * collide because of a short fold. The ledger stores only this digest, never the raw text, so a
+ * captured key reveals nothing about the conversation. The domain prefix keeps digests from
+ * different purposes apart even if their inputs coincide.
+ */
+function sha256Hex(domain: string, value: string, hexChars: number): string {
+  return createHash("sha256").update(`${domain}\0${value}`, "utf8").digest("hex").slice(0, hexChars);
+}
+
+/**
+ * The current task boundary inside a conversation: how many user turns the history carries and a
+ * digest of the FULL latest user text. A new user message moves the boundary (a new task gets its
+ * own claim); the same turn re-sent by a stateless full-history client keeps the same boundary,
+ * and a `previous_response_id` expansion replays the same user turns, so continuations dedup.
+ * The whole text participates — no truncation — so two tasks that share an opening prefix still
+ * get different boundaries.
  */
 export function advisorTaskBoundary(parsed: {
   context: { messages: readonly { role: string; content: unknown }[] };
@@ -200,13 +222,14 @@ export function advisorTaskBoundary(parsed: {
     userTurns += 1;
     lastUserText = contentText(message.content);
   }
-  return `t${userTurns}:${djb2(lastUserText.slice(0, 200))}`;
+  return `t${userTurns}:${sha256Hex("advisor-task-boundary", lastUserText, 32)}`;
 }
 
 /**
- * The ledger key: conversation identity + task boundary + worker model. Returns undefined when
- * the caller has no stable conversation identity — the caller then relies on request-scoped
- * dedup and genuine in-history provenance instead of a shared guess (documented fail-open).
+ * The ledger key: one domain-separated SHA-256 digest over conversation identity + task boundary
+ * + worker model. Returns undefined when the caller has no stable conversation identity — the
+ * caller then relies on request-scoped dedup and genuine in-history provenance instead of a
+ * shared guess (documented fail-open).
  */
 export function advisorLedgerKey(
   parsed: {
@@ -221,7 +244,8 @@ export function advisorLedgerKey(
 ): string | undefined {
   const identity = advisorConversationIdentity(parsed);
   if (!identity) return undefined;
-  return `cid:${djb2(identity)}:${advisorTaskBoundary(parsed)}:${djb2(workerModelId)}`;
+  const material = `${identity}\0${advisorTaskBoundary(parsed)}\0${workerModelId}`;
+  return `ak-${sha256Hex("advisor-task-key", material, 40)}`;
 }
 
 /** Text projection for string-or-parts content; used only for hashing, never transmitted. */
@@ -236,16 +260,11 @@ export function contentText(content: unknown): string {
     .join("");
 }
 
-function djb2(value: string): string {
-  let hash = 5381;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = ((hash << 5) + hash + value.charCodeAt(i)) | 0;
-  }
-  // Keep it positive and printable.
-  return (hash >>> 0).toString(36);
-}
-
-/** Runtime-owned preflight wrapper. Distinct from the manual advice wrapper on purpose. */
+/**
+ * Runtime-owned preflight wrapper, written into the injected developer message. INFORMATIONAL
+ * ONLY: it identifies the text for the worker and for logs, but it is not an authority — see the
+ * module header. The ledger decides whether an automatic consultation has already happened.
+ */
 export const ADVISOR_PREFLIGHT_MARKER = "<opencodex_advisor_preflight>";
 
 /** The synthetic advisor tool's wire name; kept in sync with the tool definition by test. */
@@ -255,32 +274,24 @@ export const ADVISOR_RESULT_TOOL_NAME = "advisor";
 export const ADVISOR_ADVICE_MARKER = "<opencodex_advisor>";
 
 /**
- * Detect an ALREADY-PRESENT advisor result in the conversation history — by PROVENANCE, never by
- * a bare string:
+ * Detect an ALREADY-PRESENT MANUAL advisor result in the conversation history — by provenance,
+ * never by a bare string: a `toolResult` whose `toolName` is the synthetic advisor tool AND whose
+ * content carries the advice wrapper. A shell/file/log result that merely contains the wrapper
+ * text is NOT an advisor result.
  *
- * - manual: a `toolResult` whose `toolName` is the synthetic advisor tool AND whose content
- *   carries the advice wrapper. A shell/file/log result that merely contains the wrapper text is
- *   NOT an advisor result.
- * - preflight: a developer message carrying the runtime-owned `<opencodex_advisor_preflight>`
- *   wrapper. Ordinary developer text that happens to contain `<opencodex_advisor>` is NOT an
- *   advisor result.
- *
- * Failure notices (`<opencodex_advisor_unavailable>`) match neither form and therefore never
- * suppress a later consultation.
+ * Developer messages are deliberately NOT inspected. The automatic preflight wrapper is
+ * informational: a client-echoed or client-forged developer message must not be able to suppress
+ * the runtime's own automatic consultation, so preflight authority lives in the ledger (see the
+ * module header). Failure notices (`<opencodex_advisor_unavailable>`) match nothing.
  */
-export function historyHasAdvisorResult(parsed: {
+export function historyHasManualAdvisorResult(parsed: {
   context: { messages: readonly { role: string; content?: unknown; toolName?: string }[] };
 }): boolean {
   for (let i = parsed.context.messages.length - 1; i >= 0; i -= 1) {
     const message = parsed.context.messages[i]!;
-    if (message.role === "toolResult") {
-      if (message.toolName !== ADVISOR_RESULT_TOOL_NAME) continue;
-      if (contentText(message.content).includes(ADVISOR_ADVICE_MARKER)) return true;
-      continue;
-    }
-    if (message.role === "developer") {
-      if (contentText(message.content).includes(ADVISOR_PREFLIGHT_MARKER)) return true;
-    }
+    if (message.role !== "toolResult") continue;
+    if (message.toolName !== ADVISOR_RESULT_TOOL_NAME) continue;
+    if (contentText(message.content).includes(ADVISOR_ADVICE_MARKER)) return true;
   }
   return false;
 }
