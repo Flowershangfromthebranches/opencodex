@@ -77,17 +77,18 @@ untrusted evidence — the advisor analyses them and never obeys them, because o
 instruction defines its role (defense in depth, not a claim that injection is solved). Thinking and
 chain-of-thought parts are never included, encrypted
 provider content is never decrypted or forwarded, and failure text is redacted and bounded before
-it can reach any context. Advice is re-injected as identifiable
-`<opencodex_advisor>`-wrapped content with no system authority: manual consultations arrive as
-tool results, preflight advice as a marked developer message.
+it can reach any context. Advice is re-injected as identifiable wrapper-tagged content with no
+system authority: manual consultations arrive as paired tool results carrying the
+`<opencodex_advisor>` wrapper, and preflight advice as a marked developer message carrying the
+`<opencodex_advisor_preflight>` wrapper.
 
 ## Provenance and the preflight claim
 
 "Already advised" is decided by PROVENANCE, never by scanning for a bare string — and only for
 MANUAL advice: a `toolResult` whose `toolName` is the synthetic advisor tool and whose content
 carries the `<opencodex_advisor>` wrapper. Automatic preflight is NOT decided from history at all;
-its dedup authority is the ledger (see "Provenance and the preflight claim" below), so a client
-cannot suppress the policy by echoing or forging a developer message.
+its dedup authority is the claim ledger described below, so a client cannot suppress the policy
+by echoing or forging a developer message.
 
 Ordinary tool output, developer text, user text, and failure notices (`<opencodex_advisor_unavailable>`)
 match nothing, so nothing a shell, log, or upstream error body prints can suppress or forge advice. The guard never composes failure prose itself: `AdvisorPlan.formatUnavailable` owns that
