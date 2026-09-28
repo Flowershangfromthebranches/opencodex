@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { createAdvisorRuntimePlan } from "../../src/advisor/runtime";
 import type { AdvisorPreflightLedger } from "../../src/advisor/state";
-import { createAdvisorPreflightLedger } from "../../src/advisor/state";
+import { advisorLedgerKey, createAdvisorPreflightLedger } from "../../src/advisor/state";
 import type { OcxConfig, OcxParsedRequest } from "../../src/types";
 import { parseRequest } from "../../src/responses/parser";
 
@@ -151,6 +151,120 @@ describe("advisor plan — consent gate", () => {
     })!;
     expect(await plan.preflightInject(orientedParsed("stale", "thread-stale"))).toBe(false);
     expect(calls).toHaveLength(0);
+  });
+
+  test("revoking consent after plan creation blocks a later manual consultation", async () => {
+    const calls = fakeLoopback();
+    const config = configWith({
+      enabled: true,
+      model: "expert/expert-model",
+      policy: "manual",
+      contextSharingConsent: "v1",
+    });
+    const plan = createAdvisorRuntimePlan({
+      config,
+      workerIdentity: "w",
+      workerModelId: "m",
+      baseUrlOverride: "http://advisor.test",
+    })!;
+    delete (config.advisor as { contextSharingConsent?: string }).contextSharingConsent;
+    const outcome = await plan.consult(orientedParsed(), "manual", "why is auth failing?");
+    expect(calls).toHaveLength(0);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.blocked).toBe("consent");
+    expect(outcome.content).toContain("no task content was sent");
+  });
+
+  test("revoking consent after plan creation skips preflight with no claim, injection, or cooldown", async () => {
+    const calls = fakeLoopback();
+    const ledger = createAdvisorPreflightLedger();
+    const config = configWith({
+      enabled: true,
+      model: "expert/expert-model",
+      policy: "preflight",
+      contextSharingConsent: "v1",
+    });
+    const plan = createAdvisorRuntimePlan({
+      config,
+      workerIdentity: "w",
+      workerModelId: "m",
+      ledger,
+      baseUrlOverride: "http://advisor.test",
+    })!;
+    delete (config.advisor as { contextSharingConsent?: string }).contextSharingConsent;
+    const parsed = orientedParsed("revoke after plan", "thread-revoke-plan");
+    expect(await plan.preflightInject(parsed)).toBe(false);
+    expect(calls).toHaveLength(0);
+    expect(parsed.context.messages.every(message => message.role !== "developer")).toBe(true);
+    const key = advisorLedgerKey(parsed, "m")!;
+    expect(ledger.claim(key).state).toBe("claimed");
+  });
+
+  test("revoking consent after the preflight claim releases it with no outbound, cooldown, or injection", async () => {
+    const calls = fakeLoopback();
+    const ledger = createAdvisorPreflightLedger();
+    const config = configWith({
+      enabled: true,
+      model: "expert/expert-model",
+      policy: "preflight",
+      contextSharingConsent: "v1",
+    });
+    const parsed = orientedParsed("revoke after claim", "thread-revoke-claim");
+    const plan = createAdvisorRuntimePlan({
+      config,
+      workerIdentity: "w",
+      workerModelId: "m",
+      ledger,
+      baseUrlOverride: "http://advisor.test",
+      afterPreflightClaim: () => {
+        delete (config.advisor as { contextSharingConsent?: string }).contextSharingConsent;
+      },
+    })!;
+    expect(await plan.preflightInject(parsed)).toBe(false);
+    expect(calls).toHaveLength(0);
+    expect(parsed.context.messages.every(message => message.role !== "developer")).toBe(true);
+    const key = advisorLedgerKey(parsed, "m")!;
+    expect(ledger.claim(key).state).toBe("claimed");
+  });
+
+  test("granting consent after plan creation is visible to the next manual consultation", async () => {
+    const calls = fakeLoopback();
+    const config = configWith({ enabled: true, model: "expert/expert-model", policy: "manual" });
+    const plan = createAdvisorRuntimePlan({
+      config,
+      workerIdentity: "w",
+      workerModelId: "m",
+      baseUrlOverride: "http://advisor.test",
+    })!;
+    const first = await plan.consult(orientedParsed(), "manual", "focus");
+    expect(calls).toHaveLength(0);
+    expect(first.blocked).toBe("consent");
+    (config.advisor as { contextSharingConsent?: string }).contextSharingConsent = "v1";
+    const second = await plan.consult(orientedParsed(), "manual", "focus");
+    expect(calls).toHaveLength(1);
+    expect(second.ok).toBe(true);
+    expect(calls[0]?.model).toBe("expert/expert-model");
+  });
+
+  test("a live model change is used on the next consultation", async () => {
+    const calls = fakeLoopback();
+    const config = configWith({
+      enabled: true,
+      model: "expert/model-a",
+      policy: "manual",
+      contextSharingConsent: "v1",
+    });
+    const plan = createAdvisorRuntimePlan({
+      config,
+      workerIdentity: "w",
+      workerModelId: "m",
+      baseUrlOverride: "http://advisor.test",
+    })!;
+    (config.advisor as { model?: string }).model = "expert/model-b";
+    const outcome = await plan.consult(orientedParsed(), "manual", "focus");
+    expect(outcome.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.model).toBe("expert/model-b");
   });
 });
 

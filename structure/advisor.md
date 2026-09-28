@@ -111,11 +111,13 @@ in shell output, user text, or a developer message cannot suppress a consultatio
 ## Provenance and the preflight claim
 
 "Already advised" for a manual result is the parsed runtime status described above, not a
-substring search. Automatic preflight is NOT decided from history. Ordinary tool output, developer
-text, user text, and failure notices (`<opencodex_advisor_unavailable>`) match nothing. The guard
-never composes failure prose itself: `AdvisorPlan.formatUnavailable` owns that text and
-neutralizes untrusted fragments. Upstream HTTP failures are logged as a status code only, so an
-error body that echoes the prompt is not written to the worker context or the log line.
+substring search. Automatic preflight is not decided from developer-message text. A genuine
+manual tool result is a separate provenance check; every other history form — ordinary tool
+output, developer text, user text, and failure notices (`<opencodex_advisor_unavailable>`) —
+matches nothing. The guard never composes failure prose itself: `AdvisorPlan.formatUnavailable`
+owns that text and neutralizes untrusted fragments. Upstream HTTP failures are logged as a
+status code only, so an error body that echoes the prompt is not written to the worker context
+or the log line.
 
 Keys are SHA-256 digests, never a short fold and never raw text: one domain-separated digest
 over `conversation identity + task boundary + worker model`, where the task boundary digests the
@@ -180,13 +182,30 @@ fail-open for correctness and only one extra expert call.
 - `preflight`: OpenCodex additionally ATTEMPTS one consultation per task automatically. The
   documented approximation for "before the first substantive mutation": the attempt fires on the
   first worker reasoning turn that arrives with orientation evidence — an assistant tool call OR
-  a tool result — since the latest user message, unless the conversation already carries advisor
-  advice. A failed attempt is recorded under its own ledger key (no retry storm within the TTL)
+  a tool result — since the latest user message.
+
+  Preflight has two independent suppression checks:
+
+  1. A genuine manual Advisor tool result since the latest user message
+     (`historyHasManualAdvisorResult`: `toolName` is the synthetic `advisor` tool and the content
+     parses as runtime-owned `advisor_result.status === "advice"`) suppresses automatic preflight
+     for that task turn.
+  2. For tasks with a stable identity, the server-owned ledger must return `claimed`. Any other
+     claim result suppresses that automatic attempt: `inflight` (another request is consulting),
+     `complete` (already advised), `cooldown` (recent provider failure), or `saturated` (the
+     table is full of live claims). Identity-less clients skip the ledger and fail open.
+
+  Developer-message Advisor text and markers are informational transport and are not used as
+  suppression authority.
+
+  A failed attempt is recorded under its own ledger key (no retry storm within the TTL)
   and injected with the `<opencodex_advisor_unavailable>` wrapper, which
   historyHasManualAdvisorResult deliberately does not match: a failure is not advice and does not permanently suppress the
   policy. No semantic stagnation detection exists in PR1. Both policies require current
   `contextSharingConsent` before any task context is sent. Without it, preflight does not run
-  and a manual call returns a consent-required result.
+  and a manual call returns a consent-required result. Consent is re-read from the live config
+  immediately before dispatch; a revocation after plan creation (or after a preflight claim)
+  blocks outbound transfer, releases any claim, and adds no cooldown or injection.
 
 ## Observability
 
