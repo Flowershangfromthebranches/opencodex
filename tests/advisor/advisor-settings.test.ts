@@ -152,6 +152,12 @@ describe("ocx advisor consent", () => {
     expect(errors.join("\n")).toContain("which may differ from the worker provider");
   });
 
+  test("off --ack-context-sharing is refused and does not PUT", async () => {
+    const requests: Array<{ path: string; method: string; body: unknown }> = [];
+    expect(await handleAdvisorCommand(["off", "--ack-context-sharing", "--json"], depsWith(requests))).toBe(2);
+    expect(requests).toHaveLength(0);
+  });
+
   test("on with existing consent enables without writing a new grant", async () => {
     const requests: Array<{ path: string; method: string; body: unknown }> = [];
     expect(await handleAdvisorCommand(["on", "--json"], depsWith(requests, "v1"))).toBe(0);

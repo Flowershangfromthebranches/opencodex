@@ -62,6 +62,12 @@ async function setEnabled(enabled: boolean, argv: string[], deps: RuntimeApiDeps
   const acknowledge = takeFlag(args, "--ack-context-sharing");
   rejectArgs(args, USAGE);
   if (!enabled) {
+    if (acknowledge) {
+      throw new CliUsageError(
+        "--ack-context-sharing has no effect with `ocx advisor off`; it never records consent.",
+        USAGE,
+      );
+    }
     printData(await runtimeRequest("/api/advisor/settings", {
       method: "PUT",
       body: JSON.stringify({ enabled: false }),
