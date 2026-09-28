@@ -1227,6 +1227,6 @@ JSON mode: `payload`.
 
 ## Counts
 
-- declared capabilities: 67
-- of those, state-changing: 37
+- declared capabilities: 68
+- of those, state-changing: 38
 - head-resolved invocations: 2
