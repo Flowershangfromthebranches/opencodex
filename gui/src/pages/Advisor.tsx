@@ -26,13 +26,16 @@ interface AdvisorDto {
 }
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
+const ROW_STYLE = { display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.6rem 0" } as const;
+const LABEL_STYLE = { minWidth: "11rem" } as const;
 
-function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
+function AdvisorEditor({ apiBase, initial }: { apiBase: string; initial: AdvisorSettings }) {
   const t = useT();
-  // The saved baseline the dirty check compares against. dto.settings is the boot state; it is
-  // advanced after every successful PUT so the Save button re-disables once nothing is pending.
-  const [saved, setSaved] = useState<AdvisorSettings>(dto.settings);
-  const [draft, setDraft] = useState<AdvisorSettings>(dto.settings);
+  // Mount-time snapshot. The parent remounts this editor when the first load settles
+  // (`key` flips cold → ready), so later parent dto changes do not need to be copied here.
+  // After mount, `saved` only advances from a successful PUT.
+  const [saved, setSaved] = useState(initial);
+  const [draft, setDraft] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -86,14 +89,12 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   const modelMissing = draft.enabled && draft.model.trim() === "";
   const consentMissing = draft.enabled && draft.model.trim() !== "" && draft.contextSharingConsent !== "v1";
-  const rowStyle = { display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.6rem 0" } as const;
-  const labelStyle = { minWidth: "11rem" } as const;
 
   return (
     <>
       <div style={{ marginTop: "0.75rem" }}>
-        <div style={rowStyle}>
-          <span style={labelStyle}>{t("advisor.enabled")}</span>
+        <div style={ROW_STYLE}>
+          <span style={LABEL_STYLE}>{t("advisor.enabled")}</span>
           <label className="toggle">
             <input
               type="checkbox"
@@ -105,8 +106,8 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             <span className="slider" aria-hidden="true" />
           </label>
         </div>
-        <div style={rowStyle}>
-          <label htmlFor="advisor-model" style={labelStyle}>{t("advisor.model")}</label>
+        <div style={ROW_STYLE}>
+          <label htmlFor="advisor-model" style={LABEL_STYLE}>{t("advisor.model")}</label>
           <input
             id="advisor-model"
             type="text"
@@ -116,8 +117,8 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             onChange={event => edit({ model: event.target.value })}
           />
         </div>
-        <div style={rowStyle}>
-          <label htmlFor="advisor-effort" style={labelStyle}>{t("advisor.effort")}</label>
+        <div style={ROW_STYLE}>
+          <label htmlFor="advisor-effort" style={LABEL_STYLE}>{t("advisor.effort")}</label>
           <select
             id="advisor-effort"
             value={draft.effort}
@@ -129,8 +130,8 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             ))}
           </select>
         </div>
-        <div style={rowStyle}>
-          <label htmlFor="advisor-policy" style={labelStyle}>{t("advisor.policy")}</label>
+        <div style={ROW_STYLE}>
+          <label htmlFor="advisor-policy" style={LABEL_STYLE}>{t("advisor.policy")}</label>
           <select
             id="advisor-policy"
             value={draft.policy}
@@ -153,8 +154,8 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             <span>{t("advisor.consent.label")}</span>
           </label>
         </div>
-        <div style={rowStyle}>
-          <label htmlFor="advisor-timeout" style={labelStyle}>{t("advisor.timeout")}</label>
+        <div style={ROW_STYLE}>
+          <label htmlFor="advisor-timeout" style={LABEL_STYLE}>{t("advisor.timeout")}</label>
           <input
             id="advisor-timeout"
             type="number"
@@ -162,7 +163,13 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             max={600000}
             value={draft.timeoutMs}
             disabled={saving}
-            onChange={event => edit({ timeoutMs: Number(event.target.value) })}
+            onChange={event => {
+              const raw = event.target.value.trim();
+              if (raw === "") return;
+              const parsed = Number(raw);
+              if (!Number.isFinite(parsed)) return;
+              edit({ timeoutMs: parsed });
+            }}
           />
         </div>
       </div>
@@ -208,7 +215,11 @@ export default function Advisor({ apiBase }: { apiBase: string }) {
         </Notice>
       )}
       {state.data !== undefined && (
-        <AdvisorEditor key={resource.hasSucceeded ? "ready" : "cold"} apiBase={apiBase} dto={state.data} />
+        <AdvisorEditor
+          key={resource.hasSucceeded ? "ready" : "cold"}
+          apiBase={apiBase}
+          initial={state.data.settings}
+        />
       )}
     </section>
   );
