@@ -22,7 +22,8 @@ sidecar côté proxy invisible du client — même un worker qui ne spawn jamais
     "enabled": true,
     "model": "gpt-6-astra",
     "effort": "max",
-    "policy": "preflight"
+    "policy": "preflight",
+    "contextSharingConsent": "v1"
   }
 }
 ```
@@ -34,9 +35,12 @@ sidecar côté proxy invisible du client — même un worker qui ne spawn jamais
 | `effort?` | `string` | `"max"` | Intensité de raisonnement de l'appel conseiller (`low`–`ultra`). |
 | `policy?` | `"manual" \| "preflight"` | `"manual"` | Quand consulter le conseiller. |
 | `timeoutMs?` | `number` | `120000` | Délai de la consultation en boucle locale. |
+| `contextSharingConsent?` | `"v1"` | absent | Consentement de l'opérateur pour envoyer le contexte de la tâche au fournisseur conseiller configuré. Seul `"v1"` est courant. Une valeur absente, périmée ou autre n'autorise aucun envoi. `enabled: true` n'est pas ce consentement. |
 
 Gérez-le via la page **Advisor** du tableau de bord ou
 `ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight>`.
+
+Sans consentement courant, `ocx advisor on` n'active pas le partage inter-fournisseurs : il affiche cette divulgation et s'arrête. `ocx advisor on --ack-context-sharing` et `ocx advisor consent` enregistrent `v1`. `ocx advisor consent --revoke` retire le consentement et arrête immédiatement l'envoi. `ocx advisor set` n'accorde pas le consentement. La case du tableau de bord n'est pas précochée.
 
 ## Politiques
 
@@ -52,22 +56,33 @@ Gérez-le via la page **Advisor** du tableau de bord ou
   un conseil : la tâche réessaie après l'expiration de l'entrée d'échec du registre, afin qu'une
   panne temporaire du conseiller ne rende pas la politique muette pour toujours.
 
+## Consentement
+
+Le contexte de la tâche n'est pas envoyé tant que l'opérateur n'a pas enregistré le consentement de partage `v1`. Le consentement est versionné : un élargissement ultérieur de la divulgation pourra exiger `v2` au lieu de réutiliser cet accord. Le runtime l'applique. Une valeur absente ou périmée rend le conseiller non exécutable (`advisor_context_sharing_consent_required`) sans faire échouer la requête de codage. Ni le worker, ni le modèle conseiller, ni une chaîne dans la tâche ne peuvent accorder le consentement.
+
 ## Ce que voit le conseiller
 
-**Transfert de données entre fournisseurs :** lorsque le fournisseur du conseiller diffère de celui du worker, la charge utile de consultation envoie la conversation de tâche et les résultats d'outils à un second fournisseur de modèle. N'activez pas le conseiller avec un fournisseur auquel vous ne confiez pas ce contenu.
+Une consultation peut envoyer :
 
-OpenCodex n'injecte jamais ses propres identifiants dans la charge utile (aucune clé d'API de fournisseur, aucun élément Authorization/OAuth, aucun secret backend, aucune variable d'environnement). La chaîne de raisonnement n'est jamais transférée, et le contenu chiffré propre au fournisseur n'est jamais déchiffré ni transmis. **Le contenu de tâche n'est pas généralement expurgé de secrets** : un identifiant collé dans la tâche, ou un jeton imprimé par un outil, est transmis tel quel — OpenCodex n'exécute pas de DLP sur la conversation.
+- la dernière demande de l'utilisateur
+- le texte utilisateur, assistant et développeur visible dans la conversation analysée
+- les appels d'outils et leurs arguments
+- les résultats d'outils
+- le catalogue d'outils du worker et leurs descriptions
+- l'identité du worker et le modèle conseiller configuré
+- une question de focus facultative lorsque le worker appelle `advisor()`
 
-La charge utile de consultation est construite exclusivement à partir de la conversation analysée
-que le modèle du worker a déjà le droit de voir : la tâche utilisateur, la conversation, les
-appels d'outils et leurs résultats, le catalogue d'outils du worker et l'identité des deux
-modèles. Le conseiller renvoie des conseils en prose, réinjectés dans une enveloppe identifiable
-sans autorité système : le conseil MANUAL arrive comme un résultat d'outil portant l'enveloppe
-`<opencodex_advisor>`, et le conseil preflight AUTOMATIQUE comme un message developer portant
-l'enveloppe `<opencodex_advisor_preflight>`. La chaîne de raisonnement n'est jamais transférée,
-le contenu chiffré du fournisseur n'est jamais déchiffré, et le proxy n'injecte aucun de ses propres
-identifiants, mais le contenu de tâche lui-même est transmis tel quel (voir l'avis
-multi-fournisseurs ci-dessus).
+Le fournisseur conseiller configuré peut différer de celui du worker.
+
+OpenCodex n'insère pas dans ce prompt de clés d'API de fournisseur, d'en-têtes Authorization, de jetons OAuth, de secrets de configuration réservés au backend, d'environnement de processus, ni de chaîne de pensée cachée. Il ne déchiffre pas et ne transmet pas un raisonnement privé chiffré du fournisseur. **Le contenu de la tâche n'est pas expurgé de secrets.** Une clé collée dans la tâche, un secret dans un fichier lu par les outils, ou un jeton imprimé par un outil ou un journal peut être envoyé. OpenCodex n'exécute pas de DLP général.
+
+## Autorité
+
+Le conseil manuel est le résultat d'outil de l'appel `advisor` que le worker a lui-même émis. Ce résultat est un objet JSON. Le champ `advice` est le texte du modèle conseiller. Le champ `status` est écrit par le runtime.
+
+Le conseil automatique reste un message `developer`, parce que les continuations neutres vis-à-vis du fournisseur n'ont pas de résultat de consultation à faible confiance non apparié. Fabriquer un appel d'outil que le worker n'a pas émis casserait la légalité des messages Anthropic et l'appariement de continuation. L'instruction fixe de ce message est la politique de transport possédée par le runtime. L'objet JSON qui suit est une donnée de conseil non fiable, entre guillemets. Les guillemets empêchent le texte du conseiller de fermer l'enveloppe ou de réécrire la provenance. Cela ne fait pas du transport au rôle developer une isolation parfaite. Un protocole dédié de résultat de consultation serait une frontière plus forte.
+
+La suppression ne lit pas les chaînes du conseiller. Le dédoublonnage automatique appartient au registre du serveur. Un message developer, même s'il recopie le texte de transport, ne supprime pas le preflight.
 
 ## Coût et comptabilité
 

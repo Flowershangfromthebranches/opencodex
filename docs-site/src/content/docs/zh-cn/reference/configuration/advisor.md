@@ -15,7 +15,8 @@ description: OpenCodex 自有的专家咨询 sidecar — 配置的专家模型�
     "enabled": true,
     "model": "gpt-6-astra",
     "effort": "max",
-    "policy": "preflight"
+    "policy": "preflight",
+    "contextSharingConsent": "v1"
   }
 }
 ```
@@ -27,21 +28,44 @@ description: OpenCodex 自有的专家咨询 sidecar — 配置的专家模型�
 | `effort?` | `string` | `"max"` | Advisor 调用的推理强度（`low` 至 `ultra`）。 |
 | `policy?` | `"manual" \| "preflight"` | `"manual"` | 何时咨询顾问。 |
 | `timeoutMs?` | `number` | `120000` | 回环咨询超时。 |
+| `contextSharingConsent?` | `"v1"` | 缺省 | 操作者同意把任务上下文发给所配置的顾问 provider。只有 `"v1"` 是当前版本。缺省、过期或其他值都表示不发送任务内容。`enabled: true` 本身不是同意。 |
 
 通过仪表盘的 **Advisor** 页面或 `ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight>` 管理。
+
+`ocx advisor on` 在没有当前同意时不会开启跨 provider 发送：它会打印披露并停止。`ocx advisor on --ack-context-sharing` 与 `ocx advisor consent` 记录 `v1`。`ocx advisor consent --revoke` 会移除同意并立即停止发送。`ocx advisor set` 不授予同意。仪表盘上的同意复选框默认不勾选。
 
 ## 策略
 
 - **`manual`** — 仅当 Worker 显式调用合成的 `advisor` 工具时咨询。该调用由代理拦截，客户端不可见，也不会作为本地工具执行。
 - **`preflight`** — OpenCodex 会在每个任务自动尝试一次额外咨询。失败的咨询不会被当作建议：任务会在失败账本条目过期后重试。当 Worker 产出第一份方向性证据（最新用户消息之后的助手工具调用或工具结果）时，代理会咨询顾问并在 Worker 下一回合之前注入建议 —— 即使 Worker 从不调用该工具。触发条件是确定性的、有文档的近似规则，不是语义级"模型卡住了"检测器。
 
+## 同意
+
+在操作者记录上下文共享同意 `v1` 之前，不会发送任务上下文。该字段带版本，以便以后披露范围扩大时改用 `v2`，而不是沿用这次授权。运行时强制执行。缺少或过期时顾问不可运行（`advisor_context_sharing_consent_required`），编码请求本身继续。Worker、顾问模型，以及任务文本里的字符串都不能授予同意。
+
 ## Advisor 能看到什么
 
-**跨 provider 数据传输：** 当顾问 provider 与 Worker 的 provider 不同时，咨询负载会把任务对话与工具结果发送给第二个模型 provider。请勿对不信任该任务内容的 provider 启用顾问。
+一次咨询可能发送：
 
-OpenCodex 不会把自己的凭据注入负载（不含 provider API key、Authorization/OAuth 信息、后端专用机密与环境变量）。思维链不会被转移，加密的 provider 专用内容不会被解密或转发。**任务内容通常不会做凭据脱敏**：粘贴进任务里的凭据、或工具输出里打印的 token，都会按原样转发 —— OpenCodex 不会对会话执行 DLP。
+- 最新的用户任务
+- 已解析会话中可见的用户、助手和开发者文本
+- 工具调用与工具参数
+- 工具结果
+- Worker 的工具目录和描述
+- Worker 身份与所配置的顾问模型
+- Worker 调用 `advisor()` 时的可选焦点问题
 
-咨询负载完全由 Worker 模型已被允许看到的已解析会话构成：用户任务、会话、工具调用及其结果、Worker 的工具目录，以及双方模型身份。Advisor 返回散文式建议，以可识别的包装回注，不具备 system 权限：manual 建议以携带 `<opencodex_advisor>` 包装的工具结果注入，自动 preflight 建议以携带 `<opencodex_advisor_preflight>` 包装的 developer 消息注入。思维链不会被转移，加密的 provider 内容不会被解密。代理不会注入自己的凭据，但任务内容本身按原样转发（见上方跨 provider 提示）。
+所配置的顾问 provider 可能与 Worker 的 provider 不同。
+
+OpenCodex 不会把 provider API key、Authorization 头、OAuth token、仅后端使用的配置密钥、进程环境或隐藏的思维链写进该提示，也不会解密或转发加密的 provider 私有推理。**任务内容不做通用脱敏。** 贴进任务的密钥、工具读到的文件里的秘密、工具或日志打印出的 token 都可能被发送。OpenCodex 不运行通用 DLP。
+
+## 权威
+
+手动建议是 Worker 自己发出的 `advisor` 调用所对应的工具结果。结果是一个 JSON 对象。`advice` 是顾问模型的文本。`status` 由运行时写入。
+
+自动建议仍使用 developer 消息，因为当前与 provider 无关的续写路径没有不成对的低信任咨询结果。伪造一次 Worker 没有发出的工具调用会破坏 Anthropic 的消息合法性，也会破坏续写配对。该消息里的固定传输说明是运行时拥有的策略。说明之后的 JSON 是加引号的不可信建议数据。引号使顾问文本无法提前结束封装，也不能改写溯源。这并不表示 developer 角色传输是完美隔离。专门的咨询结果协议会是更强的边界。
+
+抑制不读取顾问字符串。自动去重只看服务端账本。复制了传输文本的 developer 消息也不能抑制 preflight。
 
 ## 成本与记账
 

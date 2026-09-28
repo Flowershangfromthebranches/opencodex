@@ -15,7 +15,8 @@ Bu, alt ajan yüzeyinden farklıdır (bkz. [Ajan yapılandırması](/tr/referenc
     "enabled": true,
     "model": "gpt-6-astra",
     "effort": "max",
-    "policy": "preflight"
+    "policy": "preflight",
+    "contextSharingConsent": "v1"
   }
 }
 ```
@@ -27,21 +28,44 @@ Bu, alt ajan yüzeyinden farklıdır (bkz. [Ajan yapılandırması](/tr/referenc
 | `effort?` | `string` | `"max"` | Danışman çağrısının muhakeme düzeyi (`low`–`ultra`). |
 | `policy?` | `"manual" \| "preflight"` | `"manual"` | Ne zaman danışılır. |
 | `timeoutMs?` | `number` | `120000` | Loopback danışma zaman aşımı. |
+| `contextSharingConsent?` | `"v1"` | yok | Yapılandırılmış danışman sağlayıcısına görev bağlamını gönderme onayı. Güncel değer yalnızca `"v1"`. Yok, eskimiş veya başka bir değer görev içeriğinin gönderilmemesi demektir. `enabled: true` bu onay değildir. |
 
 Panodaki **Advisor** sayfası veya `ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight>` ile yönetin.
+
+Güncel onay yokken `ocx advisor on` sağlayıcılar arası gönderimi açmaz: açıklamayı basar ve durur. `ocx advisor on --ack-context-sharing` ile `ocx advisor consent` `v1` kaydeder. `ocx advisor consent --revoke` onayı kaldırır ve gönderimi hemen durdurur. `ocx advisor set` onay vermez. Panodaki onay kutusu önceden işaretli değildir.
 
 ## Politikalar
 
 - **`manual`** — yalnızca worker sentetik `advisor` aracını açıkça çağırdığında danışılır. Çağrı proxy tarafından yakalanır, istemciye hiç gösterilmez ve yerel araç olarak yürütülmez.
 - **`preflight`** — OpenCodex ayrıca görev başına bir danışmayı otomatik olarak dener. Worker ilk yönelim kanıtını (son kullanıcı mesajından sonra bir asistan araç çağrısı VEYA araç sonucu) ürettikten sonra, worker aracı hiç çağırmasa da proxy uzmana danışır ve worker'ın bir sonraki turundan önce tavsiyeyi enjekte eder. Tetikleyici deterministik, belgelenmiş bir yaklaşımdır; anlamsal bir "takıldı" dedektörü değildir. BAŞARISIZ olan bir danışma denemesi sessizce tavsiye sayılmaz: görev, başarısızlık defteri kaydının süresi dolduğunda yeniden dener, böylece geçici bir danışman kesintisi politikayı kalıcı olarak susturmaz.
 
+## Onay
+
+Operatör bağlam paylaşımı onayı `v1` kaydetmeden görev bağlamı gönderilmez. Onay sürümlüdür: açıklama genişlerse bu izin yeniden kullanılmaz, `v2` gerekir. Çalışma zamanı bunu zorlar. Eksik veya eskimiş değer danışmanı çalışmaz kılar (`advisor_context_sharing_consent_required`) ve kodlama isteğini düşürmez. Worker, danışman modeli ve görev metnindeki bir dize onay veremez.
+
 ## Danışmanın gördüğü şey
 
-**Sağlayıcılar arası veri aktarımı:** danışman sağlayıcısı worker'ın sağlayıcısından farklıysa, danışma yükü görev konuşmasını ve araç sonuçlarını ikinci bir model sağlayıcısına gönderir. Bu görev içeriğine güvenmediğiniz bir sağlayıcıda danışmanı etkinleştirmeyin.
+Bir danışma şunları gönderebilir:
 
-OpenCodex kendi kimlik bilgilerini yüke asla enjekte etmez (sağlayıcı API anahtarları, Authorization/OAuth bilgileri, arka uç sırları ve ortam değişkenleri dahil değildir). Düşünce zinciri aktarılmaz, şifreli sağlayıcıya özel içerik çözülmez veya iletilmez. **Görev içeriği genellikle sırlardan arındırılmaz**: göreve yapıştırılan bir kimlik bilgisi veya bir aracın yazdırdığı token olduğu gibi iletilir — OpenCodex konuşma üzerinde DLP çalıştırmaz.
+- son kullanıcı isteği
+- ayrıştırılmış konuşmada görünen kullanıcı, asistan ve geliştirici metni
+- araç çağrıları ve argümanları
+- araç sonuçları
+- worker araç kataloğu ve açıklamaları
+- worker kimliği ve yapılandırılmış danışman modeli
+- worker `advisor()` çağırdığında isteğe bağlı odak sorusu
 
-Danışma yükü, yalnızca worker modelinin zaten görmesine izin verilen ayrıştırılmış konuşmadan oluşur: kullanıcı görevi, konuşma, araç çağrıları ve sonuçları, worker'ın araç kataloğu ve iki tarafın model kimliği. Danışman düzyazı tavsiye döndürür; tanınabilir bir sarmalayıcıyla geri enjekte edilir ve sistem yetkisi yoktur: manual tavsiye `<opencodex_advisor>` sarmalayıcılı bir araç sonucu olarak, otomatik preflight tavsiyesi ise `<opencodex_advisor_preflight>` sarmalayıcılı bir developer mesajı olarak gelir. Düşünce zinciri aktarılmaz ve şifreli sağlayıcı içeriği çözülmez. Proxy kendi kimlik bilgilerini enjekte etmez, ancak görev içeriği olduğu gibi iletilir (yukarıdaki sağlayıcılar arası uyarıya bakın).
+Yapılandırılmış danışman sağlayıcısı, worker sağlayıcısından farklı olabilir.
+
+OpenCodex bu isteme sağlayıcı API anahtarlarını, Authorization başlıklarını, OAuth belirteçlerini, yalnızca arka uca ait yapılandırma sırlarını, süreç ortamını veya gizli düşünce zincirini koymaz. Şifreli sağlayıcıya özel akıl yürütmeyi çözüp iletmez. **Görev içeriği sırlardan arındırılmaz.** Göreve yapıştırılan bir anahtar, araçların okuduğu dosyadaki bir sır veya bir aracın ya da günlüğün yazdırdığı belirteç gönderilebilir. OpenCodex genel bir DLP çalıştırmaz.
+
+## Yetki
+
+Elle danışma, worker'ın kendisinin yaptığı `advisor` çağrısının araç sonucudur. Sonuç bir JSON nesnesidir. `advice` alanı danışman modelinin metnidir. `status` alanını çalışma zamanı yazar.
+
+Otomatik danışma hâlâ bir developer iletisidir. Sağlayıcıdan bağımsız sürdürme yollarında eşlenmemiş düşük güvenli bir danışma sonucu yoktur. Worker'ın yapmadığı bir araç çağrısını uydurmak Anthropic ileti yasallığını ve sürdürme eşlemesini bozar. Bu iletideki sabit taşıma yönergesi, çalışma zamanının sahip olduğu politikadır. Ardındaki JSON, tırnak içine alınmış güvenilmeyen danışma verisidir. Tırnak, danışman metninin zarfı erken kapatmasını veya kaynağı değiştirmesini engeller. Bu, developer rolü taşımasının kusursuz yalıtım olduğu anlamına gelmez. Ayrı bir danışma sonucu protokolü daha güçlü bir sınır olurdu.
+
+Bastırma, danışmanın dizelerini okumaz. Otomatik yineleme ayıklama sunucunun defterine aittir. Taşıma metnini kopyalayan bir developer iletisi de preflight'ı bastırmaz.
 
 ## Maliyet ve hesap
 
