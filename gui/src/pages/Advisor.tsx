@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Notice } from "../ui";
 import { useDataSurface } from "../data-surface";
 import { useT, type TKey } from "../i18n/shared";
@@ -10,7 +10,7 @@ import { useT, type TKey } from "../i18n/shared";
  * load settles so its draft always starts from real runtime state.
  */
 
-interface AdvisorSettings {
+export interface AdvisorSettings {
   enabled: boolean;
   model: string;
   effort: string;
@@ -19,7 +19,7 @@ interface AdvisorSettings {
   contextSharingConsent: "v1" | null;
 }
 
-interface AdvisorDto {
+export interface AdvisorDto {
   settings: AdvisorSettings;
   runnable: boolean;
   warning?: string;
@@ -29,7 +29,7 @@ const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
 const ROW_STYLE = { display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.6rem 0" } as const;
 const LABEL_STYLE = { minWidth: "11rem" } as const;
 
-function AdvisorEditor({ apiBase, initial }: { apiBase: string; initial: AdvisorSettings }) {
+export function AdvisorEditor({ apiBase, initial }: { apiBase: string; initial: AdvisorSettings }) {
   const t = useT();
   // Mount-time snapshot. The parent remounts this editor when the first load settles
   // (`key` flips cold → ready), so later parent dto changes do not need to be copied here.
@@ -39,8 +39,23 @@ function AdvisorEditor({ apiBase, initial }: { apiBase: string; initial: Advisor
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const savedFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (savedFlashTimerRef.current !== null) {
+        clearTimeout(savedFlashTimerRef.current);
+        savedFlashTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const save = useCallback(async () => {
+    if (savedFlashTimerRef.current !== null) {
+      clearTimeout(savedFlashTimerRef.current);
+      savedFlashTimerRef.current = null;
+    }
+    setSavedFlash(false);
     setSaving(true);
     setSaveError("");
     const submitted = draft;
@@ -70,7 +85,10 @@ function AdvisorEditor({ apiBase, initial }: { apiBase: string; initial: Advisor
       // when the user has not touched it since this save started.
       setDraft(current => (JSON.stringify(current) === JSON.stringify(submitted) ? body.settings : current));
       setSavedFlash(true);
-      setTimeout(() => setSavedFlash(false), 2500);
+      savedFlashTimerRef.current = setTimeout(() => {
+        savedFlashTimerRef.current = null;
+        setSavedFlash(false);
+      }, 2500);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : String(error));
     } finally {
