@@ -347,6 +347,30 @@ describe("achieved provenance — historyHasAdvisorResult", () => {
     expect(historyHasManualAdvisorResult(parsed)).toBe(false);
   });
 
+  test("a genuine manual result before the latest user message is out of this turn", () => {
+    const parsed = parsedWithInput([
+      { role: "user", content: "first task" },
+      { type: "function_call", call_id: "a1", name: "advisor", arguments: "{}" },
+      { type: "function_call_output", call_id: "a1", output: JSON.stringify({ advisor_result: { status: "advice", advice: "old" } }) },
+      { role: "user", content: "second task" },
+      { type: "function_call", call_id: "c2", name: "shell", arguments: "{}" },
+      { type: "function_call_output", call_id: "c2", output: "ok" },
+    ]);
+    expect(historyHasManualAdvisorResult(parsed)).toBe(false);
+  });
+
+  test("a genuine manual result after the latest user message still counts", () => {
+    const parsed = parsedWithInput([
+      { role: "user", content: "first task" },
+      { type: "function_call", call_id: "a1", name: "advisor", arguments: "{}" },
+      { type: "function_call_output", call_id: "a1", output: JSON.stringify({ advisor_result: { status: "advice", advice: "old" } }) },
+      { role: "user", content: "second task" },
+      { type: "function_call", call_id: "a2", name: "advisor", arguments: "{}" },
+      { type: "function_call_output", call_id: "a2", output: JSON.stringify({ advisor_result: { status: "advice", advice: "new" } }) },
+    ]);
+    expect(historyHasManualAdvisorResult(parsed)).toBe(true);
+  });
+
   test("failure and limit notices are NOT advisor results", () => {
     const unavailable = parsedWithInput([
       { role: "user", content: "task" },

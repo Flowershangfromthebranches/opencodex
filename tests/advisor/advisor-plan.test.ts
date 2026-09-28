@@ -327,6 +327,29 @@ describe("advisor plan — preflight policy", () => {
     expect(calls).toHaveLength(0);
   });
 
+  test("manual advice from an earlier task does not suppress preflight on the next user turn", async () => {
+    const calls = fakeLoopback();
+    const plan = makePlan({
+      advisor: { enabled: true, model: "expert/expert-model", policy: "preflight", contextSharingConsent: "v1" },
+      ledger: createAdvisorPreflightLedger(),
+    });
+    const nextTurn = parseRequest({
+      model: "worker/deepseek-v4",
+      stream: false,
+      input: [
+        { role: "user", content: "first task" },
+        { type: "function_call", call_id: "a1", name: "advisor", arguments: "{}" },
+        { type: "function_call_output", call_id: "a1", output: JSON.stringify({ advisor_result: { status: "advice", advice: "old" } }) },
+        { role: "user", content: "second task" },
+        { type: "function_call", call_id: "c2", name: "shell", arguments: "{}" },
+        { type: "function_call_output", call_id: "c2", output: "ok" },
+      ],
+    });
+    nextTurn._codexOwnThreadId = "thread-next-turn";
+    expect(await plan.preflightInject(nextTurn)).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+
   test("manual policy never auto-consults, but still backs the synthetic tool", async () => {
     const calls = fakeLoopback();
     const plan = makePlan({ advisor: { enabled: true, model: "expert/expert-model", policy: "manual", contextSharingConsent: "v1" }, ledger: createAdvisorPreflightLedger() });
