@@ -97,7 +97,7 @@ Le conseiller échoue ouvertement : une consultation déjà envoyée qui échoue
 dépassé) donne au worker un court avis « conseiller indisponible », non trompeur (un message
 `<opencodex_advisor_unavailable>` pour preflight, un résultat d'outil en erreur pour manual), et
 la tâche continue ; rien n'est injecté uniquement quand la consultation est annulée, et un plan
-qui ne démarre aucune consultation (désactivé ou sans modèle) n'envoie aucun avis. Un échec de consultation ne fait jamais échouer la requête de
+qui ne démarre aucune consultation (désactivé, sans modèle, ou activé sans consentement de partage courant) n'envoie aucun avis preflight. Un appel manuel `advisor()` sans consentement courant renvoie un résultat d'outil consent-required et n'envoie rien. Un échec de consultation ne fait jamais échouer la requête de
 codage, et une consultation ne change jamais le modèle principal de la session.
 
 ## Limitations PR1

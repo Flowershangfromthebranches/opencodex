@@ -73,7 +73,7 @@ OpenCodex 不會把 provider API key、Authorization 標頭、OAuth token、僅�
 
 ## 失敗行為
 
-Advisor 失敗是 fail-open 的：已經發出的諮詢若失敗（模型不可用、設定錯誤、逾時），Worker 會收到簡短、無誤導性的「advisor 不可用」通知（preflight 為 `<opencodex_advisor_unavailable>` 訊息，manual 為錯誤工具結果）並繼續任務；只有諮詢被取消時才什麼都不注入，而計畫根本未發起諮詢（未啟用或未設定模型）時也不會送出通知。Advisor 失敗不會讓編碼請求失敗，諮詢也不會切換會話的主模型。
+Advisor 失敗是 fail-open 的：已經發出的諮詢若失敗（模型不可用、設定錯誤、逾時），Worker 會收到簡短、無誤導性的「advisor 不可用」通知（preflight 為 `<opencodex_advisor_unavailable>` 訊息，manual 為錯誤工具結果）並繼續任務；只有諮詢被取消時才什麼都不注入，而計畫根本未發起諮詢（未啟用、未設定模型、或缺少目前上下文共享同意）時也不會送出 preflight 通知。沒有目前同意時，手動 `advisor()` 呼叫回傳 consent-required 工具結果，且不外送。Advisor 失敗不會讓編碼請求失敗，諮詢也不會切換會話的主模型。
 
 ## PR1 限制
 
