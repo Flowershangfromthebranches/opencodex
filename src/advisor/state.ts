@@ -310,6 +310,8 @@ export const ADVISOR_ADVICE_MARKER = "<opencodex_advisor>";
  * content must parse as a runtime-written advice object (`status === "advice"` on the sibling
  * field the runtime sets). Text inside `advice` cannot flip that field.
  *
+ * Only messages after the latest user turn count. Manual advice from an earlier task in the
+ * same thread does not suppress preflight for a later task; the ledger keys those separately.
  * Developer messages are deliberately NOT inspected. Automatic preflight dedup lives in the
  * ledger. A client-echoed developer envelope, a shell result, or a failure notice matches nothing.
  */
@@ -318,6 +320,7 @@ export function historyHasManualAdvisorResult(parsed: {
 }): boolean {
   for (let i = parsed.context.messages.length - 1; i >= 0; i -= 1) {
     const message = parsed.context.messages[i]!;
+    if (message.role === "user") break;
     if (message.role !== "toolResult") continue;
     if (message.toolName !== ADVISOR_RESULT_TOOL_NAME) continue;
     if (advisorResultIsAdvice(contentText(message.content))) return true;
