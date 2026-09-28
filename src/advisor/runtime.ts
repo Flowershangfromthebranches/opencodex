@@ -25,7 +25,7 @@
 import type { OcxConfig, OcxParsedRequest } from "../types";
 import type { AdvisorPlan, AdvisorConsultOutcome } from "../server/responses/advisor-slot";
 import { createAdvisorGuard } from "../server/responses/advisor-slot";
-import { advisorContextSharingBlocked, resolveAdvisorSettings } from "./settings";
+import { resolveAdvisorSettings } from "./settings";
 import { consultAdvisor } from "./consult";
 import { sanitizeLogMetadataString } from "../lib/redact";
 import {
@@ -58,6 +58,11 @@ export interface AdvisorRuntimeDeps {
   ledger?: AdvisorPreflightLedger;
   /** Deterministic clock seam for the ledger's TTL/cooldown arithmetic (tests only). */
   now?: () => number;
+  /**
+   * Test seam: runs after a preflight claim is taken and before the consultation
+   * dispatch, so a test can revoke consent in the claim-to-outbound window.
+   */
+  afterPreflightClaim?: () => void;
 }
 
 export interface AdvisorRuntimePlan extends AdvisorPlan {
@@ -73,13 +78,17 @@ export interface AdvisorRuntimePlan extends AdvisorPlan {
 }
 
 export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRuntimePlan | null {
-  const settings = resolveAdvisorSettings(deps.config);
-  // A model is required before the synthetic tool exists. Consent is checked inside every
-  // consultation, so an enabled advisor without current consent can still refuse a manual call
-  // in-band without sending task context. Disabled, or enabled with no model, stays off the path.
-  if (!settings.enabled || settings.model.trim() === "") return null;
+  const initial = resolveAdvisorSettings(deps.config);
+  // A model is required before the synthetic tool exists. Consent is checked at every
+  // consultation against the live config, so an enabled advisor without current consent can
+  // still refuse a manual call in-band without sending task context. Disabled, or enabled
+  // with no model, stays off the path.
+  if (!initial.enabled || initial.model.trim() === "") return null;
   const ledger = deps.ledger ?? sharedPreflightLedger;
   const now = deps.now ?? (() => Date.now());
+  // Management PUT mutates this same config object (`config.advisor = ...`). Re-resolving
+  // at dispatch is what makes a mid-request consent revocation stop outbound transfer.
+  const liveSettings = () => resolveAdvisorSettings(deps.config);
 
   // Request-scoped state: born here, dies with the request. Never global.
   const fingerprints = new Set<string>();
@@ -91,6 +100,7 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
   const logConsultation = (
     trigger: "manual" | "preflight",
     outcome: { ok: boolean; cancelled?: boolean; durationMs: number; error?: string; usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } },
+    advisorModel: string,
   ): void => {
     const usage = outcome.usage
       ? ` usage=in=${outcome.usage.inputTokens ?? "?"} out=${outcome.usage.outputTokens ?? "?"}`
@@ -103,7 +113,7 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
     // no tool output, no capability.
     console.warn(
       `[advisor] consultation ${status} trigger=${trigger} worker=${deps.workerModelId}`
-      + ` advisor=${settings.model} durationMs=${outcome.durationMs}${usage}${errorNote}`,
+      + ` advisor=${advisorModel} durationMs=${outcome.durationMs}${usage}${errorNote}`,
     );
   };
 
@@ -112,15 +122,29 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
     reason: "manual" | "preflight",
     question: string | undefined,
   ): Promise<AdvisorConsultOutcome> => {
+    const current = liveSettings();
+    if (!current.enabled || current.model.trim() === "") {
+      return {
+        ok: false,
+        isError: true,
+        blocked: "settings",
+        content: formatAdvisorUnavailable(
+          reason === "preflight" ? "preflight" : "manual",
+          "advisor is not configured",
+        ),
+      };
+    }
     // Consent is operator config. Task text, the worker, and the advisor cannot grant it.
-    // Missing consent returns before any fingerprint, ledger write, or outbound call.
-    if (advisorContextSharingBlocked(settings) || settings.contextSharingConsent === null) {
+    // The live object is re-read here so a revocation after plan creation still blocks
+    // outbound transfer. No fingerprint, no ledger write, no fetch.
+    if (current.contextSharingConsent === null) {
       console.warn(
         `[advisor] consultation blocked trigger=${reason} reason=advisor_context_sharing_consent_required`,
       );
       return {
         ok: false,
         isError: true,
+        blocked: "consent",
         content: formatAdvisorUnavailable(
           "consent",
           "advisor_context_sharing_consent_required",
@@ -135,7 +159,7 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
       result = {
         ok: false,
         advice: "",
-        advisorModel: settings.model,
+        advisorModel: current.model,
         error: "duplicate consultation request (already consulted with this focus in this request)",
         durationMs: 0,
       };
@@ -150,17 +174,17 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
       {
         parsed,
         workerIdentity: deps.workerIdentity,
-        advisorModel: settings.model,
+        advisorModel: current.model,
         reason,
         ...(question !== undefined ? { question } : {}),
       },
       deps.config,
-      settings.effort,
-      settings.timeoutMs,
+      current.effort,
+      current.timeoutMs,
       deps.abortSignal,
       deps.baseUrlOverride,
     );
-    logConsultation(reason, result);
+    logConsultation(reason, result, current.model);
 
     if (result.ok) {
       // A genuine result suppresses further automatic consultation for the task. Manual success
@@ -191,9 +215,10 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
   };
 
   const preflightInject = async (parsed: OcxParsedRequest): Promise<boolean> => {
-    if (settings.policy !== "preflight" || preflightUsed) return false;
-    // No consent: do not claim, do not inject, do not send task context. The worker continues.
-    if (settings.contextSharingConsent === null) return false;
+    const current = liveSettings();
+    if (current.policy !== "preflight" || preflightUsed) return false;
+    // No consent, disabled, or no model: do not claim, do not inject, do not send task context.
+    if (!current.enabled || current.model.trim() === "" || current.contextSharingConsent === null) return false;
     // A genuine MANUAL consultation already advised this task (verifiable tool-result
     // provenance), or the task has no orientation evidence yet: skip.
     if (historyHasManualAdvisorResult(parsed)) return false;
@@ -213,6 +238,7 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
       claimToken = claim.token;
     }
     preflightUsed = true;
+    deps.afterPreflightClaim?.();
 
     let outcome: AdvisorConsultOutcome;
     try {
@@ -232,6 +258,12 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
       return false;
     }
 
+    if (outcome.blocked) {
+      // Operator revoked consent (or disabled the sidecar) after the claim: not a provider
+      // failure. Release so the task is not put on cooldown and nothing is injected.
+      if (key && claimToken) ledger.release(key, claimToken, now());
+      return false;
+    }
     if (outcome.ok) {
       if (key && claimToken) ledger.complete(key, claimToken, now());
     } else if (outcome.cancelled) {
@@ -265,10 +297,10 @@ export function createAdvisorRuntimePlan(deps: AdvisorRuntimeDeps): AdvisorRunti
   };
 
   return {
-    policy: settings.policy,
+    policy: initial.policy,
     // The synthetic tool is only safe where the guard can intercept: run-turn adapters own their
     // own loops, so they get preflight support but never the tool (documented limitation).
-    toolEnabled: settings.enabled,
+    toolEnabled: initial.enabled,
     consult: plan.consult,
     formatUnavailable: plan.formatUnavailable,
     preflightInject,

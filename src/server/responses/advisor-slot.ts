@@ -47,6 +47,11 @@ export interface AdvisorConsultOutcome {
   isError: boolean;
   /** The consultation was cancelled by the caller (client abort) — not a provider failure. */
   cancelled?: boolean;
+  /**
+   * Operator config blocked the consultation before any outbound call. Not a provider
+   * failure: preflight must release a claim instead of recording a cooldown.
+   */
+  blocked?: "consent" | "settings";
 }
 
 /** The structural plan the optional advisor subsystem registers per request. */
