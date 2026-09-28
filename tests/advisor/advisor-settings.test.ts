@@ -16,6 +16,7 @@ describe("resolveAdvisorSettings", () => {
     expect(settings.effort).toBe("max");
     expect(settings.policy).toBe("manual");
     expect(settings.sources.enabled).toBe("default");
+    expect(settings.contextSharingConsent).toBeNull();
     expect(advisorRunnable(settings)).toBe(false);
   });
 
@@ -31,20 +32,47 @@ describe("resolveAdvisorSettings", () => {
     expect(advisorRunnable(settings)).toBe(false);
   });
 
-  test("enabled with a model is runnable and sources are configured", () => {
+  test("enabled with a model but no consent is not runnable", () => {
     const settings = resolveAdvisorSettings({
       advisor: { enabled: true, model: "gpt-6-astra", effort: "high", policy: "preflight" },
+    });
+    expect(advisorRunnable(settings)).toBe(false);
+    expect(settings.contextSharingConsent).toBeNull();
+  });
+
+  test("enabled with a model and current consent is runnable", () => {
+    const settings = resolveAdvisorSettings({
+      advisor: {
+        enabled: true,
+        model: "gpt-6-astra",
+        effort: "high",
+        policy: "preflight",
+        contextSharingConsent: "v1",
+      },
     });
     expect(advisorRunnable(settings)).toBe(true);
     expect(settings.model).toBe("gpt-6-astra");
     expect(settings.effort).toBe("high");
     expect(settings.policy).toBe("preflight");
+    expect(settings.contextSharingConsent).toBe("v1");
     expect(settings.sources).toEqual({
       enabled: "configured",
       model: "configured",
       effort: "configured",
       policy: "configured",
+      contextSharingConsent: "configured",
     });
+  });
+
+  test("stale or wrong-typed consent does not become current and is not upgraded", () => {
+    for (const contextSharingConsent of ["v0", "V1", true, 1, ""]) {
+      const settings = resolveAdvisorSettings({
+        advisor: { enabled: true, model: "gpt-6-astra", contextSharingConsent: contextSharingConsent as never },
+      });
+      expect(settings.contextSharingConsent).toBeNull();
+      expect(advisorRunnable(settings)).toBe(false);
+      expect(settings.sources.contextSharingConsent).toBe("configured");
+    }
   });
 
   test("malformed effort and policy fall back per-field", () => {
@@ -75,6 +103,75 @@ describe("resolveAdvisorSettings", () => {
     expect(resolveAdvisorSettings({ advisor: { timeoutMs: 100 } }).timeoutMs).toBe(120_000);
     expect(resolveAdvisorSettings({ advisor: { timeoutMs: 5_000 } }).timeoutMs).toBe(5_000);
     expect(resolveAdvisorSettings({ advisor: { timeoutMs: 10_000_000 } }).timeoutMs).toBe(600_000);
+  });
+});
+
+describe("ocx advisor consent", () => {
+  const depsWith = (requests: Array<{ path: string; method: string; body: unknown }>, current: unknown = null) => ({
+    baseUrl: "http://proxy.test",
+    fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      requests.push({ path: new URL(String(input)).pathname, method: init?.method ?? "GET", body });
+      if ((init?.method ?? "GET") === "GET") {
+        return Response.json({ settings: { contextSharingConsent: current }, runnable: false });
+      }
+      return Response.json({ settings: body, runnable: body?.contextSharingConsent === "v1" && body?.enabled === true });
+    },
+  });
+
+  test("on without consent prints the disclosure and does not enable", async () => {
+    const requests: Array<{ path: string; method: string; body: unknown }> = [];
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (line?: unknown) => { errors.push(String(line)); };
+    try {
+      expect(await handleAdvisorCommand(["on", "--json"], depsWith(requests))).toBe(2);
+    } finally {
+      console.error = original;
+    }
+    expect(requests).toEqual([{ path: "/api/advisor/settings", method: "GET", body: null }]);
+    expect(errors.join("\n")).toContain("Task content is not secret-redacted");
+    expect(errors.join("\n")).toContain("--ack-context-sharing");
+  });
+
+  test("on --ack-context-sharing records v1 and enables, with disclosure on stderr", async () => {
+    const requests: Array<{ path: string; method: string; body: unknown }> = [];
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (line?: unknown) => { errors.push(String(line)); };
+    try {
+      expect(await handleAdvisorCommand(["on", "--ack-context-sharing", "--json"], depsWith(requests))).toBe(0);
+    } finally {
+      console.error = original;
+    }
+    expect(requests[1]).toEqual({
+      path: "/api/advisor/settings",
+      method: "PUT",
+      body: { enabled: true, contextSharingConsent: "v1" },
+    });
+    expect(errors.join("\n")).toContain("which may differ from the worker provider");
+  });
+
+  test("on with existing consent enables without writing a new grant", async () => {
+    const requests: Array<{ path: string; method: string; body: unknown }> = [];
+    expect(await handleAdvisorCommand(["on", "--json"], depsWith(requests, "v1"))).toBe(0);
+    expect(requests[1]).toEqual({
+      path: "/api/advisor/settings",
+      method: "PUT",
+      body: { enabled: true },
+    });
+  });
+
+  test("consent records v1 and revoke removes it; set does not grant consent", async () => {
+    const requests: Array<{ path: string; method: string; body: unknown }> = [];
+    expect(await handleAdvisorCommand(["consent", "--json"], depsWith(requests))).toBe(0);
+    expect(await handleAdvisorCommand(["consent", "--revoke", "--json"], depsWith(requests))).toBe(0);
+    expect(await handleAdvisorCommand(["set", "--model", "expert/m", "--json"], depsWith(requests))).toBe(0);
+    expect(requests.map(request => request.body)).toEqual([
+      { contextSharingConsent: "v1" },
+      { contextSharingConsent: null },
+      { model: "expert/m" },
+    ]);
   });
 });
 

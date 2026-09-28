@@ -6,6 +6,9 @@
  * config import keeps this module free of runtime edges.
  */
 import type { OcxConfig } from "../types";
+import { ADVISOR_CONTEXT_SHARING_CONSENT_VERSION } from "./disclosure";
+
+export { ADVISOR_CONTEXT_SHARING_CONSENT_VERSION };
 
 export type AdvisorPolicy = "manual" | "preflight";
 
@@ -20,12 +23,18 @@ export interface AdvisorSettings {
   effort: AdvisorEffort;
   policy: AdvisorPolicy;
   timeoutMs: number;
+  /**
+   * Current context-sharing consent, or null when absent, stale, or malformed.
+   * `enabled` does not imply this. Only the current version allows data transfer.
+   */
+  contextSharingConsent: typeof ADVISOR_CONTEXT_SHARING_CONSENT_VERSION | null;
   /** Where each resolved value came from, so the GUI/CLI can show real runtime state. */
   sources: {
     enabled: "default" | "configured";
     model: "default" | "configured";
     effort: "default" | "configured";
     policy: "default" | "configured";
+    contextSharingConsent: "default" | "configured";
   };
 }
 
@@ -35,11 +44,13 @@ export const DEFAULT_ADVISOR_SETTINGS: Readonly<AdvisorSettings> = Object.freeze
   effort: "max",
   policy: "manual",
   timeoutMs: 120_000,
+  contextSharingConsent: null,
   sources: Object.freeze({
     enabled: "default",
     model: "default",
     effort: "default",
     policy: "default",
+    contextSharingConsent: "default",
   }),
 });
 
@@ -54,6 +65,13 @@ export function isValidAdvisorEffort(value: unknown): value is AdvisorEffort {
 
 export function isValidAdvisorPolicy(value: unknown): value is AdvisorPolicy {
   return typeof value === "string" && (ADVISOR_POLICIES as readonly string[]).includes(value);
+}
+
+/** True only for the current context-sharing consent version. Anything else is not a grant. */
+export function isCurrentAdvisorContextSharingConsent(
+  value: unknown,
+): value is typeof ADVISOR_CONTEXT_SHARING_CONSENT_VERSION {
+  return value === ADVISOR_CONTEXT_SHARING_CONSENT_VERSION;
 }
 
 /**
@@ -72,26 +90,46 @@ export function resolveAdvisorSettings(config: Pick<OcxConfig, "advisor">): Advi
   const timeoutMs = typeof timeoutRaw === "number" && Number.isFinite(timeoutRaw) && timeoutRaw >= 1_000
     ? Math.min(Math.floor(timeoutRaw), 600_000)
     : DEFAULT_ADVISOR_SETTINGS.timeoutMs;
+  // A present but non-current value (stale version, wrong type) resolves as no consent.
+  // The stored bytes are left untouched; this reader never writes an upgrade.
+  const consentConfigured = Object.prototype.hasOwnProperty.call(raw, "contextSharingConsent");
+  const contextSharingConsent = isCurrentAdvisorContextSharingConsent(raw.contextSharingConsent)
+    ? raw.contextSharingConsent
+    : null;
   return {
     enabled,
     model,
     effort,
     policy,
     timeoutMs,
+    contextSharingConsent,
     sources: {
       enabled: typeof raw.enabled === "boolean" ? "configured" : "default",
       model: typeof raw.model === "string" && raw.model.trim() !== "" ? "configured" : "default",
       effort: isValidAdvisorEffort(raw.effort) ? "configured" : "default",
       policy: isValidAdvisorPolicy(raw.policy) ? "configured" : "default",
+      contextSharingConsent: consentConfigured ? "configured" : "default",
     },
   };
 }
 
 /**
- * Whether the advisor can actually run with the current settings. `enabled` alone is not
- * enough: without a resolvable model string every consultation would fail, so the planner
- * treats this as disabled (fail-open for the worker, logged once per request that checks).
+ * Whether a consultation may send task context. Requires the switch, a model, and the
+ * current context-sharing consent. `enabled` is not consent. A miss fails closed for the
+ * data transfer and leaves the worker request itself running.
  */
 export function advisorRunnable(settings: AdvisorSettings): boolean {
-  return settings.enabled && settings.model.trim() !== "";
+  return settings.enabled
+    && settings.model.trim() !== ""
+    && settings.contextSharingConsent === ADVISOR_CONTEXT_SHARING_CONSENT_VERSION;
+}
+
+/**
+ * Enabled, with a model, but without current consent. The management surface reports
+ * `advisor_context_sharing_consent_required` and the runtime sends no task context.
+ */
+export function advisorContextSharingBlocked(settings: AdvisorSettings): boolean {
+  return settings.enabled
+    && settings.model.trim() !== ""
+    && settings.contextSharingConsent !== ADVISOR_CONTEXT_SHARING_CONSENT_VERSION;
 }

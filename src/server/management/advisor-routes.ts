@@ -12,8 +12,11 @@ import { jsonResponse } from "../auth-cors";
 import { readManagementJsonBodyOr } from "./body";
 import type { ManagementContext } from "./context";
 import {
+  ADVISOR_CONTEXT_SHARING_CONSENT_VERSION,
   ADVISOR_EFFORTS,
+  advisorContextSharingBlocked,
   advisorRunnable,
+  isCurrentAdvisorContextSharingConsent,
   isValidAdvisorEffort,
   isValidAdvisorPolicy,
   resolveAdvisorSettings,
@@ -29,12 +32,14 @@ interface AdvisorPatch {
   effort?: AdvisorEffort;
   policy?: AdvisorPolicy;
   timeoutMs?: number;
+  /** "v1" records current consent. null removes it. Enabling does not imply this field. */
+  contextSharingConsent?: typeof ADVISOR_CONTEXT_SHARING_CONSENT_VERSION | null;
   reset?: boolean;
 }
 
 type ParsedPatch = { ok: true; patch: AdvisorPatch } | { ok: false; code: string; message: string };
 
-const PATCH_KEYS = new Set(["enabled", "model", "effort", "policy", "timeoutMs", "reset"]);
+const PATCH_KEYS = new Set(["enabled", "model", "effort", "policy", "timeoutMs", "contextSharingConsent", "reset"]);
 
 type Rec = Record<string, unknown>;
 function isRec(value: unknown): value is Rec {
@@ -44,9 +49,9 @@ function isRec(value: unknown): value is Rec {
 /** Strict: unknown keys and wrong types are refused; messages name the field, never the value. */
 export function parseAdvisorSettingsPatch(body: unknown): ParsedPatch {
   if (!isRec(body)) return { ok: false, code: "invalid_body", message: "body must be a JSON object" };
-  if (Object.keys(body).length === 0) return { ok: false, code: "empty_body", message: "body must set at least one of enabled, model, effort, policy, timeoutMs or reset" };
+  if (Object.keys(body).length === 0) return { ok: false, code: "empty_body", message: "body must set at least one of enabled, model, effort, policy, timeoutMs, contextSharingConsent or reset" };
   for (const key of Object.keys(body)) {
-    if (!PATCH_KEYS.has(key)) return { ok: false, code: "unknown_field", message: "body accepts only enabled, model, effort, policy, timeoutMs and reset" };
+    if (!PATCH_KEYS.has(key)) return { ok: false, code: "unknown_field", message: "body accepts only enabled, model, effort, policy, timeoutMs, contextSharingConsent and reset" };
   }
   const patch: AdvisorPatch = {};
   if (body.reset !== undefined) {
@@ -90,17 +95,35 @@ export function parseAdvisorSettingsPatch(body: unknown): ParsedPatch {
     }
     patch.timeoutMs = Math.floor(body.timeoutMs);
   }
+  if (body.contextSharingConsent !== undefined) {
+    if (body.contextSharingConsent === null) {
+      patch.contextSharingConsent = null;
+    } else if (isCurrentAdvisorContextSharingConsent(body.contextSharingConsent)) {
+      patch.contextSharingConsent = body.contextSharingConsent;
+    } else {
+      return {
+        ok: false,
+        code: "invalid_context_sharing_consent",
+        message: `contextSharingConsent must be "${ADVISOR_CONTEXT_SHARING_CONSENT_VERSION}" or null`,
+      };
+    }
+  }
   return { ok: true, patch };
 }
 
 function advisorInfo(config: ManagementContext["config"]): Record<string, unknown> {
   const settings = resolveAdvisorSettings(config);
+  const warning = settings.enabled && settings.model.trim() === ""
+    ? "advisor_enabled_without_model"
+    : advisorContextSharingBlocked(settings)
+      ? "advisor_context_sharing_consent_required"
+      : undefined;
   return {
     settings,
     runnable: advisorRunnable(settings),
-    // A configured-but-empty model is the common "enabled but not set up" state; surface it
-    // instead of making the GUI guess from sources.
-    ...(settings.enabled && !advisorRunnable(settings) ? { warning: "advisor_enabled_without_model" } : {}),
+    // Enabled without a model cannot consult. Enabled with a model but without current
+    // consent must not send task context; the warning names that block.
+    ...(warning ? { warning } : {}),
   };
 }
 
@@ -115,6 +138,8 @@ function applyPatchInMemory(config: ManagementContext["config"], patch: AdvisorP
   if (patch.effort !== undefined) current.effort = patch.effort;
   if (patch.policy !== undefined) current.policy = patch.policy;
   if (patch.timeoutMs !== undefined) current.timeoutMs = patch.timeoutMs;
+  if (patch.contextSharingConsent === null) delete current.contextSharingConsent;
+  else if (patch.contextSharingConsent !== undefined) current.contextSharingConsent = patch.contextSharingConsent;
   config.advisor = current as ManagementContext["config"]["advisor"];
 }
 

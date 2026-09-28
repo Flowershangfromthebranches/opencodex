@@ -151,7 +151,7 @@ describe("advisor responses wiring (end-to-end)", () => {
       plainFrames("Following the advice: token store first."),
     ], workerBodies);
     const config = advisorConfig(
-      { enabled: true, model: "expert/gpt-6-astra", effort: "high", policy: "manual" },
+      { enabled: true, model: "expert/gpt-6-astra", contextSharingConsent: "v1", effort: "high", policy: "manual" },
       workerFetch,
     );
     loopbackInterceptor(config, { chatRequests });
@@ -187,7 +187,7 @@ describe("advisor responses wiring (end-to-end)", () => {
       plainFrames("Now fixing the token store."),
     ], workerBodies);
     const config = advisorConfig(
-      { enabled: true, model: "expert/gpt-6-astra", effort: "max", policy: "preflight" },
+      { enabled: true, model: "expert/gpt-6-astra", contextSharingConsent: "v1", effort: "max", policy: "preflight" },
       workerFetch,
     );
     loopbackInterceptor(config, { chatRequests });
@@ -225,7 +225,7 @@ describe("advisor responses wiring (end-to-end)", () => {
       plainFrames("working"), plainFrames("working"), plainFrames("done"),
     ], workerBodies);
     const config = advisorConfig(
-      { enabled: true, model: "expert/gpt-6-astra", policy: "preflight" },
+      { enabled: true, model: "expert/gpt-6-astra", contextSharingConsent: "v1", policy: "preflight" },
       workerFetch,
     );
     loopbackInterceptor(config, { chatRequests });
@@ -251,7 +251,7 @@ describe("advisor responses wiring (end-to-end)", () => {
       plainFrames("working"), plainFrames("working"), plainFrames("working"),
     ], workerBodies);
     const config = advisorConfig(
-      { enabled: true, model: "expert/gpt-6-astra", policy: "preflight" },
+      { enabled: true, model: "expert/gpt-6-astra", contextSharingConsent: "v1", policy: "preflight" },
       workerFetch,
     );
     loopbackInterceptor(config, { chatRequests });
@@ -280,7 +280,7 @@ describe("advisor responses wiring (end-to-end)", () => {
       plainFrames("plain answer"), plainFrames("plain answer 2"),
     ], workerBodies);
     const config = advisorConfig(
-      { enabled: true, model: "expert/gpt-6-astra", policy: "preflight" },
+      { enabled: true, model: "expert/gpt-6-astra", contextSharingConsent: "v1", policy: "preflight" },
       workerFetch,
     );
     // Disabled advisor: no plan, no consultation — even for an oriented conversation.
@@ -307,7 +307,7 @@ describe("advisor responses wiring (end-to-end)", () => {
       plainFrames("Done with the advice."),
     ], workerBodies);
     const config = advisorConfig(
-      { enabled: true, model: "expert/gpt-6-astra", policy: "manual" },
+      { enabled: true, model: "expert/gpt-6-astra", contextSharingConsent: "v1", policy: "manual" },
       workerFetch,
     );
     loopbackInterceptor(config, { chatRequests });
@@ -333,7 +333,7 @@ describe("advisor responses wiring (end-to-end)", () => {
       plainFrames("done with advice"),
     ], workerBodies);
     const config = advisorConfig(
-      { enabled: true, model: "expert/gpt-6-astra", policy: "manual" },
+      { enabled: true, model: "expert/gpt-6-astra", contextSharingConsent: "v1", policy: "manual" },
       workerFetch,
     );
     loopbackInterceptor(config, { chatRequests });

@@ -1011,7 +1011,8 @@ export interface OcxConfig {
    * through the normal routing authority, so the advisor may be ANY routable provider/model), and
    * reinjects the advice so the original worker continues. `policy: "preflight"` additionally
    * attempts one automatic consultation per task without worker cooperation, once the task has
-   * produced orientation evidence.
+   * produced orientation evidence. Task context is sent only after
+   * `contextSharingConsent` is the current version; `enabled` does not grant that consent.
    */
   advisor?: OcxAdvisorConfig;
   /** Vision sidecar: describe images via a gpt vision model so text-only models can "see" them. */
@@ -1541,6 +1542,12 @@ export interface OcxAdvisorConfig {
   policy?: "manual" | "preflight";
   /** Advisor fetch timeout (ms). Default 120000. */
   timeoutMs?: number;
+  /**
+   * Operator consent to send task conversation and tool results to the configured Advisor
+   * provider. Only `"v1"` is current. Absent or any other value means the runtime must not
+   * send task context. `enabled: true` does not grant this, and upgrades do not write it.
+   */
+  contextSharingConsent?: "v1";
 }
 
 export interface OcxWebSearchSidecarConfig {

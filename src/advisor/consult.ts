@@ -7,10 +7,11 @@
  * router and never touches provider credentials. Any model string the router accepts works here:
  * a bare native model, an explicit "provider/model", or an account-qualified native model.
  *
- * Recursion fence: the request carries `x-opencodex-advisor-internal: 1`. The Chat surface detects
- * the raw header before its bridge rebuilds headers and carries it into handleResponses as
- * `advisorInternal`; a marked request never plans an advisor consultation (depth cap 1 — the same
- * structure as the vision describe fence).
+ * Recursion fence: the request carries `x-opencodex-advisor-internal` set to this process's
+ * capability. The Chat surface checks that value before its bridge rebuilds headers and carries
+ * the fact into handleResponses as `advisorInternal`. A marked request never plans an advisor
+ * consultation (depth cap 1 — the same structure as the vision describe fence). The capability
+ * is not a literal and is not forwarded upstream.
  *
  * Failure contract: never throws. A failed consultation returns `ok: false` plus a redacted,
  * bounded error string; the worker keeps going (fail-open) either with an explicit
@@ -173,9 +174,11 @@ export async function consultAdvisor(
       }
       const durationMs = Date.now() - t0;
       if (!res.ok) {
+        // Status only. Upstream bodies can echo the consultation prompt; they are not logged
+        // and not handed to the worker. display-safe body text is intentionally not copied here.
         return {
           ok: false, advice: "", advisorModel: input.advisorModel,
-          error: `advisor HTTP ${res.status}: ${redactSecretString(raw.slice(0, 200))}`,
+          error: `advisor HTTP ${res.status}`,
           durationMs,
         };
       }

@@ -16,6 +16,7 @@ interface AdvisorSettings {
   effort: string;
   policy: "manual" | "preflight";
   timeoutMs: number;
+  contextSharingConsent: "v1" | null;
 }
 
 interface AdvisorDto {
@@ -52,6 +53,7 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
           effort: submitted.effort,
           policy: submitted.policy,
           timeoutMs: submitted.timeoutMs,
+          contextSharingConsent: submitted.contextSharingConsent,
         }),
       });
       if (!response.ok) {
@@ -83,6 +85,7 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   const modelMissing = draft.enabled && draft.model.trim() === "";
+  const consentMissing = draft.enabled && draft.model.trim() !== "" && draft.contextSharingConsent !== "v1";
   const rowStyle = { display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.6rem 0" } as const;
   const labelStyle = { minWidth: "11rem" } as const;
 
@@ -138,6 +141,18 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
             <option value="preflight">{t("advisor.policy.preflight")}</option>
           </select>
         </div>
+        <div style={{ margin: "0.8rem 0" }}>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: "0.6rem" }}>
+            <input
+              type="checkbox"
+              checked={draft.contextSharingConsent === "v1"}
+              disabled={saving}
+              aria-label={t("advisor.consent.label")}
+              onChange={event => edit({ contextSharingConsent: event.target.checked ? "v1" : null })}
+            />
+            <span>{t("advisor.consent.label")}</span>
+          </label>
+        </div>
         <div style={rowStyle}>
           <label htmlFor="advisor-timeout" style={labelStyle}>{t("advisor.timeout")}</label>
           <input
@@ -152,6 +167,7 @@ function AdvisorEditor({ apiBase, dto }: { apiBase: string; dto: AdvisorDto }) {
         </div>
       </div>
       {modelMissing && <Notice tone="warn">{t("advisor.warning.noModel")}</Notice>}
+      {consentMissing && <Notice tone="warn">{t("advisor.consent.required")}</Notice>}
       {saveError && <Notice tone="err">{saveError}</Notice>}
       {savedFlash && <Notice tone="ok">{t("advisor.saved")}</Notice>}
       <div style={{ marginTop: "0.75rem" }}>
@@ -183,6 +199,7 @@ export default function Advisor({ apiBase }: { apiBase: string }) {
       <p className="muted">{t("advisor.description")}</p>
       <Notice tone="warn">{t("advisor.costNote")}</Notice>
       <Notice tone="warn">{t("advisor.privacyNote")}</Notice>
+      <Notice tone="warn">{t("advisor.disclosure")}</Notice>
       {state.showSkeleton && <Notice tone="warn">{t("common.loading")}</Notice>}
       {state.showError && !state.showSkeleton && (
         <Notice tone="err">

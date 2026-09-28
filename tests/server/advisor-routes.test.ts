@@ -85,10 +85,16 @@ describe("PUT /api/advisor/settings", () => {
     const config = baseConfig();
     const { ctx, saved } = makeCtx(config, "PUT", { enabled: true, model: "expert/gpt-6-astra" });
     const response = await handleAdvisorRoutes(ctx);
-    const body = await response!.json() as { settings: { enabled: boolean; model: string }; runnable: boolean };
+    const body = await response!.json() as {
+      settings: { enabled: boolean; model: string; contextSharingConsent: string | null };
+      runnable: boolean;
+      warning?: string;
+    };
     expect(body.settings.enabled).toBe(true);
     expect(body.settings.model).toBe("expert/gpt-6-astra");
-    expect(body.runnable).toBe(true);
+    expect(body.settings.contextSharingConsent).toBeNull();
+    expect(body.runnable).toBe(false);
+    expect(body.warning).toBe("advisor_context_sharing_consent_required");
     expect(saved).toHaveLength(1);
     // In-memory and persisted state agree.
     expect((config as { advisor?: { model?: string } }).advisor?.model).toBe("expert/gpt-6-astra");
@@ -216,5 +222,83 @@ describe("parseAdvisorSettingsPatch (strict validation)", () => {
     // Exactly 200 trimmed characters is still accepted.
     const okCtx = makeCtx(baseConfig(), "PUT", { model: "m".repeat(200) }).ctx;
     expect((await handleAdvisorRoutes(okCtx))!.status).toBe(200);
+  });
+});
+
+describe("PUT /api/advisor/settings context-sharing consent", () => {
+  test("current consent is stored, returned, and makes a configured advisor runnable", async () => {
+    const config = baseConfig();
+    const { ctx, saved } = makeCtx(config, "PUT", {
+      enabled: true,
+      model: "expert/gpt-6-astra",
+      contextSharingConsent: "v1",
+    });
+    const body = await (await handleAdvisorRoutes(ctx))!.json() as {
+      settings: { contextSharingConsent: string | null; enabled: boolean };
+      runnable: boolean;
+    };
+    expect(body.settings.contextSharingConsent).toBe("v1");
+    expect(body.settings.enabled).toBe(true);
+    expect(body.runnable).toBe(true);
+    expect((config as { advisor?: { contextSharingConsent?: string } }).advisor?.contextSharingConsent).toBe("v1");
+    expect(saved).toHaveLength(1);
+  });
+
+  test("unknown versions and wrong types are refused and nothing is saved", async () => {
+    for (const contextSharingConsent of ["v0", "V1", true, 1, ""]) {
+      const config = baseConfig();
+      const { ctx, saved } = makeCtx(config, "PUT", { contextSharingConsent });
+      const response = await handleAdvisorRoutes(ctx);
+      expect(response!.status).toBe(400);
+      const body = await response!.json() as { error: { code: string } };
+      expect(body.error.code).toBe("invalid_context_sharing_consent");
+      expect(saved).toHaveLength(0);
+    }
+  });
+
+  test("null removes consent and immediately blocks a previously runnable advisor", async () => {
+    const config = baseConfig();
+    (config as { advisor?: unknown }).advisor = {
+      enabled: true,
+      model: "expert/gpt-6-astra",
+      contextSharingConsent: "v1",
+    };
+    const { ctx } = makeCtx(config, "PUT", { contextSharingConsent: null });
+    const body = await (await handleAdvisorRoutes(ctx))!.json() as {
+      settings: { contextSharingConsent: string | null; enabled: boolean };
+      runnable: boolean;
+      warning?: string;
+    };
+    expect(body.settings.enabled).toBe(true);
+    expect(body.settings.contextSharingConsent).toBeNull();
+    expect(body.runnable).toBe(false);
+    expect(body.warning).toBe("advisor_context_sharing_consent_required");
+    expect((config as { advisor?: { contextSharingConsent?: string } }).advisor?.contextSharingConsent).toBeUndefined();
+  });
+
+  test("reset removes consent along with the rest of the advisor block", async () => {
+    const config = baseConfig();
+    (config as { advisor?: unknown }).advisor = {
+      enabled: true,
+      model: "expert/gpt-6-astra",
+      contextSharingConsent: "v1",
+    };
+    const { ctx } = makeCtx(config, "PUT", { reset: true });
+    const body = await (await handleAdvisorRoutes(ctx))!.json() as {
+      settings: { enabled: boolean; contextSharingConsent: string | null };
+      runnable: boolean;
+    };
+    expect(body.settings.enabled).toBe(false);
+    expect(body.settings.contextSharingConsent).toBeNull();
+    expect(body.runnable).toBe(false);
+    expect((config as { advisor?: unknown }).advisor).toBeUndefined();
+  });
+
+  test("enabling without consent is stored and left unrunnable", async () => {
+    const config = baseConfig();
+    const { ctx } = makeCtx(config, "PUT", { enabled: true, model: "expert/gpt-6-astra" });
+    const body = await (await handleAdvisorRoutes(ctx))!.json() as { runnable: boolean; warning?: string };
+    expect(body.runnable).toBe(false);
+    expect(body.warning).toBe("advisor_context_sharing_consent_required");
   });
 });

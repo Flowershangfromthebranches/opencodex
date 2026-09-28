@@ -22,21 +22,27 @@ never sees — even a worker that never spawns anything can be advised.
     "enabled": true,
     "model": "gpt-6-astra",
     "effort": "max",
-    "policy": "preflight"
+    "policy": "preflight",
+    "contextSharingConsent": "v1"
   }
 }
 ```
 
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `enabled?` | `boolean` | `false` | Master switch. Disabled means zero advisor behavior on the request path. |
+| `enabled?` | `boolean` | `false` | Master switch. Disabled means zero advisor behavior on the request path. Enabling does not record consent. |
 | `model?` | `string` | — | The expert model. Any model string the router accepts: a bare native model (`gpt-6-astra`), an explicit `provider/model` (`anthropic/claude-sonnet-4-6`, `xai/grok-...`), or an account-qualified native model. Cross-provider is fully supported: the worker and the advisor do not need to share a provider. |
 | `effort?` | `string` | `"max"` | Reasoning effort for the advisor call (`low` through `ultra`). |
 | `policy?` | `"manual" \| "preflight"` | `"manual"` | When the advisor is consulted. |
 | `timeoutMs?` | `number` | `120000` | Loopback consultation timeout. |
+| `contextSharingConsent?` | `"v1"` | absent | Operator consent to send task context to the configured Advisor provider. Only `"v1"` is current. Absent, stale, or any other value means no task context is sent. |
 
-Manage it with the dashboard **Advisor** page or
-`ocx advisor status|on|off|set --model <model> --effort <effort> --policy <manual|preflight>`.
+Manage it from the dashboard **Advisor** page (the context-sharing checkbox starts unchecked) or
+with `ocx advisor status`, `ocx advisor on --ack-context-sharing`, `ocx advisor consent`,
+`ocx advisor consent --revoke`, `ocx advisor off`, and
+`ocx advisor set --model <model> --effort <effort> --policy <manual|preflight>`.
+`ocx advisor on` without `--ack-context-sharing` does not enable cross-provider sharing when
+consent is missing: it prints this disclosure and stops. `ocx advisor set` does not grant consent.
 
 ## Policies
 
@@ -51,28 +57,47 @@ Manage it with the dashboard **Advisor** page or
   the failure's ledger entry expires, so a temporary advisor outage does not permanently
   silence the policy.
 
+## Consent
+
+Task context is not sent until the operator records context-sharing consent `v1`. Consent is
+versioned so a later, wider disclosure can require `v2` instead of reusing this grant. The
+runtime enforces it. A missing or stale value leaves the advisor unrunnable
+(`advisor_context_sharing_consent_required`) without failing the coding request. Neither model,
+and no string in the task, can grant consent.
+
 ## What the advisor sees
 
-**Cross-provider data transfer:** when the advisor provider differs from the worker's provider,
-the consultation payload sends the task conversation and tool results to a second model
-provider. Do not enable the advisor with a provider you do not trust with this task content.
+A consultation may send:
 
-OpenCodex never injects its own credentials into the payload: no provider API keys, no
-authorization or OAuth material, no backend-only secrets, and no environment variables.
-Chain-of-thought is never transferred, and encrypted provider-only content is never decrypted or
-forwarded. **Task content is not generally secret-redacted**: a credential someone pasted into
-the task, or a token a tool printed in its output, is forwarded as-is — a proxy cannot reliably
-tell a secret from a string, and OpenCodex does not run DLP over the conversation. Do not enable
-the advisor on tasks whose content is too sensitive for the advisor provider.
+- the latest user task
+- user, assistant, and developer text visible in the parsed conversation
+- tool calls and tool arguments
+- tool results
+- the worker tool catalog and descriptions
+- the worker identity and the configured Advisor model
+- an optional focus question when the worker calls `advisor()`
 
-The consultation payload is built from the parsed conversation the worker model is already
-allowed to see: the user task, the conversation, tool calls and their results, the worker's tool
-catalog, and both model identities. The advisor returns prose advice, re-injected as identifiable
-wrapper-tagged content with no system authority: MANUAL advice arrives as a paired tool result
-carrying the `<opencodex_advisor>` wrapper, and AUTOMATIC preflight advice as a developer message
-carrying the `<opencodex_advisor_preflight>` wrapper. Chain-of-thought is never
-transferred and encrypted provider content is never decrypted; the proxy injects none of its own
-credentials, but task content itself is forwarded as-is (see the cross-provider notice above).
+The configured Advisor provider may differ from the worker provider.
+
+OpenCodex does not insert provider API keys, authorization headers, OAuth tokens, backend-only
+config secrets, process environment, or hidden chain-of-thought into that prompt. It does not
+decrypt or forward encrypted provider-private reasoning. **Task content is not secret-redacted.**
+A key pasted into the task, a secret in a file the tools read, or a token printed by a tool or
+log can be sent. OpenCodex does not run general DLP.
+
+## Authority
+
+Manual advice is a tool result for the `advisor` call the worker made. The result is a JSON
+object. Its `advice` field is the Advisor model's text. Its `status` is set by the runtime.
+
+Automatic advice is a developer message because current provider-neutral continuation has no
+unpaired lower-trust result. The runtime-owned instruction in that message is the transport
+policy. The JSON object after it is quoted untrusted advisory data. Quoting stops the Advisor
+text from closing the envelope or setting provenance. It does not make developer-role transport
+perfect isolation. A dedicated consultation-result protocol would be a stronger boundary.
+
+Suppression does not read Advisor strings. Automatic dedup is the server-owned ledger. A
+developer message, including one that copies the transport text, does not suppress preflight.
 
 ## Cost and accounting
 
@@ -87,8 +112,10 @@ The advisor fails open. A DISPATCHED consultation that fails (unavailable model,
 provider, timeout) gives the worker a short, non-misleading "advisor unavailable" notice — a
 `<opencodex_advisor_unavailable>` message for preflight, an error tool result for manual — and
 the task continues; only a CANCELLED consultation injects nothing, because the caller is gone.
-A plan that never dispatches (advisor disabled, or enabled without a model) sends no notice at
-all, because no consultation started. An advisor failure never fails the coding request, and a
+A plan that never dispatches (advisor disabled, enabled without a model, or enabled without
+current context-sharing consent) sends no preflight notice, because no consultation started.
+A manual `advisor()` call without current consent returns a consent-required tool result and
+sends nothing. An advisor failure never fails the coding request, and a
 consultation never switches the session's main model.
 
 ## PR1 limitations

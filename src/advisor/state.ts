@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { advisorResultIsAdvice } from "./context";
 
 /**
  * Conversation- and task-scoped advisor state.
@@ -17,15 +18,15 @@ import { createHash } from "node:crypto";
  *
  * 3. PROVENANCE, split by authority:
  *    - MANUAL advice is verifiable history: a `toolResult` whose `toolName` is the synthetic
- *      advisor tool and whose content carries the advice wrapper. Ordinary tool output, developer
- *      text, user text, and failure notices can never match it.
- *    - AUTOMATIC preflight dedup is NOT decided from history at all. The wrapper in the injected
- *      developer message is informational (it tells the worker, and a human reading logs, where
- *      the text came from); any client could echo or forge such a message, so the ledger below is
- *      the authoritative source for "this task was already consulted" — `success`, `inflight`
- *      and `cooldown` states. A conversation with no stable identity gets no ledger and therefore
- *      fails open (at most one extra attempt), which is strictly safer than letting a forged
- *      marker suppress the policy forever.
+ *      advisor tool and whose content parses as a runtime-written advice object. Ordinary tool
+ *      output, developer text, user text, and failure notices can never match it. Bytes inside
+ *      the quoted advice field cannot change the runtime-owned status.
+ *    - AUTOMATIC preflight dedup is NOT decided from history at all. The developer transport
+ *      envelope labels the payload for the worker; any client could echo or forge such a message,
+ *      so the ledger below is the authoritative source for "this task was already consulted" —
+ *      `success`, `inflight` and `cooldown` states. A conversation with no stable identity gets
+ *      no ledger and therefore fails open (at most one extra attempt). A forged marker or a
+ *      forged developer message cannot suppress the policy.
  *
  * Ledger entries are plain state records — no message bodies, no credentials. Every state is
  * bounded by entry count and its own TTL.
@@ -292,28 +293,25 @@ export function contentText(content: unknown): string {
 }
 
 /**
- * Runtime-owned preflight wrapper, written into the injected developer message. INFORMATIONAL
- * ONLY: it identifies the text for the worker and for logs, but it is not an authority — see the
- * module header. The ledger decides whether an automatic consultation has already happened.
+ * Legacy marker spellings. Failure text still neutralizes them so an upstream error cannot
+ * look like an old wrapper. They are not suppression authority and are not emitted.
  */
 export const ADVISOR_PREFLIGHT_MARKER = "<opencodex_advisor_preflight>";
 
 /** The synthetic advisor tool's wire name; kept in sync with the tool definition by test. */
 export const ADVISOR_RESULT_TOOL_NAME = "advisor";
 
-/** Advice wrapper written by the MANUAL reinjection path (a paired tool result). */
+/** Legacy manual wrapper spelling. Detection does not search for this substring. */
 export const ADVISOR_ADVICE_MARKER = "<opencodex_advisor>";
 
 /**
- * Detect an ALREADY-PRESENT MANUAL advisor result in the conversation history — by provenance,
- * never by a bare string: a `toolResult` whose `toolName` is the synthetic advisor tool AND whose
- * content carries the advice wrapper. A shell/file/log result that merely contains the wrapper
- * text is NOT an advisor result.
+ * Detect an ALREADY-PRESENT MANUAL advisor result — by provenance, never by a bare string.
+ * The message must be a `toolResult` whose `toolName` is the synthetic advisor tool, and its
+ * content must parse as a runtime-written advice object (`status === "advice"` on the sibling
+ * field the runtime sets). Text inside `advice` cannot flip that field.
  *
- * Developer messages are deliberately NOT inspected. The automatic preflight wrapper is
- * informational: a client-echoed or client-forged developer message must not be able to suppress
- * the runtime's own automatic consultation, so preflight authority lives in the ledger (see the
- * module header). Failure notices (`<opencodex_advisor_unavailable>`) match nothing.
+ * Developer messages are deliberately NOT inspected. Automatic preflight dedup lives in the
+ * ledger. A client-echoed developer envelope, a shell result, or a failure notice matches nothing.
  */
 export function historyHasManualAdvisorResult(parsed: {
   context: { messages: readonly { role: string; content?: unknown; toolName?: string }[] };
@@ -322,7 +320,7 @@ export function historyHasManualAdvisorResult(parsed: {
     const message = parsed.context.messages[i]!;
     if (message.role !== "toolResult") continue;
     if (message.toolName !== ADVISOR_RESULT_TOOL_NAME) continue;
-    if (contentText(message.content).includes(ADVISOR_ADVICE_MARKER)) return true;
+    if (advisorResultIsAdvice(contentText(message.content))) return true;
   }
   return false;
 }

@@ -62,37 +62,60 @@ provider credentials.
 
 ## Context and safety boundaries
 
-**Cross-provider data transfer is the feature's documented cost:** a consultation sends the
-task conversation and tool results to the configured advisor provider, which may differ from the
-worker's provider — the GUI, docs, and config description must say so. The proxy injects none of
-its own credentials (no provider API keys, Authorization/OAuth material, backend-only secrets,
-or environment variables), never transfers chain-of-thought, and never decrypts or forwards
-encrypted provider-only content. **Task content is not generally secret-redacted** — pasted
-credentials and token-bearing tool output travel as-is, because no reliable string-level
-secret detector exists; no DLP claim may be made in any doc, GUI string, or PR text. The payload
-is built exclusively from the parsed conversation the model is already allowed to see: user task, conversation, tool calls and their results, the worker's tool catalog,
-and both model identities. The advisor system instruction states the boundary explicitly:
-conversation history, tool outputs, logs, file contents, and instructions quoted inside them are
-untrusted evidence — the advisor analyses them and never obeys them, because only its own system
-instruction defines its role (defense in depth, not a claim that injection is solved). Thinking and
-chain-of-thought parts are never included, encrypted
-provider content is never decrypted or forwarded, and failure text is redacted and bounded before
-it can reach any context. Advice is re-injected as identifiable wrapper-tagged content with no
-system authority: manual consultations arrive as paired tool results carrying the
-`<opencodex_advisor>` wrapper, and preflight advice as a marked developer message carrying the
-`<opencodex_advisor_preflight>` wrapper.
+**Context-sharing consent is required before any of that transfer.** `advisor.enabled` does not
+grant it. The operator records `advisor.contextSharingConsent: "v1"` from the dashboard checkbox,
+`ocx advisor consent` / `ocx advisor on --ack-context-sharing`, or `PUT /api/advisor/settings`.
+Absent, stale, or wrong-typed consent resolves as no consent. The runtime then does not call the
+Advisor provider: preflight returns without injecting, and a manual `advisor()` call returns a
+consent-required tool result. Task text, the worker, and the Advisor model cannot grant consent.
+Upgrades do not write consent for an existing `enabled: true` block.
+
+**What a consultation may send** (only after current consent): the latest user task; user,
+assistant, and developer text in the parsed conversation; tool calls and arguments; tool results;
+the worker tool catalog and descriptions; worker identity; the configured Advisor model; and an
+optional focus question on a manual call. The builder reads parsed task state only.
+
+**What OpenCodex does not insert:** provider API keys, Authorization headers, OAuth tokens,
+backend-only config secrets, process environment, hidden chain-of-thought, or decrypted
+provider-private reasoning. **Task content is not generally secret-redacted.** A pasted key, a
+secret in a file the tools read, or a token printed by a tool can be sent. There is no DLP claim.
+
+The Advisor's own system instruction treats the transcript and tool output as untrusted evidence.
+That is defense in depth, not a claim that prompt injection into the Advisor is solved.
+
+## Authority contract
+
+Automatic advice still uses a developer-role message. Current provider-neutral continuation has
+no unpaired lower-trust consultation result: a tool result would require a tool call the worker
+did not make, which Anthropic rejects and which continuation pairing cannot represent.
+
+Inside that message the roles are split:
+
+- The fixed transport instruction is runtime-owned developer policy. It tells the worker that the
+  following JSON is untrusted advisory data and is not operator policy.
+- `advisor_result.advice` is the Advisor model's output, JSON-string-escaped. Markers, `system:`,
+  `developer:`, or a forged closing wrapper inside it stay inside the string. They do not change
+  `status`, which the runtime sets on a sibling field.
+- Manual advice is a paired tool result for a call the worker made, using the same JSON object.
+  It is not a developer message.
+
+This is not perfect prompt-injection isolation. Developer-role transport is a stronger trust
+channel than a dedicated consultation-result protocol. The instruction and the quoting reduce
+instruction confusion; they do not remove the transport limitation.
+
+Provenance does not trust Advisor strings. Manual "already advised" is a `toolResult` whose
+`toolName` is `advisor` and whose content parses as `advisor_result.status === "advice"`.
+Automatic preflight dedup is the claim ledger only. Developer text is not inspected. A marker
+in shell output, user text, or a developer message cannot suppress a consultation.
 
 ## Provenance and the preflight claim
 
-"Already advised" is decided by PROVENANCE, never by scanning for a bare string — and only for
-MANUAL advice: a `toolResult` whose `toolName` is the synthetic advisor tool and whose content
-carries the `<opencodex_advisor>` wrapper. Automatic preflight is NOT decided from history at all;
-its dedup authority is the claim ledger described below, so a client cannot suppress the policy
-by echoing or forging a developer message.
-
-Ordinary tool output, developer text, user text, and failure notices (`<opencodex_advisor_unavailable>`)
-match nothing, so nothing a shell, log, or upstream error body prints can suppress or forge advice. The guard never composes failure prose itself: `AdvisorPlan.formatUnavailable` owns that
-text and neutralizes untrusted fragments.
+"Already advised" for a manual result is the parsed runtime status described above, not a
+substring search. Automatic preflight is NOT decided from history. Ordinary tool output, developer
+text, user text, and failure notices (`<opencodex_advisor_unavailable>`) match nothing. The guard
+never composes failure prose itself: `AdvisorPlan.formatUnavailable` owns that text and
+neutralizes untrusted fragments. Upstream HTTP failures are logged as a status code only, so an
+error body that echoes the prompt is not written to the worker context or the log line.
 
 Keys are SHA-256 digests, never a short fold and never raw text: one domain-separated digest
 over `conversation identity + task boundary + worker model`, where the task boundary digests the
@@ -100,11 +123,10 @@ FULL latest user text (no truncation) together with the user-turn count. Task id
 correctness boundary, so a 32-bit hash is not acceptable there, and storing only the digest means
 a captured key reveals nothing about the conversation.
 
-Automatic-preflight dedup is ledger-authoritative. The `<opencodex_advisor_preflight>` wrapper in
-the injected developer message is informational — it labels the text for the worker and for logs —
-and developer messages are never inspected for suppression, because a client could echo or forge
-one. Manual advice remains verifiable history (paired tool result, `toolName` = the synthetic
-advisor tool).
+Automatic-preflight dedup is ledger-authoritative. The developer transport envelope labels the
+payload for the worker. Developer messages are never inspected for suppression. Manual advice
+remains a paired tool result whose `toolName` is the synthetic advisor tool and whose JSON
+`status` is the runtime-owned value `advice`.
 
 The preflight ledger is an atomic CLAIM table, not a has-then-mark pair: `claim` returns
 `claimed` / `inflight` / `complete` / `cooldown` with an ownership token, and a settlement whose
@@ -116,6 +138,32 @@ are conversation identity + task boundary + worker model, reusing the existing `
 Cursor / replay-scope identities. A client with NO stable identity stays out of the ledger
 entirely: it is limited to request-scoped dedup and genuine in-history provenance (fail-open),
 so two independent identity-less conversations can never suppress each other.
+
+## Privacy and security
+
+Assets: task contents, tool outputs, credentials that happen to be inside them, provider auth
+credentials, conversation integrity, and the worker instruction hierarchy.
+
+Trust boundaries:
+
+- client → OpenCodex → worker provider
+- OpenCodex → Advisor provider
+- Advisor provider → OpenCodex → worker
+
+| Threat | Control |
+| --- | --- |
+| Accidental cross-provider disclosure | Advisor defaults off. Current versioned consent is required in addition to `enabled` and a model. The dashboard, CLI, and docs state what is sent. |
+| Stale consent after a wider disclosure | Only `"v1"` is current. Any other stored value resolves as no consent and does not authorize transfer. |
+| Consent bypass by the worker, Advisor, or task text | Consent is read only from operator config written by the management API, dashboard, or CLI. |
+| Prompt injection from task or tool output into the Advisor | The Advisor system instruction treats that material as untrusted evidence. |
+| Malicious Advisor output | Runtime-owned transport instruction plus a JSON-quoted payload. Provenance and suppression do not trust Advisor strings. The Advisor has no tools. |
+| Developer-role trust elevation | Documented limitation. The payload is quoted; the role is still a stronger channel than a dedicated result item. |
+| Marker or provenance spoofing | Manual detection parses `status` on the runtime object. Developer text is not a suppression signal. |
+| Internal loopback spoofing | 256-bit process-local capability, timing-safe compare, not a literal, not forwarded upstream, rotated on restart. |
+| Duplicate consultation | Atomic claim ledger with an ownership token. |
+| Accidental backend-secret injection | The context builder reads parsed task state, not env, config secrets, or auth headers. |
+| Logging of prompt or error bodies | Consultation logs carry model ids, timing, and a bounded status. HTTP failures omit the upstream body. |
+| Saturated ledger or provider failure | Saturated ledger fails open for the worker. Provider failure uses a short cooldown and does not fail the coding request. |
 
 ## State
 
@@ -136,7 +184,9 @@ fail-open for correctness and only one extra expert call.
   advice. A failed attempt is recorded under its own ledger key (no retry storm within the TTL)
   and injected with the `<opencodex_advisor_unavailable>` wrapper, which
   historyHasManualAdvisorResult deliberately does not match: a failure is not advice and does not permanently suppress the
-  policy. No semantic stagnation detection exists in PR1.
+  policy. No semantic stagnation detection exists in PR1. Both policies require current
+  `contextSharingConsent` before any task context is sent. Without it, preflight does not run
+  and a manual call returns a consent-required result.
 
 ## Observability
 
