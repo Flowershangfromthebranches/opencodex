@@ -30,6 +30,11 @@ describe("internal-call capability — server-owned authority", () => {
     expect(isInternalCallCapability("x".repeat(43))).toBe(false);
   });
 
+  test("an unminted process capability rejects shaped input without minting", () => {
+    setInternalCallCapabilityForTests(null);
+    expect(isInternalCallCapability("Z".repeat(43))).toBe(false);
+  });
+
   test("the process's own capability IS accepted, and the header name is stable", () => {
     expect(ADVISOR_INTERNAL_CAPABILITY_HEADER).toBe("x-opencodex-advisor-internal");
     expect(internalCallCapability()).toMatch(/^[A-Za-z0-9_-]{43}$/);

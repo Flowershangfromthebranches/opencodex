@@ -47,7 +47,8 @@ export function setInternalCallCapabilityForTests(value: string | null): void {
  */
 export function isInternalCallCapability(supplied: string | null | undefined): boolean {
   if (typeof supplied !== "string" || !isLocalAttestationSecret(supplied)) return false;
-  const expected = internalCallCapability();
+  if (processCapability === null) return false;
+  const expected = processCapability;
   const suppliedBytes = Buffer.from(supplied);
   const expectedBytes = Buffer.from(expected);
   return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
