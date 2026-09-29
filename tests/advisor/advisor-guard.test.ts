@@ -249,4 +249,27 @@ describe("createAdvisorGuard — manual advisor() interception", () => {
     expect(secondStr).toContain("a1");
     expect(secondStr).toContain("advice body");
   });
+
+  test("empty-completion retry stream passes through advisor guard without leaking synthetic call", async () => {
+    const recorder = { consults: [] as { reason: string; question: string | undefined }[] };
+    const { requests, continuation, queues } = makeContinuation();
+    queues.push([{ type: "text_delta", text: "recovered after retry" }, { type: "done" }]);
+    const guard = createAdvisorGuard(planFrom(recorder));
+
+    const retryStream = (async function* () {
+      yield* advisorCallEvents("a_retry", { question: "how to retry?" });
+      yield { type: "done" };
+    })();
+
+    const events = await collect(guard({
+      parsed: baseParsed(),
+      firstEvents: retryStream,
+      continuation,
+    }));
+
+    expect(events.some(e => e.type === "tool_call_start" || e.type === "tool_call_delta" || e.type === "tool_call_end")).toBe(false);
+    expect(events.some(e => e.type === "text_delta" && e.text === "recovered after retry")).toBe(true);
+    expect(recorder.consults).toEqual([{ reason: "manual", question: "how to retry?" }]);
+    expect(requests).toHaveLength(1);
+  });
 });
