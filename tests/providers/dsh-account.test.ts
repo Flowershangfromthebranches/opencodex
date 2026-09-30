@@ -6,7 +6,7 @@ import { getProviderRegistryEntry } from "../../src/providers/registry";
 import { deriveProviderPresets } from "../../src/providers/derive";
 import { OAUTH_PROVIDERS } from "../../src/oauth";
 import { fetchDshAccountQuota } from "../../src/providers/quota/dsh-account";
-import { TERMINAL_QUOTA_FAILURE } from "../../src/providers/quota/report-cache";
+import { AUTHORITATIVE_EMPTY_QUOTA, TERMINAL_QUOTA_FAILURE } from "../../src/providers/quota/report-cache";
 import { SENSITIVE_KEY_PATTERN, redactSecretString } from "../../src/lib/redact";
 import {
   DSH_ACCOUNT_MODELS,
@@ -28,6 +28,8 @@ describe("dsh-account provider registry entry", () => {
     expect(entry?.adapter).toBe("dsh-account");
     expect(entry?.oauthId).toBe("dsh-account");
     expect(entry?.label).toBe("DeepSeek Account (DSH)");
+    expect(entry?.featured).toBe(false);
+    expect(entry?.dashboardPreset).toBe(true);
   });
 
   test("defines authoritative static models from DSH upstream", () => {
@@ -61,13 +63,12 @@ describe("dsh-account quota probe", () => {
     globalThis.fetch = originalFetch;
   });
 
-  test("probes get_user_summary and formats CNY currency correctly", async () => {
+  test("returns AUTHORITATIVE_EMPTY_QUOTA on successful 200 get_user_summary with code 0", async () => {
+    let capturedHeaders: Record<string, string> | undefined;
     globalThis.fetch = async (input, init) => {
       const url = String(input);
       if (url.includes("/api/v0/users/get_user_summary")) {
-        const headers = init?.headers as Record<string, string>;
-        expect(headers["x-dsh-auth-token"]).toBe("test-token");
-
+        capturedHeaders = init?.headers as Record<string, string>;
         const mockBody = {
           code: 0,
           data: {
@@ -89,15 +90,57 @@ describe("dsh-account quota probe", () => {
     };
 
     const res = await fetchDshAccountQuota("dsh-account", "test-token");
-    expect(res).not.toBeNull();
-    expect(res).not.toBe(TERMINAL_QUOTA_FAILURE);
+    expect(capturedHeaders?.["x-dsh-auth-token"]).toBe("test-token");
+    expect(res).toBe(AUTHORITATIVE_EMPTY_QUOTA);
+  });
 
-    if (res && typeof res === "object") {
-      const windows = res.quota.customWindows ?? [];
-      expect(windows.some(w => w.label.includes("Normal Wallet (¥100.00)"))).toBe(true);
-      expect(windows.some(w => w.label.includes("Bonus Wallet (¥15.00)"))).toBe(true);
-      expect(windows.some(w => w.label.includes("Total Spend (¥32.50)"))).toBe(true);
-    }
+  test("returns AUTHORITATIVE_EMPTY_QUOTA on zero balance rather than fabricating 0% used quota", async () => {
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/v0/users/get_user_summary")) {
+        const mockBody = {
+          code: 0,
+          data: {
+            biz_code: 0,
+            biz_data: {
+              user_summary: {
+                user_id: "user_empty",
+                normal_wallets: [{ currency: "CNY", balance: "0.00" }],
+                bonus_wallets: [{ currency: "CNY", balance: "0.00" }],
+              },
+            },
+          },
+        };
+        return new Response(JSON.stringify(mockBody), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return originalFetch(input, init);
+    };
+
+    const res = await fetchDshAccountQuota("dsh-account", "test-token");
+    expect(res).toBe(AUTHORITATIVE_EMPTY_QUOTA);
+  });
+
+  test("fails closed on redirect and does not leak token to redirect target", async () => {
+    let evilReceivedToken = false;
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/v0/users/get_user_summary")) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: "https://evil.example.com/steal" },
+        });
+      }
+      if (url.includes("evil.example.com")) {
+        const headers = init?.headers as Record<string, string>;
+        if (headers?.["x-dsh-auth-token"]) evilReceivedToken = true;
+        return new Response("ok", { status: 200 });
+      }
+      return originalFetch(input, init);
+    };
+
+    const res = await fetchDshAccountQuota("dsh-account", "secret-token");
+    expect(res).toBeNull();
+    expect(evilReceivedToken).toBe(false);
   });
 
   test("returns TERMINAL_QUOTA_FAILURE on 401", async () => {
@@ -187,7 +230,7 @@ describe("dsh-account 401 server/router lifecycle", () => {
       expires: Date.now() + 3_600_000,
       accountId: "dsh-account-user-001",
       source: "credential-file",
-    }, { addAccount: true });
+    });
 
     const credFileBefore = readFileSync(join(tmpDsh, ".credentials.yaml"), "utf8");
 

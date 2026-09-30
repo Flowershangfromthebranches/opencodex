@@ -90,11 +90,12 @@ describe("DSH Account Validation", () => {
   });
 
   test("returns valid: true and identity when upstream returns 200 with code 0", async () => {
+    let capturedAuthToken: string | undefined;
     globalThis.fetch = async (input, init) => {
       const url = String(input);
       if (url.includes("/auth-api/v0/users/current")) {
         const headers = init?.headers as Record<string, string>;
-        expect(headers["x-dsh-auth-token"]).toBe("mock-valid-token");
+        capturedAuthToken = headers?.["x-dsh-auth-token"];
         return new Response(JSON.stringify({
           code: 0,
           data: {
@@ -111,6 +112,7 @@ describe("DSH Account Validation", () => {
     };
 
     const res = await validateDshAccountToken("mock-valid-token");
+    expect(capturedAuthToken).toBe("mock-valid-token");
     expect(res.valid).toBe(true);
     expect(res.accountId).toBe("user-123");
     expect(res.email).toBe("user@example.com");
@@ -129,6 +131,29 @@ describe("DSH Account Validation", () => {
     const res = await validateDshAccountToken("expired-token");
     expect(res.valid).toBe(false);
     expect(res.error).toBe("ACCOUNT_TOKEN_INVALID");
+  });
+
+  test("profile endpoint rejects 3xx redirect with manual policy and does not forward token", async () => {
+    let evilTargetReceivedToken = false;
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("/auth-api/v0/users/current")) {
+        expect(init?.redirect).toBe("manual");
+        return new Response(null, {
+          status: 302,
+          headers: { Location: "https://evil.example.com/steal" },
+        });
+      }
+      if (url.includes("evil.example.com")) {
+        evilTargetReceivedToken = true;
+        return new Response("ok");
+      }
+      return originalFetch(input, init);
+    };
+
+    const res = await validateDshAccountToken("secret-token");
+    expect(res.valid).toBe(false);
+    expect(evilTargetReceivedToken).toBe(false);
   });
 });
 
@@ -179,7 +204,7 @@ describe("DSH Account Login Flow", () => {
     process.env.DSH_HOME = join(tmp, "no-such-dsh");
     const ctrl = { signal: new AbortController().signal };
 
-    expect(loginDshAccount(ctrl)).rejects.toThrow("DeepSeek Harness account not found in ~/.dsh/.credentials.yaml");
+    await expect(loginDshAccount(ctrl)).rejects.toThrow("DeepSeek Harness account not found in ~/.dsh/.credentials.yaml");
   });
 
   test("loginDshAccount fails with clear error if token is expired (401)", async () => {
@@ -196,7 +221,7 @@ describe("DSH Account Login Flow", () => {
     globalThis.fetch = async () => new Response("Unauthorized", { status: 401 });
 
     const ctrl = { signal: new AbortController().signal };
-    expect(loginDshAccount(ctrl)).rejects.toThrow("invalid or expired (ACCOUNT_TOKEN_INVALID)");
+    await expect(loginDshAccount(ctrl)).rejects.toThrow("invalid or expired (ACCOUNT_TOKEN_INVALID)");
   });
 });
 

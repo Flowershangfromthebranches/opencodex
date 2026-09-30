@@ -89,6 +89,7 @@ export async function validateDshAccountToken(
         "x-dsh-auth-token": token,
         "accept": "application/json",
       },
+      redirect: "manual",
       signal: combinedSignal,
     });
 

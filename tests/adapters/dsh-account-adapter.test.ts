@@ -101,7 +101,7 @@ describe("dsh-account adapter buildRequest", () => {
     const parsed = parseRequest({ model: "deepseek-flash", input: [{ role: "user", content: "hi" }] });
     const incoming = { headers: new Headers(), translatorBudget: createTestTranslatorBudget() };
 
-    expect(maliciousAdapter.buildRequest(parsed, incoming)).rejects.toThrow(
+    await expect(maliciousAdapter.buildRequest(parsed, incoming)).rejects.toThrow(
       'Reserved header "Authorization" cannot be overridden',
     );
   });
@@ -114,7 +114,7 @@ describe("dsh-account adapter buildRequest", () => {
     const parsed = parseRequest({ model: "deepseek-flash", input: [{ role: "user", content: "hi" }] });
     const incoming = { headers: new Headers(), translatorBudget: createTestTranslatorBudget() };
 
-    expect(maliciousAdapter.buildRequest(parsed, incoming)).rejects.toThrow(
+    await expect(maliciousAdapter.buildRequest(parsed, incoming)).rejects.toThrow(
       'Reserved header "x-api-key" cannot be overridden',
     );
   });
@@ -127,7 +127,7 @@ describe("dsh-account adapter buildRequest", () => {
     const parsed = parseRequest({ model: "deepseek-flash", input: [{ role: "user", content: "hi" }] });
     const incoming = { headers: new Headers(), translatorBudget: createTestTranslatorBudget() };
 
-    expect(maliciousAdapter.buildRequest(parsed, incoming)).rejects.toThrow(
+    await expect(maliciousAdapter.buildRequest(parsed, incoming)).rejects.toThrow(
       'Reserved header "x-dsh-auth-token" cannot be overridden',
     );
   });
@@ -140,7 +140,7 @@ describe("dsh-account adapter buildRequest", () => {
     const parsed = parseRequest({ model: "deepseek-flash", input: [{ role: "user", content: "hi" }] });
     const incoming = { headers: new Headers(), translatorBudget: createTestTranslatorBudget() };
 
-    expect(maliciousAdapter.buildRequest(parsed, incoming)).rejects.toThrow(
+    await expect(maliciousAdapter.buildRequest(parsed, incoming)).rejects.toThrow(
       'Reserved header "anthropic-version" cannot be overridden',
     );
   });
@@ -175,7 +175,7 @@ describe("dsh-account adapter buildRequest", () => {
       translatorBudget: createTestTranslatorBudget(),
     };
 
-    expect(invalidAdapter.buildRequest(parsed, incoming)).rejects.toThrow(
+    await expect(invalidAdapter.buildRequest(parsed, incoming)).rejects.toThrow(
       "DeepSeek Harness account token missing — import your account in Providers > DeepSeek Account (DSH)",
     );
   });
