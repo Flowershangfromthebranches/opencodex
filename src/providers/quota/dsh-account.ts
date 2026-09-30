@@ -1,17 +1,9 @@
 import { DSH_PLATFORM_ORIGIN } from "../../oauth/dsh";
 import { asRecord, QUOTA_JSON_READ_FAILURE, readQuotaJson, REQUEST_TIMEOUT_MS } from "../quota-wire";
-import type { ProviderQuota, ProviderQuotaWindow } from "../quota-types";
-import { report, TERMINAL_QUOTA_FAILURE, type ProviderQuotaProbeResult } from "./report-cache";
-
-function formatMoney(valStr: unknown, currStr: unknown): string {
-  const num = typeof valStr === "number" ? valStr : parseFloat(String(valStr ?? "0"));
-  const currency = String(currStr ?? "CNY").trim().toUpperCase();
-  const sign = currency === "CNY" ? "¥" : currency === "USD" ? "$" : `${currency} `;
-  return `${sign}${Number.isFinite(num) ? num.toFixed(2) : "0.00"}`;
-}
+import { AUTHORITATIVE_EMPTY_QUOTA, TERMINAL_QUOTA_FAILURE, type ProviderQuotaProbeResult } from "./report-cache";
 
 export async function fetchDshAccountQuota(
-  provider: string,
+  _provider: string,
   accessToken: string,
 ): Promise<ProviderQuotaProbeResult> {
   if (!accessToken || !accessToken.trim()) return null;
@@ -23,6 +15,7 @@ export async function fetchDshAccountQuota(
         "x-dsh-auth-token": accessToken.trim(),
         "Accept": "application/json",
       },
+      redirect: "manual",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -48,58 +41,13 @@ export async function fetchDshAccountQuota(
     const summary = asRecord(bizData?.user_summary) ?? bizData;
     if (!summary) return null;
 
-    const normalWallets = Array.isArray(summary.normal_wallets) ? summary.normal_wallets : [];
-    const bonusWallets = Array.isArray(summary.bonus_wallets) ? summary.bonus_wallets : [];
-    const totalCosts = Array.isArray(summary.total_costs) ? summary.total_costs : [];
-
-    const customWindows: ProviderQuotaWindow[] = [];
-
-    for (const w of normalWallets) {
-      const rec = asRecord(w);
-      if (rec) {
-        const bal = formatMoney(rec.balance, rec.currency);
-        customWindows.push({
-          label: `Normal Wallet (${bal})`,
-          percent: 0,
-        });
-      }
-    }
-
-    for (const w of bonusWallets) {
-      const rec = asRecord(w);
-      if (rec) {
-        const bal = formatMoney(rec.balance, rec.currency);
-        customWindows.push({
-          label: `Bonus Wallet (${bal})`,
-          percent: 0,
-        });
-      }
-    }
-
-    for (const c of totalCosts) {
-      const rec = asRecord(c);
-      if (rec) {
-        const cost = formatMoney(rec.amount ?? rec.value, rec.currency);
-        customWindows.push({
-          label: `Total Spend (${cost})`,
-          percent: 0,
-        });
-      }
-    }
-
-    if (customWindows.length === 0) {
-      customWindows.push({
-        label: "DSH Account (Active)",
-        percent: 0,
-      });
-    }
-
-    const quota: ProviderQuota = {
-      customWindows,
-      updatedAt: Date.now(),
-    };
-
-    return report(provider, "dsh-account:summary", quota);
+    // DeepSeek platform reports monetary wallet amounts (normal_wallets, bonus_wallets, total_costs)
+    // without capacity or percentage-based rate-limit windows.
+    // Fabricating a synthetic percent: 0 custom window would falsely mark an empty wallet (¥0.00)
+    // as "0% used" (healthy quota) and pollute quota exhaustion / account ranking.
+    // Instead, return AUTHORITATIVE_EMPTY_QUOTA to confirm the credential is active while leaving
+    // quota routing evidence unknown.
+    return AUTHORITATIVE_EMPTY_QUOTA;
   } catch {
     return null;
   }
