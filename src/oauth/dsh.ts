@@ -66,9 +66,8 @@ export function detectDshAccount(): DshAccountDetectionResult {
       };
     }
     return { detected: false };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { detected: false, error: message };
+  } catch {
+    return { detected: false, error: "CREDENTIAL_FILE_READ_FAILED" };
   }
 }
 
@@ -107,21 +106,22 @@ export async function validateDshAccountToken(
         biz_data?: {
           id?: string | null;
           email?: string;
-          mobile?: string;
-          mobile_number?: string;
           id_profile?: { name?: string | null; picture?: string | null };
         };
       };
     };
 
-    if (body.code !== 0 || !body.data?.biz_data) {
+    if (body.code !== 0 || body.data?.biz_code !== 0 || !body.data.biz_data) {
       return { valid: false, error: `Platform error code: ${body.code ?? "unknown"}` };
     }
 
     const biz = body.data.biz_data;
-    const email = biz.email?.trim() || undefined;
-    const name = biz.id_profile?.name?.trim() || undefined;
-    const accountId = biz.id?.trim() || email || biz.mobile?.trim() || "dsh-user";
+    // Account-store slot matching and reauthentication require the same stable upstream ID.
+    // Email/phone/display names and a shared fallback must never identify an imported account.
+    const accountId = typeof biz.id === "string" ? biz.id.trim() : "";
+    if (!accountId) return { valid: false, error: "ACCOUNT_IDENTITY_UNVERIFIED" };
+    const email = typeof biz.email === "string" ? biz.email.trim() || undefined : undefined;
+    const name = typeof biz.id_profile?.name === "string" ? biz.id_profile.name.trim() || undefined : undefined;
 
     return {
       valid: true,
@@ -129,10 +129,10 @@ export async function validateDshAccountToken(
       email,
       name,
     };
-  } catch (error) {
+  } catch {
     if (signal?.aborted) throw signal.reason ?? new DOMException("DSH login aborted", "AbortError");
-    const message = error instanceof Error ? error.message : String(error);
-    return { valid: false, error: message };
+    // Parser and transport errors may contain profile data or credential-file contents.
+    return { valid: false, error: "PROFILE_VALIDATION_FAILED" };
   }
 }
 
@@ -194,3 +194,10 @@ export async function refreshDshAccountToken(
 ): Promise<OAuthCredentials> {
   throw new Error("DeepSeek Harness account session expired or revoked. Please sign in to DeepSeek Harness Desktop and re-import.");
 }
+
+/** Provider-owned auth hooks keep the shared OAuth registry within its line budget. */
+export const DSH_ACCOUNT_AUTH = {
+  login: loginDshAccount,
+  refresh: refreshDshAccountToken,
+  defaultRefreshPolicy: "disabled" as const,
+};

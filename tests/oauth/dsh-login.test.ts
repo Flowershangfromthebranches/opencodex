@@ -38,11 +38,12 @@ describe("DSH Account Detection (read-only)", () => {
   test("returns detected: false when yaml is invalid", () => {
     const dir = join(tmp, "invalid-yaml");
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, ".credentials.yaml"), "records: [invalid yaml");
+    writeFileSync(join(dir, ".credentials.yaml"), "records: [secret-yaml-token");
     process.env.DSH_HOME = dir;
 
     const res = detectDshAccount();
     expect(res.detected).toBe(false);
+    expect(res.error).toBe("CREDENTIAL_FILE_READ_FAILED");
   });
 
   test("returns detected: false when grant record is missing", () => {
@@ -117,6 +118,49 @@ describe("DSH Account Validation", () => {
     expect(res.accountId).toBe("user-123");
     expect(res.email).toBe("user@example.com");
     expect(res.name).toBe("Test User");
+  });
+
+  test("rejects profiles without a stable ID instead of sharing a fallback account slot", async () => {
+    for (const id of [undefined, null, "", "   ", 123]) {
+      globalThis.fetch = async () => Response.json({
+        code: 0, data: { biz_code: 0, biz_data: { id, email: "same@example.com", mobile: "123", id_profile: { name: "Same Name" } } },
+      });
+      const result = await validateDshAccountToken("mock-token");
+      expect(result).toEqual({ valid: false, error: "ACCOUNT_IDENTITY_UNVERIFIED" });
+    }
+  });
+
+  test("keeps distinct upstream identities separate even when email and display names coincide", async () => {
+    const previousHome = process.env.OPENCODEX_HOME;
+    process.env.OPENCODEX_HOME = join(tmp, "identity-slots");
+    try {
+      const { saveCredential, getAccountSet } = await import("../../src/oauth/store");
+      for (const [index, id] of ["account-a", "account-b", "account-a"].entries()) {
+        globalThis.fetch = async () => Response.json({
+          code: 0, data: { biz_code: 0, biz_data: { id, email: "same@example.com", id_profile: { name: "Same Name" } } },
+        });
+        const result = await validateDshAccountToken("mock-token");
+        expect(result.valid).toBe(true);
+        await saveCredential("dsh-account", { accountId: result.accountId, email: result.email, access: `mock-token-${index}`, refresh: `mock-token-${index}`, expires: Number.MAX_SAFE_INTEGER });
+      }
+      const accounts = getAccountSet("dsh-account")!.accounts;
+      expect(accounts).toHaveLength(2);
+      expect(accounts.map(a => a.credential.accountId)).toEqual(["account-a", "account-b"]);
+      expect(accounts.map(a => a.credential.access)).toEqual(["mock-token-2", "mock-token-1"]);
+    } finally {
+      if (previousHome === undefined) delete process.env.OPENCODEX_HOME;
+      else process.env.OPENCODEX_HOME = previousHome;
+    }
+  });
+
+  test("rejects a failed business response even if it includes a profile", async () => {
+    globalThis.fetch = async () => Response.json({ code: 0, data: { biz_code: 1, biz_data: { id: "account-a" } } });
+    expect((await validateDshAccountToken("mock-token")).valid).toBe(false);
+  });
+
+  test("does not reflect secret profile fragments from parser failures", async () => {
+    globalThis.fetch = async () => new Response('invalid-json-with-secret-token-and-identity', { status: 200 });
+    expect(await validateDshAccountToken("mock-token")).toEqual({ valid: false, error: "PROFILE_VALIDATION_FAILED" });
   });
 
   test("returns ACCOUNT_TOKEN_INVALID when upstream returns 401", async () => {

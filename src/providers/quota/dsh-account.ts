@@ -37,7 +37,8 @@ export async function fetchDshAccountQuota(
     }
 
     const data = asRecord(body.data);
-    const bizData = asRecord(data?.biz_data);
+    if (data?.biz_code !== 0) return null;
+    const bizData = asRecord(data.biz_data);
     const summary = asRecord(bizData?.user_summary) ?? bizData;
     if (!summary) return null;
 

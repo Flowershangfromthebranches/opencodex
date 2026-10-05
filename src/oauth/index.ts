@@ -45,7 +45,7 @@ import { validateDevinApiBaseUrl } from "./devin/api-base";
 import { loginGithubCopilot, refreshGithubCopilotToken, validateCopilotApiBaseUrl } from "./github-copilot";
 import { loginCommandCode, refreshCommandCodeToken } from "./command-code";
 import { loginMetaMuse, refreshMetaMuseToken } from "./meta-muse";
-import { loginDshAccount, refreshDshAccountToken } from "./dsh";
+import { DSH_ACCOUNT_AUTH } from "./dsh";
 import { loginOrcaRouter, orcaRouterInferenceBaseUrl, refreshOrcaRouterKey } from "./orcarouter";
 import { ANTIGRAVITY_REQUEST_UA } from "../adapters/google-antigravity-wire";
 import { deriveOAuthDefaultModel, deriveOAuthProviderConfig } from "../providers/derive";
@@ -232,11 +232,9 @@ function oauthDefaultModel(id: string): string {
 
 export const OAUTH_PROVIDERS: Record<string, OAuthProviderDef> = {
   "dsh-account": {
-    login: (ctrl, opts) => loginDshAccount(ctrl, { forceLogin: opts?.forceLogin }),
-    refresh: refreshDshAccountToken,
+    ...DSH_ACCOUNT_AUTH,
     providerConfig: oauthConfig("dsh-account"),
     defaultModel: oauthDefaultModel("dsh-account"),
-    defaultRefreshPolicy: "disabled",
   },
   "command-code": {
     // Add-account/reauth must not reimport the current local CLI credential.

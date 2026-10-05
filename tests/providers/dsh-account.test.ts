@@ -149,6 +149,16 @@ describe("dsh-account quota probe", () => {
     expect(res).toBe(TERMINAL_QUOTA_FAILURE);
   });
 
+  test("does not report authoritative account state for a failed business response", async () => {
+    globalThis.fetch = async () => Response.json({ code: 0, data: { biz_code: 1, biz_data: { user_summary: {} } } });
+    expect(await fetchDshAccountQuota("dsh-account", "mock-token")).toBeNull();
+  });
+
+  test("leaves quota unknown when a successful response omits account summary data", async () => {
+    globalThis.fetch = async () => Response.json({ code: 0, data: { biz_code: 0 } });
+    expect(await fetchDshAccountQuota("dsh-account", "mock-token")).toBeNull();
+  });
+
   test("returns null on transient 500 error without failing credentials", async () => {
     globalThis.fetch = async () => new Response("Internal Server Error", { status: 500 });
     const res = await fetchDshAccountQuota("dsh-account", "token");
