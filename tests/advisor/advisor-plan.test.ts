@@ -278,9 +278,10 @@ describe("advisor plan — preflight policy", () => {
     expect(await plan.preflightInject(parsed)).toBe(true);
     expect(calls).toHaveLength(1);
     const last = parsed.context.messages[parsed.context.messages.length - 1]!;
-    expect(last.role).toBe("developer");
-    expect(String(last.content)).toContain("OpenCodex runtime transport instruction");
-    expect(String(last.content)).toContain("UNTRUSTED ADVISORY DATA");
+    expect(last.role).toBe("user");
+    expect(parsed.context.messages.at(-2)?.role).toBe("developer");
+    expect(String(parsed.context.messages.at(-2)?.content)).toContain("OpenCodex runtime transport instruction");
+    expect(String(parsed.context.messages.at(-2)?.content)).toContain("UNTRUSTED ADVISORY DATA");
     const payload = JSON.parse(String(last.content).slice(String(last.content).indexOf("{"))) as {
       advisor_result: { advice: string; status: string };
     };
@@ -465,7 +466,7 @@ describe("advisor plan — failure lifecycle", () => {
     const recovered = orientedParsed("failure lifecycle task", "thread-F");
     expect(await plan().preflightInject(recovered)).toBe(true);
     expect(calls).toBe(2);
-    expect(String(recovered.context.messages.at(-1)!.content)).toContain("UNTRUSTED ADVISORY DATA");
+    expect(String(recovered.context.messages.at(-2)!.content)).toContain("UNTRUSTED ADVISORY DATA");
     expect(String(recovered.context.messages.at(-1)!.content)).toContain("recovered advice");
   });
 

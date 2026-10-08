@@ -10,6 +10,7 @@
  * expert is consulted exactly once and the advice reaches the worker's next upstream request.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { activateAdvisor } from "../../src/lib/advisor-activation";
 import { handleResponses } from "../../src/server/responses/core";
 import { handleChatCompletions } from "../../src/server/chat-completions";
 import { collectSse } from "../helpers/responses-conformance";
@@ -62,7 +63,7 @@ function recordHeaders(bucket: Record<string, string>[], init?: RequestInit): vo
 }
 
 function advisorConfig(advisor: OcxConfig["advisor"], workerFetch: typeof fetch): OcxConfig {
-  return {
+  const config = {
     port: 10100,
     providers: {
       worker: {
@@ -85,6 +86,8 @@ function advisorConfig(advisor: OcxConfig["advisor"], workerFetch: typeof fetch)
     },
     ...(advisor ? { advisor } : {}),
   } as OcxConfig;
+  activateAdvisor(config);
+  return config;
 }
 
 const advisorCallFrames = [
@@ -127,7 +130,7 @@ function loopbackInterceptor(config: OcxConfig, recorder: { chatRequests: string
   }) as typeof fetch;
 }
 
-function workerRequest(input: unknown, threadId?: string) {
+function workerRequest(input: unknown, threadId?: string, stream = true) {
   return new Request("http://localhost/v1/responses", {
     method: "POST",
     headers: {
@@ -137,11 +140,36 @@ function workerRequest(input: unknown, threadId?: string) {
       // Codex sends `thread-id`; it is the ledger's conversation identity.
       ...(threadId ? { "thread-id": threadId } : {}),
     },
-    body: JSON.stringify({ model: "worker/deepseek-v4", input, stream: true }),
+    body: JSON.stringify({ model: "worker/deepseek-v4", input, stream }),
   });
 }
 
 describe("advisor responses wiring (end-to-end)", () => {
+  test.each([true, false])("a real OpenAI Chat worker that always calls advisor stops after bounded redispatches (stream=%s)", async stream => {
+    releaseSpendHome = acquireOwnedSpendHome();
+    const workerBodies: string[] = [];
+    const chatRequests: string[] = [];
+    const workerFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      workerBodies.push(String(init?.body));
+      if (workerBodies.length > 5) throw new Error("unbounded hidden worker calls");
+      if (stream) return sse(advisorCallFrames);
+      return Response.json({ id: "repeat", object: "chat.completion", model: "deepseek-v4", choices: [{
+        index: 0, message: { role: "assistant", content: null, tool_calls: [{ id: "call_adv_1", type: "function",
+          function: { name: "advisor", arguments: "{}" } }] }, finish_reason: "tool_calls",
+      }], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } });
+    }) as typeof fetch;
+    const config = advisorConfig({ enabled: true, model: "expert/gpt-6-astra", contextSharingConsent: "v1", policy: "manual" }, workerFetch);
+    loopbackInterceptor(config, { chatRequests });
+    const response = await handleResponses(workerRequest("Repeated advisor task", "thread-repeat", stream), config, { model: "", provider: "" });
+    const body = await response.text();
+    expect(body).toContain("advisor_continuation_limit");
+    expect(workerBodies).toHaveLength(5); // initial worker call plus four bounded continuations
+    expect(chatRequests.length).toBeLessThanOrEqual(3);
+    for (const request of workerBodies.slice(3)) {
+      const tools = (JSON.parse(request) as { tools?: { function?: { name: string } }[] }).tools ?? [];
+      expect(tools.some(tool => tool.function?.name === "advisor")).toBe(false);
+    }
+  });
   test("manual: worker calls advisor() — the call is intercepted, the expert consulted cross-provider, advice reinjected", async () => {
     releaseSpendHome = acquireOwnedSpendHome();
     const workerBodies: string[] = [];
@@ -213,6 +241,11 @@ describe("advisor responses wiring (end-to-end)", () => {
     expect(expertBody.model).toBe("expert/gpt-6-astra");
     // The advice was injected into the worker's dispatch BEFORE the worker's next reasoning.
     expect(workerBodies[1] ?? workerBodies[0]).toContain(ADVISOR_ADVICE);
+    const dispatched = JSON.parse(workerBodies[1] ?? workerBodies[0]!) as { messages: { role: string; content: unknown }[] };
+    const advisory = dispatched.messages.find(message => JSON.stringify(message.content).includes(ADVISOR_ADVICE));
+    expect(advisory?.role).toBe("user");
+    expect(dispatched.messages.filter(message => message.role === "system" || message.role === "developer")
+      .some(message => JSON.stringify(message.content).includes(ADVISOR_ADVICE))).toBe(false);
     // The client stream stays clean of the advisor machinery.
     expect(JSON.stringify(secondFrames)).not.toContain("opencodex_advisor");
   });

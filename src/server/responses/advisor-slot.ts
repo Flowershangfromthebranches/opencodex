@@ -4,7 +4,7 @@
  * This file is the ONLY thing the core Responses path knows about the advisor. It holds the
  * structural plan interface and the event-stream guard — pure protocol machinery over
  * src/types — and imports nothing from src/advisor at runtime. The optional subsystem registers
- * a plan through the sidecar planner; an advisor-disabled install therefore executes no advisor
+ * a factory through advisor-plan-slot at host activation; an advisor-disabled install therefore executes no advisor
  * code and imports no advisor module (same seam discipline as src/lab).
  *
  * Guard semantics (mirrors guardTerminalEventStream):
@@ -16,8 +16,8 @@
  * - real (non-advisor) tool calls end interception for the leg: the turn belongs to the client;
  * - usage from intercepted legs is merged into the final terminal event so worker accounting
  *   stays complete; the advisor's own usage is a separate loopback request and never merges here;
- * - consultations are bounded per request; past the bound the worker receives an explicit
- *   limit-reached tool result instead of a silent drop.
+ * - consultations and worker continuations have separate hard per-request bounds. Exhaustion
+ *   removes the tool; one final limit-result continuation is allowed, then a typed error ends it.
  */
 import type {
   AdapterEvent,
@@ -34,6 +34,8 @@ export const ADVISOR_TOOL_NAME = "advisor";
 
 /** Hard bound on advisor consultations per worker request (recursion guard). */
 export const MAX_ADVISOR_CONSULTATIONS_PER_REQUEST = 3;
+/** At most one final worker continuation after consultation exhaustion. */
+export const MAX_ADVISOR_CONTINUATIONS_PER_REQUEST = MAX_ADVISOR_CONSULTATIONS_PER_REQUEST + 1;
 
 /** Per-leg retention caps for rebuilding the assistant message (see terminal-guard's bounded retention). */
 const MAX_LEG_TEXT_CHARS = 16 * 1_024;
@@ -161,10 +163,13 @@ export function createAdvisorStreamGuard(options: AdvisorGuardOptions): AsyncGen
   return guard(options);
 }
 export function createAdvisorGuard(plan: AdvisorPlan): NonNullable<OcxParsedRequest["_advisorGuard"]> {
+  // Shared across invocations of this request's guard, including an empty-completion retry.
+  let consultations = 0;
+  let continuations = 0;
+  let finalContinuationUsed = false;
   return async function* guardAdvisorStream(options: Omit<AdvisorGuardOptions, "plan">): AsyncGenerator<AdapterEvent> {
     const maxConsultations = MAX_ADVISOR_CONSULTATIONS_PER_REQUEST;
     let parsed = options.parsed;
-    let consultations = 0;
     let accumulatedUsage: OcxUsage | undefined;
     let source: AsyncIterable<AdapterEvent> = options.firstEvents;
 
@@ -248,6 +253,21 @@ export function createAdvisorGuard(plan: AdvisorPlan): NonNullable<OcxParsedRequ
 
       // Consume this leg's done — the continuation replaces it.
       accumulatedUsage = mergeUsage(accumulatedUsage, terminalEvent?.usage);
+      if (continuations >= MAX_ADVISOR_CONTINUATIONS_PER_REQUEST || finalContinuationUsed) {
+        yield {
+          type: "error",
+          status: 502,
+          errorType: "advisor_continuation_limit",
+          message: "Advisor worker continuation limit reached; no further worker calls were sent.",
+          ...(accumulatedUsage ? { usage: accumulatedUsage } : {}),
+        };
+        return;
+      }
+      // A repeated call after tool removal gets one last paired limit result, never a loop.
+      const isFinalContinuation = consultations >= maxConsultations;
+      // Reserve before any consultation await, so simultaneous guard entries share the bound.
+      continuations += 1;
+      finalContinuationUsed ||= isFinalContinuation;
       const timestamp = Date.now();
       const assistant = assistantMessageFromLeg(legEvents, advisorCalls, timestamp);
       const messages: OcxMessage[] = [...parsed.context.messages];
@@ -286,7 +306,19 @@ export function createAdvisorGuard(plan: AdvisorPlan): NonNullable<OcxParsedRequ
         messages.push(advisorToolResult(call, outcome, timestamp));
       }
 
-      const nextParsed: OcxParsedRequest = { ...parsed, context: { ...parsed.context, messages } };
+      const exhausted = consultations >= maxConsultations;
+      const tools = exhausted
+        ? parsed.context.tools?.filter(tool => !tool.advisor && tool.name !== ADVISOR_TOOL_NAME)
+        : parsed.context.tools;
+      const choice = parsed.options.toolChoice;
+      const nextParsed: OcxParsedRequest = {
+        ...parsed,
+        context: { ...parsed.context, messages, tools },
+        options: exhausted && ((typeof choice === "object" && choice !== null && "name" in choice && choice.name === ADVISOR_TOOL_NAME)
+          || (choice === "required" && !tools?.length))
+          ? { ...parsed.options, toolChoice: "auto" }
+          : parsed.options,
+      };
       parsed = nextParsed;
       yield { type: "assistant_boundary" };
       try {

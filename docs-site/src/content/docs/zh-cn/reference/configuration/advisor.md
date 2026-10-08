@@ -63,7 +63,7 @@ OpenCodex 不会把 provider API key、Authorization 头、OAuth token、仅后�
 
 手动建议是 Worker 自己发出的 `advisor` 调用所对应的工具结果。结果是一个 JSON 对象。`advice` 是顾问模型的文本。`status` 由运行时写入。
 
-自动建议仍使用 developer 消息，因为当前与 provider 无关的续写路径没有不成对的低信任咨询结果。伪造一次 Worker 没有发出的工具调用会破坏 Anthropic 的消息合法性，也会破坏续写配对。该消息里的固定传输说明是运行时拥有的策略。说明之后的 JSON 是加引号的不可信建议数据。引号使顾问文本无法提前结束封装，也不能改写溯源。这并不表示 developer 角色传输是完美隔离。专门的咨询结果协议会是更强的边界。
+自动建议的 JSON 内容放在独立的 user-role 建议消息中。developer 消息只保留固定的运行时传输说明，顾问生成的文本不会进入 developer/system 内容；OpenAI Chat 和 Anthropic 均可传递它，无需伪造工具调用。JSON 转义能防止结构突破和字段伪造，但不能保证模型忽略自然语言中的恶意指令。专门的咨询结果协议可进一步区分建议与用户请求。每个请求最多进行 3 次咨询和 4 次 Advisor worker 续写。咨询额度耗尽后移除 advisor 工具，重复调用只允许一次携带上限结果的最终续写；再次调用会以 502 advisor_continuation_limit 结束，不再发送隐藏的 worker 请求。空完成重试共享此上限。
 
 抑制不读取顾问字符串。自动去重只看服务端账本。复制了传输文本的 developer 消息也不能抑制 preflight。
 

@@ -1218,5 +1218,8 @@
   "advisor-plan.test.ts": "advisor",
   "advisor-responses-wiring.test.ts": "advisor",
   "advisor-routes.test.ts": "server",
-  "advisor-internal-authority.test.ts": "advisor"
+  "advisor-internal-authority.test.ts": "advisor",
+  "advisor-core-boundary.test.ts": "advisor",
+  "advisor-continuation-limit.test.ts": "advisor",
+  "advisor-authority-transport.test.ts": "advisor"
 }

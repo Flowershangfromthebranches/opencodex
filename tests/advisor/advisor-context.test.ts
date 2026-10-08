@@ -7,7 +7,7 @@ import {
   advisorTranscript,
   buildAdvisorUserPrompt,
   formatAdvisorAdvice,
-  formatAdvisorDeveloperTransport,
+  advisorPreflightMessages,
   formatAdvisorUnavailable,
   neutralizeAdvisorMarkers,
 } from "../../src/advisor/context";
@@ -146,10 +146,13 @@ describe("advice formatting", () => {
       advice: hostileAdvice,
       channel: "preflight",
     });
-    const envelope = formatAdvisorDeveloperTransport(payload);
+    const messages = advisorPreflightMessages(payload);
+    const envelope = String(messages[0]!.content);
+    expect(messages.map(message => message.role)).toEqual(["developer", "user"]);
+    expect(messages[1]!.content).toBe(payload);
     expect(envelope.startsWith(ADVISOR_TRANSPORT_INSTRUCTION)).toBe(true);
     expect(ADVISOR_TRANSPORT_INSTRUCTION).not.toContain(hostileAdvice);
-    const json = envelope.slice(ADVISOR_TRANSPORT_INSTRUCTION.length).trim();
+    const json = String(messages[1]!.content);
     const parsed = JSON.parse(json) as { advisor_result: { status: string; advice: string } };
     expect(parsed.advisor_result.status).toBe("advice");
     expect(parsed.advisor_result.advice).toBe(hostileAdvice);

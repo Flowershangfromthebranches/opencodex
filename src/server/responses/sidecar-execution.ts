@@ -7,8 +7,7 @@ import type { ResponsesEffects } from "./response-effects";
 import type { ResponsesSendBudget } from "./request-send-budget";
 import { formatErrorResponse } from "../../bridge";
 import { planWebSearch, buildWebSearchTool, runWithWebSearch } from "../../web-search";
-import { createAdvisorRuntimePlan } from "../../advisor/runtime";
-import { buildAdvisorTool } from "../../advisor/synthetic-tool";
+import { createRegisteredAdvisorPlan } from "./advisor-plan-slot";
 import { ADVISOR_TOOL_NAME } from "./advisor-slot";
 import { buildToolBridgeMaps } from "./collaboration";
 import {
@@ -176,12 +175,12 @@ export async function executeResponsesSidecars(
 
   // Advisor sidecar plan (optional subsystem; null when disabled, unconfigured, or when this
   // request IS an advisor loopback consultation — the recursion fence). The plan carries
-  // request-scoped state only; the preflight pass below may inject a marked developer message
+  // request-scoped state only; preflight keeps fixed policy separate from user-role advice
   // before the worker is dispatched. Registration seam: the core path sees only
-  // `parsed._advisorGuard`; src/advisor is imported nowhere else in src/server/responses.
+  // `parsed._advisorGuard`; only an activated factory can load the optional implementation.
   const advisorPlan = options.advisorInternal === true
     ? null
-    : createAdvisorRuntimePlan({
+    : await createRegisteredAdvisorPlan({
       config,
       workerIdentity: `${route.modelId} (provider ${route.providerName})`,
       workerModelId: route.modelId,
@@ -670,7 +669,7 @@ export async function executeResponsesSidecars(
     // wire name, two schemas); the synthetic runtime owns the name for this turn.
     parsed.context.tools = [
       ...(parsed.context.tools ?? []).filter(t => !t.advisor && t.name !== ADVISOR_TOOL_NAME),
-      buildAdvisorTool(),
+      advisorPlan.tool,
     ];
     // The advisor tool joined AFTER prepare computed the bridge maps; recompute so the tool is
     // declared (undeclared-tool guard, tool_choice mapping, schema repair) on this turn.

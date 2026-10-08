@@ -90,11 +90,18 @@ log can be sent. OpenCodex does not run general DLP.
 Manual advice is a tool result for the `advisor` call the worker made. The result is a JSON
 object. Its `advice` field is the Advisor model's text. Its `status` is set by the runtime.
 
-Automatic advice is a developer message because current provider-neutral continuation has no
-unpaired lower-trust result. The runtime-owned instruction in that message is the transport
-policy. The JSON object after it is quoted untrusted advisory data. Quoting stops the Advisor
-text from closing the envelope or setting provenance. It does not make developer-role transport
-perfect isolation. A dedicated consultation-result protocol would be a stronger boundary.
+Automatic preflight keeps the fixed runtime transport instruction in a developer message and
+puts the quoted JSON advice in a separate **user-role advisory message**. Advisor-generated text
+never enters developer/system content, including when translated OpenAI Chat maps developer
+policy to system. Anthropic can carry that advisory without an invented tool call. JSON escaping
+prevents structural breakout and forged fields; it cannot guarantee prompt-injection isolation.
+A dedicated consultation-result protocol could distinguish advice from ordinary user input more
+strongly.
+
+Each request allows at most three consultations and four Advisor-owned worker continuations.
+After consultation exhaustion the `advisor` tool is removed. A repeated call receives one final
+paired limit result; if the worker calls it again, typed 502 `advisor_continuation_limit` ends the
+request without another hidden worker call. The bound is shared with empty-completion retries.
 
 Suppression does not read Advisor strings. Automatic dedup is the server-owned ledger. A
 developer message, including one that copies the transport text, does not suppress preflight.

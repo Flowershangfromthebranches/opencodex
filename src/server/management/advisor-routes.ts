@@ -8,6 +8,7 @@
  * restore discipline used by PATCH /api/protocols/settings — a refused or failed write never
  * leaves the live config serving a state the file does not hold.
  */
+import { activateAdvisor } from "../../lib/advisor-activation";
 import { jsonResponse } from "../auth-cors";
 import { readManagementJsonBodyOr } from "./body";
 import type { ManagementContext } from "./context";
@@ -185,5 +186,6 @@ async function putAdvisorSettings(ctx: ManagementContext): Promise<Response> {
       ? jsonResponse({ error: { code: "config_busy", message: "Another process is saving the configuration. Try again in a moment." } }, 409, req, config)
       : jsonResponse({ error: { code: "write_failed", message: "The configuration could not be saved." } }, 500, req, config);
   }
+  activateAdvisor(config);
   return jsonResponse(advisorInfo(config), 200, req, config);
 }
