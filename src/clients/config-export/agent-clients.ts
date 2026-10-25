@@ -30,18 +30,17 @@ export function buildQoderCnContribution(ctx: ExportContext): ManagedContributio
   return { ...buildQoderContribution(ctx), clientId: "qoder-cn" };
 }
 
-function modelSelector(id: string): string {
+function modelSelector(id: string): string | null {
   const selector = `[id=${id}]`;
   const parsed = parseSegment(selector);
   if (parsed.kind !== "select" || parsed.criteria[0]?.value !== id) {
-    throw new Error("WorkBuddy model ID cannot be represented by a managed array selector.");
+    return null;
   }
   return selector;
 }
 
 function workbuddyRows(ctx: ExportContext) {
   return normalizeExportModels(ctx.models).map(model => {
-    modelSelector(model.namespaced);
     return {
       id: model.namespaced,
       name: `OpenCodex: ${model.displayName ?? model.namespaced}`,
@@ -72,6 +71,9 @@ export function summarizeWorkbuddy(document: unknown) {
 /** Write-time validation must not prevent status, disable or snapshot recovery. */
 export function workbuddyApplyRefusal(ctx: ExportContext): string | null {
   const models = workbuddyRows(ctx);
+  if (models.some(model => modelSelector(model.id) === null)) {
+    return "WorkBuddy model ID cannot be represented by a managed array selector.";
+  }
   if (models.length === 0) return "WorkBuddy has no models in the selected OpenCodex catalog.";
   const available = (ctx.document as { availableModels?: unknown } | undefined)?.availableModels;
   if (Array.isArray(available) && available.length > 0 && models.some(model => !available.includes(model.id) && !available.includes(`custom-local:${model.id}`))) {
@@ -80,9 +82,15 @@ export function workbuddyApplyRefusal(ctx: ExportContext): string | null {
   return null;
 }
 
+/** An unaddressable catalog contributes no desired rows; recorded ownership still protects recovery. */
 export function buildWorkbuddyContribution(clientId: ExportClientId, ctx: ExportContext): ManagedContribution {
-  const models = workbuddyRows(ctx);
-  return { clientId, fragments: models.map(model => ({
-    path: [...Array.isArray(ctx.document) ? [] : ["models"], modelSelector(model.id)], value: model,
-  })) };
+  const fragments: ManagedContribution["fragments"][number][] = [];
+  for (const model of workbuddyRows(ctx)) {
+    const selector = modelSelector(model.id);
+    // Apply/refresh refuse in validateApply. Status/disable must classify the
+    // saved fragment paths without depending on today's unaddressable catalog.
+    if (selector === null) return { clientId, fragments: [] };
+    fragments.push({ path: [...(Array.isArray(ctx.document) ? [] : ["models"]), selector], value: model });
+  }
+  return { clientId, fragments };
 }

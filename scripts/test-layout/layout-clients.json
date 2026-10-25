@@ -1,4 +1,6 @@
 {
+  "agent-clients.test.ts": "clients",
+  "workbuddy-selector-recovery.test.ts": "clients",
   "link-diagnostics.test.ts": "clients",
   "link-tunnel-history.test.ts": "clients",
   "link-readiness.test.ts": "clients",
@@ -138,5 +140,6 @@
   "link-codex-settings-digest.test.ts": "clients",
   "link-apply-record.test.ts": "clients",
   "client-runtime-restart.test.ts": "clients",
-  "link-parity-reporter.test.ts": "clients"
+  "link-parity-reporter.test.ts": "clients",
+  "ci-pr-hygiene-approvals.test.ts": "ci-workflows"
 }

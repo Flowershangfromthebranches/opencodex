@@ -50,11 +50,11 @@ for (const id of clients) {
       expect((await applyIntegration(input)).ok).toBe(true);
       const opId = store.listOperations(id)[0]!.opId;
       const read = () => JSON.parse(readFileSync(path, "utf8"));
-      const rows = (doc: any) => id === "qoder-cn" ? doc.modelConfigs.customModels : arrayRoot ? doc : doc.models;
-      expect(rows(read())).toHaveLength(3);
+      const rows = (doc: any) => id === "qoder-cn" ? doc.providers.opencodex.models : arrayRoot ? doc : doc.models;
+      expect(rows(read())).toHaveLength(id === "qoder-cn" ? 2 : 3);
       if (id !== "qoder-cn") expect(rows(read())[0]).toEqual(foreign);
       expect((await refreshIntegration({ ...input, models: context.models.slice(0, 1) })).ok).toBe(true);
-      expect(rows(read())).toHaveLength(2);
+      expect(rows(read())).toHaveLength(id === "qoder-cn" ? 1 : 2);
       expect((await disableIntegration(input)).ok).toBe(true);
       expect(read()).toEqual(original);
       expect((await restoreIntegration({ ...input, opId, confirmDrift: true })).ok).toBe(true);
@@ -68,7 +68,7 @@ test("WorkBuddy exports canonical selectors, full chat URL and declared capabili
   expect(doc.models[0]).toMatchObject({ id: "mock/a", name: "OpenCodex: mock/a", vendor: "OpenAI", url: `${context.baseUrl}/chat/completions`, supportsToolCall: true, supportsImages: true, supportsReasoning: true, maxInputTokens: 24000, maxOutputTokens: 8000 });
   expect(doc.models[1]).not.toHaveProperty("supportsToolCall");
   expect(doc.models[1]).not.toHaveProperty("maxInputTokens");
-  expect(() => buildClientContribution("workbuddy", { ...context, models: [{ namespaced: "mock/a]", provider: "mock", id: "a]" }] })).toThrow("selector");
+  expect(buildClientContribution("workbuddy", { ...context, models: [{ namespaced: "mock/a]", provider: "mock", id: "a]" }] }).fragments).toEqual([]);
   expect(workbuddyApplyRefusal({ ...context, document: { availableModels: ["foreign/a"] } })).toContain("availableModels");
   for (const client of clients) for (const fragment of buildClientContribution(client, context).fragments) {
     const path = canonicalSchemaPath(client, fragment.path);
