@@ -21,7 +21,7 @@ restore uses its snapshots. On refresh, older ownership records remove their pre
 owned custom-model rows before merging the provider-only contribution. Foreign rows remain
 untouched, and edits to previously owned rows remain conflicts. The legacy selector template
 in `src/integrations/mutation-plan.ts` stays available for previewing that removal.
-An unowned `modelConfigs.customModels` row with `provider: "opencodex"` and a model the
+For both `qoder` and `qoder-cn`, an unowned `modelConfigs.customModels` row with `provider: "opencodex"` and a model the
 provider catalog also exports would recreate that rejection, so `classifyIntegration` reports
 it as a `conflict` / `unowned-key` before any write; `qoderLegacyCatalogCollision` decides
 which rows collide, and rows an ownership record still names are left to the refresh above.

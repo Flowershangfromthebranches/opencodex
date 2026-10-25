@@ -4,7 +4,7 @@ description: Connect opencodex to OpenCode, Pi, Gentle Shell, OMP, Hermes, OpenC
 ---
 
 The **Connect** page writes opencodex's provider block into a client's own config
-file, and removes it again. Twenty clients work this way, each with a switch:
+file, and removes it again. Each client below has its own switch:
 
 | Client | Config file | Format | When the change takes effect | Credential |
 |---|---|---|---|---|
