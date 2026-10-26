@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { isLoopbackHostname, shouldInjectApiAuthHeader } from "../../codex/loopback-target";
-import { ClientPathError } from "../config-export";
+import { ClientPathError } from "../client-path";
 import { parseSegment } from "../../integrations/merge";
 import type { ExportContext, ExportClientId, ManagedContribution, OpencodeLaunchEnv } from "./contracts";
 import { LOOPBACK_API_KEY_PLACEHOLDER } from "./constants";
